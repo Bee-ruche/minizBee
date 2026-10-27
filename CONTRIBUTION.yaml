@@ -1,44 +1,43 @@
-tache: miniz-0001
+tache: miniz-0011
 utilisateur: bidji29
 agent:
-  modele: "Claude Opus 5.5 (claude-opus-5-5)"
-  client: bee 0.1.0
-resume: "Outillage d'évaluation du fork : corpus déterministe, tests différentiels contre zlib, fuzzing, banc A/B et CI."
+  modele: "Claude Opus 4.8 (claude-opus-4-8)"
+  client: bee 0.1
+resume: "Sortie des codes de Huffman par mots de 64 bits dans tdefl_compress_lz_codes."
 changement: >
-  Ajoute le dossier bee/ et le workflow .github/workflows/bee-ci.yml, sans modifier une seule ligne
-  de miniz. bee/corpus/generer.py produit un corpus de référence de 61 fichiers (12 Mo), identique
-  bit pour bit sous Python 3.11 à 3.13. bee/tests/ compare miniz et zlib dans les deux sens, en flux
-  (tampons de 1 et 4096 octets) et en Deflate brut, et vérifie le déterminisme par 305 empreintes
-  SHA-256 de la sortie compressée. bee/fuzz/ contient deux harnais (inflate différentiel,
-  compression puis décompression par zlib). bee/bench/ mesure les 6 métriques du projet ; ab.py
-  compare deux révisions en mesures entrelacées et juge le bruit par un test du signe sur les
-  paires (9 sur 10). bee/bench/profil.py donne le profil callgrind par fonction. La CI prend
-  toujours ses juges dans la base de la PR, avec un mode d'amorçage limité au seul commit
-  2948eeb (la base de cette PR, qui n'a pas encore de juges). AGENTS.md et CLAUDE.md, à la racine,
-  renvoient les agents au registre.
+  Active la variante 64 bits de tdefl_compress_lz_codes (déjà présente dans miniz, mais compilée
+  seulement sous MINIZ_USE_UNALIGNED_LOADS_AND_STORES) au moyen d'un nouveau gate propre à la
+  compression, TDEFL_USE_64BIT_BITBUF, défini sur plateforme petit-boutiste à registres 64 bits et
+  indépendant de MINIZ_USE_UNALIGNED_LOADS_AND_STORES (qui concerne aussi la décompression, hors
+  périmètre). Les codes sont accumulés dans un registre 64 bits et écrits 8 octets à la fois par
+  memcpy (aucun transtypage de pointeur) ; seuls bits_in>>3 octets sont avancés, les octets en trop
+  tombent dans la marge de 16 octets de m_pOutput_buf_end. La variante générique reste le repli. La
+  sortie compressée est strictement identique à celle de la variante générique.
 mesures:
-  machine: "Xeon 2,1 GHz virtualisé, 2 cœurs, machine cloud partagée, Ubuntu 24.04, gcc 13.3.0"
-  commande: "python3 bee/bench/ab.py --base 2948eeb --candidate HEAD --repetitions 10"
+  machine: "Intel Xeon @ 2.10 GHz (virtualisé, 2 cœurs), Linux 6.x, gcc 13.3.0"
+  commande: "python3 bee/bench/ab.py --base upstream/master --candidate HEAD --repetitions 10 --instructions"
   repetitions: 10
-  avant: {debit_compression_n1: 83.8, debit_compression_n6: 22.5, debit_compression_n9: 13.9, debit_decompression: 408, ratio_n6: 3.505, memoire_max_ko: 1564}
-  apres: {debit_compression_n1: 83.8, debit_compression_n6: 22.5, debit_compression_n9: 13.9, debit_decompression: 408, ratio_n6: 3.505, memoire_max_ko: 1564}
+  avant:
+    debit_compression_n1: 83.68
+    debit_compression_n6: 21.83
+    debit_compression_n9: 13.54
+    debit_decompression: 414.14
+    ratio_n6: 3.5054
+    memoire_max_ko: 1564
+  apres:
+    debit_compression_n1: 96.21
+    debit_compression_n6: 22.82
+    debit_compression_n9: 13.62
+    debit_decompression: 417.94
+    ratio_n6: 3.5054
+    memoire_max_ko: 1564
 teste:
-  - "tests différentiels : 3233 contrôles, 0 écart, aussi sous ASan et UBSan"
-  - "pouvoir de détection : trois mutations volontaires de miniz détectées (32, 351 et 79 écarts)"
-  - "fuzzing local 60 s par harnais (repli gcc avec ASan et UBSan), aucun écart"
-  - "ab.py : base contre elle-même dans le bruit ; ralentissement injecté de 4 à 5 % détecté (0 paire gagnée sur 10)"
-  - "tests unitaires de ab.py (égalités du test du signe) et de verdict.py (14 tests, dont l'amorçage)"
-  - "CI simulée localement job par job, verdict vert ; cas rouge vérifié avec une sortie compressée modifiée"
-non_teste:
-  - "ARM64 (aucune machine ARM ici ; ce sera la première exécution de la CI)"
-  - "libFuzzer en local (runtime clang absent) ; il ne tourne qu'en CI"
-  - "construction de l'image Docker de la sandbox (pas de démon Docker ici)"
-  - "exécution réelle sur GitHub Actions avant cette PR"
+  - "bee/tests/lancer.sh : 3233 contrôles différentiels contre zlib, 0 écart, 305 empreintes identiques (sortie compressée inchangée)."
+  - "bee/tests/lancer.sh --sanitiseurs : ASan et UBSan propres."
+  - "Banc A/B 10 répétitions : debit_compression_n1 +14,97 % (10/10 paires, au-delà du bruit), instructions_n1 -4,3 %."
+non_teste: []
 doutes: >
-  Les mesures ci-dessus sont celles du banc de base : avant et après sont identiques, puisque le code
-  de miniz n'est pas modifié. Le seuil du test du signe n'a été calibré que sur une machine partagée ;
-  le bruit d'autres machines reste à mesurer (miniz-0003). L'image de la sandbox n'est pas épinglée
-  par digest. Les workflows d'origine de miniz (c-cpp.yml, ci-fuzz.yml, release.yml) restent présents
-  dans le fork. Contribution écrite par des agents : elle doit être relue par un autre utilisateur
-  (miniz-0002) avant intégration.
-taille_reelle: L
+  Gain mesuré sur une seule configuration (Xeon virtualisé, gcc 13.3) ; la CI confirme sur x86-64 et
+  ARM64, et le banc distribué (mesures/) permettra d'élargir à d'autres machines. Le chemin rapide
+  n'est actif que sur plateforme petit-boutiste à registres 64 bits ; ailleurs, repli générique.
+taille_reelle: S
