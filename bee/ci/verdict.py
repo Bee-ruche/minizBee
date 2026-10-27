@@ -5,7 +5,8 @@ Entrées :
   --jobs        résultats des jobs GitHub (toJSON(needs) : {"manifeste": {"result": "success", "outputs": {...}}, ...}).
                 C'est la source de vérité de « ci » : le code de la PR ne peut pas les réécrire.
   --artefacts   dossier où les artefacts « etat-* » ont été téléchargés : fichiers d'état <etape>.txt
-                (« succes » / « echec », écrits par bee/ci/etape.sh), rapport ab.json d'ab.py,
+                (« succes » / « echec », écrits par bee/ci/etape.sh), rapport juge.json du juge isolé
+                (bee/juge/juge.py, au format d'ab.py plus une section « juge » ; à défaut ab.json d'ab.py),
                 CONTRIBUTION.yaml de la PR et tache.yaml du registre. Ce sont des DONNÉES : lues, jamais exécutées.
   --depot, --base, --tete   pour compter les lignes modifiées (git diff --numstat).
 
@@ -15,11 +16,13 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
   gain              gain relatif sur la métrique principale de la tâche (positif = mieux), ou null
   metrique          la métrique principale retenue, ou null
   au_dela_du_bruit  test du signe d'ab.py sur la métrique principale (false si aucune métrique)
-  mesures           {"A": {6 métriques}, "B": {6 métriques}} : médianes d'ab.py
+  mesures           {"A": {6 métriques}, "B": {6 métriques}} : médianes du juge isolé (ou d'ab.py)
   instructions      décompte Cachegrind par scénario sur un sous-corpus : {"instructions_n6": {"A", "B", "gain"}, ...}
   degradations      métriques dégradées au-delà du bruit (test du signe ; instructions au-delà du seuil), avec leur gain
   lignes_modifiees  lignes modifiées hors bee/**, tests/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
   amorcage          true si les juges venaient de la PR elle-même (base = commit d'amorçage, voir bee/ci/juges.sh)
+  juge              section du juge isolé : version, graine, sorties comparées et constructions_suspectes
+                    (liste vide si l'analyse des objets n'a rien trouvé) ; null si le juge isolé n'a pas tourné
   etapes, details   pour les relecteurs
 
 Métrique principale, dans l'ordre : la clé « metrique » de la tâche du registre (tache.yaml), sinon une clé
@@ -49,7 +52,8 @@ ETAPES = [
     ("differentiel_x86_64", "Tests différentiels et empreintes (x86-64)", "compilation-et-tests"),
     ("differentiel_arm64", "Tests différentiels et empreintes (ARM64)", "compilation-et-tests"),
     ("fuzzing", "Fuzzing (x86-64)", "fuzzing"),
-    ("banc_ab", "Banc A/B", "banc-ab"),
+    ("juge_isole", "Juge isolé (vérification de l'extérieur et mesures)", "juge"),
+    ("meta_juge", "Méta-tests du juge isolé", "meta-juge"),
 ]
 METRIQUES = ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
              "debit_decompression", "ratio_n6", "memoire_max_ko"]
@@ -127,6 +131,26 @@ def lignes_modifiees(depot, base, tete):
     return total
 
 
+def section_juge(juge):
+    """Ce que le registre garde du juge isolé. Donnée produite par le job « juge » (code de la base)."""
+    if not isinstance(juge, dict):
+        return None
+    suspects = juge.get("constructions_suspectes")
+    if not isinstance(suspects, list):
+        suspects = [{"type": "illisible", "detail": "liste des constructions suspectes absente ou illisible"}]
+    propres = []
+    for s in suspects[:50]:
+        if isinstance(s, dict):
+            propres.append({"type": str(s.get("type", ""))[:40], "detail": str(s.get("detail", ""))[:300]})
+    verification = juge.get("verification") if isinstance(juge.get("verification"), dict) else {}
+    return {
+        "version": juge.get("version") if isinstance(juge.get("version"), int) else None,
+        "graine": str(juge.get("graine", ""))[:64],
+        "sorties_comparees": verification.get("sorties_comparees") if isinstance(verification.get("sorties_comparees"), int) else None,
+        "constructions_suspectes": propres,
+    }
+
+
 def trouver(dossier, nom):
     if not dossier:
         return None
@@ -139,7 +163,7 @@ def main():
     analyseur.add_argument("--jobs", help="toJSON(needs) du workflow : résultats des jobs (source de vérité de « ci »)")
     analyseur.add_argument("--artefacts", help="dossier des artefacts etat-* téléchargés")
     analyseur.add_argument("--etats", help="dossier des fichiers <etape>.txt (simulation locale)")
-    analyseur.add_argument("--ab", help="rapport JSON d'ab.py (défaut : ab.json trouvé dans --artefacts)")
+    analyseur.add_argument("--ab", help="rapport JSON du juge isolé ou d'ab.py (défaut : juge.json, sinon ab.json, dans --artefacts)")
     analyseur.add_argument("--manifeste", help="CONTRIBUTION.yaml de la PR (donnée)")
     analyseur.add_argument("--tache", help="tâche du registre (défaut : tache.yaml trouvé dans --artefacts)")
     analyseur.add_argument("--depot", help="clone du fork, pour compter les lignes modifiées")
@@ -153,7 +177,7 @@ def main():
         with open(args.jobs, encoding="utf-8") as f:
             jobs = json.load(f) or {}
     etats, amorcage = etats_depuis([d for d in (args.etats, args.artefacts) if d])
-    chemin_ab = args.ab or trouver(args.artefacts, "ab.json")
+    chemin_ab = args.ab or trouver(args.artefacts, "juge.json") or trouver(args.artefacts, "ab.json")
     chemin_manifeste = args.manifeste or trouver(args.artefacts, "CONTRIBUTION.yaml")
     chemin_tache = args.tache or trouver(args.artefacts, "tache.yaml")
 
@@ -224,6 +248,7 @@ def main():
         "degradations": degradations,
         "lignes_modifiees": lignes_modifiees(args.depot, args.base, args.tete),
         "amorcage": amorcage,
+        "juge": section_juge((rapport or {}).get("juge")),
         "etapes": resultat_etapes,
         "details": {
             "origine_metrique": origine,

@@ -5,9 +5,12 @@
 #   2. compilation et tests d'origine de miniz, x86-64 et ARM64
 #   3. tests différentiels contre zlib et empreintes de déterminisme, x86-64 et ARM64
 #   4. fuzzing libFuzzer, 2 harnais en parallèle pendant 10 minutes, x86-64
-#   5. banc A/B entrelacé : point de départ de la PR (merge-base avec la base) contre tête de la PR,
-#      10 répétitions, avec décompte d'instructions Cachegrind sur un sous-corpus
-#   6. verdict.json, publié en artefact « verdict » (lu par le workflow verdicts.yml du registre)
+#   5. juge isolé (bee/juge/juge.py) : point de départ de la PR (merge-base avec la base) contre tête de
+#      la PR ; vérification de toutes les sorties par l'hôte (zlib de l'hôte, entrées tirées au hasard),
+#      mesures entrelacées (10 répétitions) et décompte d'instructions Cachegrind, tout en conteneur ;
+#      analyse des objets compilés (constructions suspectes)
+#   6. méta-tests du juge isolé, seulement si la PR modifie bee/juge/
+#   7. verdict.json, publié en artefact « verdict » (lu par le workflow verdicts.yml du registre)
 #
 # Sécurité :
 #   - permissions: contents: read pour tout le workflow ; aucun secret ; checkouts sans identifiants
@@ -23,9 +26,14 @@
 #     les valeurs qui en sortent sont validées contre des listes fermées.
 #   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
 #     de la PR ne peut pas réécrire ; les fichiers d'état servent seulement à nommer l'étape en échec.
-#   - limite connue : un code de PR qui détourne le processus qui l'exécute (exit(0) dans un
-#     constructeur, par exemple) peut fausser l'étape qui l'exécute. C'est le rôle de la relecture
-#     humaine (R3) ; les relecteurs rejouent les mesures.
+#   - le code C de la PR ne s'exécute JAMAIS sur la machine de CI elle-même : compilation, tests,
+#     fuzzing et mesures tournent dans le conteneur du juge (bee/juge/isoler.sh, bee/juge/juge.py :
+#     sans réseau, lecture seule, sans privilège), sur des copies jetables. L'image est construite avant
+#     que le moindre fichier de la PR ne soit monté.
+#   - les étapes 2 à 4 restent des contrôles « de l'intérieur » : un code malveillant peut fausser ses
+#     propres tests (exit(0) au milieu, par exemple) mais pas en sortir. Le juge isolé (étape 5), lui,
+#     vérifie les sorties de l'extérieur, avec des entrées qu'aucun code ne connaît d'avance, et mesure
+#     les temps par le noyau : c'est lui qui fait foi. Modèle de menace : bee/README.md, section « Juge isolé ».
 name: bee-ci
 
 on:
@@ -67,6 +75,25 @@ env:
       echo "::error::La base de la PR ($base_sha) ne contient pas bee/ : pas de juges, CI refusée (seul le commit d'amorçage $BEE_COMMIT_AMORCAGE est accepté sans juges)." >&2
       exit 1
     fi
+
+  # Juge isolé : celui de la base. Seule la PR qui l'introduit (base sans bee/juge/juge.py) utilise le
+  # sien ; une PR qui modifie bee/ est de toute façon une tâche d'outillage, relue par un gardien (R3).
+  BEE_JUGE_ISOLE: |
+    juge="$GITHUB_WORKSPACE/base/bee/juge"
+    if [ ! -f "$juge/juge.py" ]; then
+      echo "::warning::La base n'a pas encore de juge isolé : celui de la PR est utilisé (tâche d'outillage, relecture d'un gardien exigée par le registre)."
+      juge="$GITHUB_WORKSPACE/pr/bee/juge"
+    fi
+    echo "JUGE=$juge" >> "$GITHUB_ENV"
+    echo "IMAGE=$(python3 "$juge/juge.py" --image-seulement --outillage "$(dirname "$(dirname "$juge")")")" >> "$GITHUB_ENV"
+  # Copie de travail jetable pour une étape conteneurisée : la base et la PR, fraîches.
+  BEE_TRAVAIL: |
+    travail="$RUNNER_TEMP/travail-$1"
+    rm -rf "$travail"
+    mkdir -p "$travail"
+    cp -a base "$travail/base"
+    cp -a pr "$travail/pr"
+    echo "$travail"
 
 jobs:
   manifeste:
@@ -166,15 +193,22 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Outils (gcc, g++, cmake, zlib1g-dev)
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends build-essential cmake zlib1g-dev
-      - name: Compilation et tests d'origine de miniz
-        run: base/bee/ci/etape.sh "$ETATS" compilation_${{ matrix.arch }} base/bee/ci/tests_origine.sh pr "$RUNNER_TEMP/cmake"
-      - name: Tests différentiels et empreintes
+      - name: Image du conteneur du juge (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
+        run: eval "$BEE_JUGE_ISOLE"
+      - name: Compilation et tests d'origine de miniz (conteneur sans réseau)
+        run: |
+          travail="$(bash -c "$BEE_TRAVAIL" -- compilation)"
+          base/bee/ci/etape.sh "$ETATS" compilation_${{ matrix.arch }} "$JUGE/isoler.sh" "$IMAGE" "$travail" -- \
+            /travail/base/bee/ci/tests_origine.sh /travail/pr /travail/cmake
+      - name: Tests différentiels et empreintes (conteneur sans réseau)
         if: always()
         env:
           SORTIE_COMPRESSEE: ${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
-        run: base/bee/ci/etape.sh "$ETATS" differentiel_${{ matrix.arch }} base/bee/ci/differentiel.sh pr
+        run: |
+          travail="$(bash -c "$BEE_TRAVAIL" -- differentiel)"
+          base/bee/ci/etape.sh "$ETATS" differentiel_${{ matrix.arch }} "$JUGE/isoler.sh" "$IMAGE" "$travail" -- \
+            env SORTIE_COMPRESSEE="$SORTIE_COMPRESSEE" BASE_SHA="$BASE_SHA" TETE_SHA="$TETE_SHA" \
+            /travail/base/bee/ci/differentiel.sh /travail/pr
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -206,18 +240,18 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Outils (clang 18 et son runtime libFuzzer, zlib1g-dev)
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang-18 libclang-rt-18-dev zlib1g-dev
+      - name: Image du conteneur du juge (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
+        run: eval "$BEE_JUGE_ISOLE"
       # Les entrées fautives, les journaux de libFuzzer et les traces ne quittent JAMAIS la machine de
       # CI : journaux et artefacts d'un dépôt public sont publics (docs/securite.md du registre).
       # lancer.sh est en mode discret sous GitHub Actions (empreintes seulement) et rejoue chaque
       # entrée fautive sur la base : un écart qui y existe déjà est signalé sans compter contre la PR.
-      - name: Fuzzing différentiel, 2 harnais en parallèle, 600 s chacun
-        env:
-          CLANG: clang-18
-          BEE_FUZZ_SORTIES: ${{ runner.temp }}/sorties-fuzz
-          BEE_FUZZ_DISCRET: "1"
-        run: base/bee/ci/etape.sh "$ETATS" fuzzing base/bee/fuzz/lancer.sh 600 --source pr --reference base
+      - name: Fuzzing différentiel, 2 harnais en parallèle, 600 s chacun (conteneur sans réseau)
+        run: |
+          travail="$(bash -c "$BEE_TRAVAIL" -- fuzzing)"
+          base/bee/ci/etape.sh "$ETATS" fuzzing "$JUGE/isoler.sh" "$IMAGE" "$travail" -- \
+            env CLANG=clang-18 BEE_FUZZ_SORTIES=/travail/sorties-fuzz BEE_FUZZ_DISCRET=1 GITHUB_ACTIONS=true \
+            /travail/base/bee/fuzz/lancer.sh 600 --source /travail/pr --reference /travail/base
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -225,21 +259,21 @@ jobs:
           path: etats/
           if-no-files-found: warn
 
-  banc-ab:
-    name: Banc A/B
+  juge:
+    name: Juge isolé (x86-64)
     needs: manifeste
     if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
-      - name: Base de la PR (banc ; historique complet pour le corpus)
+      - name: Base de la PR (juge ; historique complet pour le corpus)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BASE_SHA }}
           path: base
           fetch-depth: 0
           persist-credentials: false
-      - name: Tête de la PR (historique complet, qui contient base et tête, pour les git worktree d'ab.py)
+      - name: Tête de la PR (historique complet, qui contient le point de départ et la tête)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
@@ -250,15 +284,21 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Outils (gcc, valgrind, zlib1g-dev)
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends build-essential valgrind zlib1g-dev
-      - name: Banc A/B entrelacé, 10 répétitions, avec instructions
+      - name: Image du conteneur du juge (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
+        run: eval "$BEE_JUGE_ISOLE"
+      - name: Juge isolé — A = point de départ de la PR, B = tête ; vérification, 10 répétitions, instructions
+        env:
+          SORTIE_COMPRESSEE: ${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
         run: |
           depart="$(git -C pr merge-base "$BASE_SHA" "$TETE_SHA")"
           echo "A = point de départ de la PR $depart (base $BASE_SHA), B = tête $TETE_SHA"
-          base/bee/ci/etape.sh "$ETATS" banc_ab \
-            python3 base/bee/bench/ab.py --depot pr --base "$depart" --candidate "$TETE_SHA" \
-              --repetitions 10 --instructions --json "$GITHUB_WORKSPACE/conserver/ab.json"
+          git -C pr worktree add --detach "$RUNNER_TEMP/source-a" "$depart"
+          git -C pr worktree add --detach "$RUNNER_TEMP/source-b" "$TETE_SHA"
+          base/bee/ci/etape.sh "$ETATS" juge_isole \
+            python3 "$JUGE/juge.py" --outillage "$(dirname "$(dirname "$JUGE")")" \
+              --source-a "$RUNNER_TEMP/source-a" --source-b "$RUNNER_TEMP/source-b" \
+              --sortie-compressee "$SORTIE_COMPRESSEE" --repetitions 10 \
+              --depot-diff pr --base "$depart" --tete "$TETE_SHA" --json "$GITHUB_WORKSPACE/conserver/juge.json"
       - name: Conserver l'état
         if: always()
         run: |
@@ -267,13 +307,55 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: etat-banc
+          name: etat-juge
           path: conserver/
+          if-no-files-found: warn
+
+  meta-juge:
+    name: Méta-tests du juge isolé
+    needs: manifeste
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Base de la PR
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tête de la PR (historique complet, pour le diff)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TETE_SHA }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+        run: |
+          export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
+          eval "$BEE_JUGES"
+      # Le juge d'une PR qui modifie bee/juge/ est celui de la PR : il doit prouver qu'il attrape des
+      # variantes malveillantes de miniz (bee/juge/test_juge.py), compilées et lancées en conteneur.
+      - name: Méta-tests (seulement si la PR modifie bee/juge/)
+        run: |
+          if git -C pr diff --quiet "$BASE_SHA...$TETE_SHA" -- bee/juge; then
+            echo "bee/juge/ inchangé par la PR : pas de méta-tests."
+            mkdir -p "$ETATS" && echo "succes" > "$ETATS/meta_juge.txt"
+            exit 0
+          fi
+          base/bee/ci/etape.sh "$ETATS" meta_juge env BEE_JUGE_INTEGRATION=1 python3 pr/bee/juge/test_juge.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: etat-meta-juge
+          path: etats/
           if-no-files-found: warn
 
   verdict:
     name: Verdict
-    needs: [manifeste, compilation-et-tests, fuzzing, banc-ab]
+    needs: [manifeste, compilation-et-tests, fuzzing, juge, meta-juge]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10

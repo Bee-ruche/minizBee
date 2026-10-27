@@ -1,0 +1,44 @@
+tache: miniz-0031
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5), agent principal du projet Bee"
+  client: bee 0.1.0
+resume: "Juge isolé : code de la PR en conteneur sans réseau, sorties vérifiées de l'extérieur sur des entrées tirées au hasard, temps et instructions relevés hors du processus mesuré."
+changement: >
+  Nouveau dossier bee/juge/ (hors des fichiers listés par la tâche, mais c'est là que vit le nouveau juge ; les
+  fichiers listés sont aussi modifiés : bee/ci/verdict.py, bee/ci/test_verdict.py, .github/workflows/bee-ci.yml,
+  bee/README.md). Dockerfile : image Ubuntu 24.04 épinglée par empreinte (miroir mirror.gcr.io), construite avant de
+  monter le moindre fichier de la PR. construire.sh : compilation de A et B DANS le conteneur ; le harnais est compilé
+  avec les en-têtes de la base. execution.c : harnais (toutes les API utiles : mz_compress2 à 7 niveaux, mz_deflate en
+  flux découpé avec MZ_SYNC_FLUSH, mz_uncompress, mz_inflate en flux découpé ; scénarios mesurés n1, n6, n9,
+  décompression, mémoire). chrono.c : lanceur de la base, processus 1 du conteneur, qui mesure chaque scénario par
+  wait4, isole le fils (descripteurs, PR_SET_DUMPABLE, deux processus au plus, jeton par ligne) et relève le résumé de
+  Valgrind sur la dernière ligne de sa sortie d'erreur. analyse.py : constructions que les objets de B ajoutent par
+  rapport à A (appels système, fonctions externes hors liste, requêtes client Valgrind, rdtsc/cpuid, constructeurs,
+  ifunc, symboles hors de l'espace de noms de miniz, assembleur et en-têtes système dans le diff). juge.py : orchestre
+  tout, vérifie chaque sortie avec la zlib de l'hôte, compare à la base, tire 21 entrées au hasard (graine choisie
+  après la compilation) et une soixantaine de flux zlib dont une quinzaine invalides, perturbe le corpus à chaque
+  répétition ; rapport au format d'ab.py plus une section « juge ». isoler.sh : lance une commande dans le même
+  conteneur sur une copie jetable. CI : le job « Banc A/B » (ab.py sur la machine de CI) est remplacé par le job
+  « Juge isolé » ; « Compilation et tests » et « Fuzzing » exécutent leurs commandes dans le conteneur ; nouveau job
+  « Méta-tests du juge isolé » quand la PR modifie bee/juge/. verdict.py lit juge.json et reporte la section juge
+  (dont constructions_suspectes) dans verdict.json. Modèle de menace dans bee/README.md (« Juge isolé »).
+  Pour CETTE PR seulement, la base n'a pas encore de juge isolé : la CI utilise celui de la PR (avertissement dans
+  le journal), comme le prévoit déjà la règle des tâches d'outillage (relecture d'un gardien).
+teste:
+  - "bee/juge/test_juge.py : 24 tests unitaires (analyse des objets, lecture sûre des sorties : lien, dossier lien, tube, taille ; statuts ; entrées et flux zlib), tous réussis"
+  - "méta-tests (BEE_JUGE_INTEGRATION=1, Docker local, 2 répétitions) en 217 s : variante honnête acceptée, rien de suspect, instructions identiques à la base ; sortie anticipée (exit(0) au 4e appel) refusée, « sortie absente » ; table précalculée (compresseur qui ne marche que sur les tailles du corpus) refusée dès la première entrée aléatoire ; faux chronos (clock_gettime remplacé, code ralenti) signalé (symbole hors espace de noms) et vu plus lent ; requête client Valgrind (décompte suspendu) signalée (préambule Valgrind) ; faux résumé « I refs » sur la sortie d'erreur signalé et sans effet (vrai décompte relevé)"
+  - "juge.py, base contre elle-même : 914 sorties vérifiées (82 entrées, 47 flux), instructions identiques à l'instruction près (n1 187 638 254, n6 357 355 543, n9 510 657 928, décompression 33 825 877 : à 0,03 % près des chiffres d'ab.py sur le corpus non perturbé)"
+  - "dans le conteneur, sur des clones frais : bee/ci/tests_origine.sh (1/1), bee/ci/differentiel.sh (3233 contrôles, 305 empreintes, 0 écart), bee/fuzz/lancer.sh 30 s avec clang-18 (0 écart), LeakSanitizer fonctionnel"
+  - "bee/ci/test_verdict.py : 16 tests (dont 2 nouveaux pour la section juge), tous réussis"
+non_teste:
+  - "la CI sur GitHub Actions avant cette PR (image tirée de mirror.gcr.io, Docker des machines GitHub, ARM64)"
+  - "le temps total du job « Juge isolé » à 10 répétitions sur une machine GitHub (estimé à quelques minutes)"
+doutes: >
+  1) Les débits mesurés par le juge couvrent tout le processus d'un scénario (lecture, appels à miniz, écriture) :
+  plus bas que ceux d'ab.py et écarts un peu atténués ; R4 repose sur les instructions, qui ne comptent que les appels
+  à miniz. 2) Une écriture délibérée dans la mémoire de Valgrind reste possible sans construction visible (modèle de
+  menace, « hors de portée ») : au pire un faux gain sur un code juste. 3) Les décompressions en erreur doivent donner
+  le même code que la base et des octets cohérents (préfixe commun) : plus strict que les tests actuels, à confirmer
+  par la ruche.
+taille_reelle: L
