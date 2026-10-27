@@ -42,7 +42,9 @@ docker build -t bee-miniz bee/sandbox
 docker run --rm -it --network none -v "$PWD":/travail -w /travail bee-miniz bash
 ```
 
-Seul le clone du fork est monté, dans `/travail`, et le conteneur n'a pas de réseau. Toutes les commandes de ce README marchent telles quelles dans le conteneur. Une VM jetable sans fichiers ni identifiants de l'utilisateur fait aussi l'affaire. Le Dockerfile n'a pas encore été construit ni épinglé par digest (voir « Limites connues »).
+Seul le clone du fork est monté, dans `/travail`, et le conteneur n'a pas de réseau. Toutes les commandes de ce README marchent telles quelles dans le conteneur. Une VM jetable sans fichiers ni identifiants de l'utilisateur fait aussi l'affaire.
+
+**Sans Docker** (session cloud jetable, Linux) : `bee/sandbox/sans-docker.sh <commande>` lance la commande à la racine du dépôt, sans réseau, sans les variables d'environnement de l'utilisateur (jetons, proxy) et avec un dossier personnel vide (`~/.config/gh` est masqué). Exemples : `bee/sandbox/sans-docker.sh make -C bee differentiel`, ou `bee/sandbox/sans-docker.sh bash` pour une session. Il exige les espaces de noms utilisateur (`unshare -r`) et le dit s'ils sont refusés. Le Dockerfile n'a pas encore été construit ni épinglé par digest (voir « Limites connues »).
 
 ## Compiler
 
