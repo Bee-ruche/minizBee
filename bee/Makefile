@@ -69,7 +69,11 @@ $(CONSTR)/banc: $(ICI)/bench/banc.c $(COMMUN) $(COMMUN_H) $(OBJETS_BANC)
 
 # ------------------------------------------------------------------ fuzzing
 HARNAIS := fuzz_inflate fuzz_compression
-FUZZ_DRAPEAUX := -g -O1 -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
+# -DNDEBUG : on fuzze miniz tel qu'il est livré (la construction « Release » le définit), sans ses
+# assertions internes. Une assertion préexistante atteignable arrêterait sinon chaque session de
+# fuzzing en quelques secondes, et le reste du temps serait perdu. Les assertions restent vérifiées
+# par les tests différentiels (OPT_TESTS). ASan et UBSan, eux, restent actifs.
+FUZZ_DRAPEAUX := -g -O1 -DNDEBUG -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
 
 fuzz-libfuzzer: $(addprefix $(CONSTR)/libfuzzer-,$(HARNAIS))
 fuzz-gcc: $(addprefix $(CONSTR)/gcc-,$(HARNAIS))

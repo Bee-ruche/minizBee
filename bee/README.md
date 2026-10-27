@@ -111,6 +111,7 @@ Résultat sur la base : **3233 contrôles, 0 écart**, environ 13 s. Le code de 
 bee/fuzz/lancer.sh 120                         # deux harnais en parallèle, 120 s chacun
 bee/fuzz/lancer.sh 600 --moteur libfuzzer      # comme la CI
 bee/fuzz/lancer.sh 60 --harnais fuzz_inflate   # un seul harnais
+bee/fuzz/lancer.sh 120 --reference /chemin/base  # classe chaque écart : nouveau ou préexistant
 ```
 
 | Harnais | Ce qu'il fait | Ce qui fait échouer |
@@ -121,6 +122,12 @@ bee/fuzz/lancer.sh 60 --harnais fuzz_inflate   # un seul harnais
 **Écarts tolérés.** Sur une entrée invalide, miniz et zlib, ou miniz en une fois et miniz en flux, n'ont pas toujours le même **statut** : l'un peut réussir quand l'autre échoue. Le harnais ne compare donc les sorties que lorsque les deux décompressions comparées ont réussi. Les données qui suivent la fin du flux sont ignorées des deux côtés, et une sortie de plus de 1 Mio est écartée. Côté compression, un flux avec des vidages fréquents peut dépasser `mz_compressBound`, ce qui est normal (zlib aussi) ; le harnais donne aussi au moins 8 octets de sortie par appel avec `MZ_SYNC_FLUSH`, comme l'exige le manuel de zlib.
 
 **Moteurs.** En CI, les harnais tournent sous libFuzzer (`clang -fsanitize=fuzzer,address,undefined`), 600 s chacun, en parallèle. Si `clang` ne sait pas lier libFuzzer (runtime `libclang_rt` absent), `lancer.sh` se replie sur gcc + ASan/UBSan avec `bee/fuzz/pilote_aleatoire.c`. Ce pilote rejoue les graines puis applique des mutations aléatoires, **sans retour de couverture** : il montre que les harnais tournent, mais il ne remplace pas libFuzzer. Les graines viennent du corpus de référence (`bee/fuzz/graines.py`). Le corpus de fuzzing et les entrées fautives (`bee/fuzz/sorties/`, `bee/construction/`) ne sont jamais versionnés. Si une entrée fait échouer un harnais, gardez-la pour vous et suivez la procédure « Signaler un problème de sécurité » du registre ([docs/securite.md](https://github.com/Bee-ruche/registre/blob/main/docs/securite.md)) : ne la publiez pas dans une PR, une issue ou une note de tâche.
+
+**Assertions.** Les harnais sont compilés avec `-DNDEBUG`, comme la construction « Release » de miniz : on fuzze la bibliothèque telle qu'elle est livrée. Une assertion interne préexistante et atteignable arrêterait sinon chaque session en quelques secondes. Les assertions de miniz restent vérifiées par les tests différentiels.
+
+**Écart nouveau ou préexistant.** Avec `--reference DOSSIER` (la CI passe la base de la PR), chaque entrée fautive est rejouée sur ces sources. Si elle y échoue aussi, l'écart est **préexistant** : `lancer.sh` le signale, mais il ne compte pas contre la PR (code de sortie 0). Sinon l'écart est **nouveau** et l'étape échoue. Une PR n'est donc jamais bloquée par un défaut qu'elle n'a pas introduit, et qu'on ne peut pas toujours corriger publiquement tout de suite. Limite : libFuzzer s'arrête au premier écart d'un harnais, donc un écart préexistant trouvé tôt réduit le temps de recherche de ce harnais.
+
+**Mode discret.** Sous GitHub Actions (ou avec `BEE_FUZZ_DISCRET=1`), `lancer.sh` n'affiche ni le journal de libFuzzer, ni la trace, ni l'entrée : seulement le harnais, la graine de libFuzzer, la taille et le début de l'empreinte SHA-256 de chaque entrée fautive. La CI ne publie que les fichiers d'état en artefact. Les journaux et artefacts d'un dépôt public sont lisibles par tous ; une entrée fautive ne doit jamais s'y retrouver. Pour l'étudier, reproduisez l'écart dans votre sandbox.
 
 ## Banc de mesure
 
@@ -199,7 +206,7 @@ Déclenchée sur chaque pull request, avec le seul droit `contents: read`.
 | --- | --- | --- | --- |
 | Manifeste et taille | ubuntu-24.04 | `manifeste_et_taille` | `bee/ci/manifeste.sh` : tâche lue dans le registre, puis `bee verifier-fork` (R1, commandement 3, manifeste) |
 | Compilation et tests | ubuntu-24.04 **et** ubuntu-24.04-arm | `compilation_<arch>`, `differentiel_<arch>` | `bee/ci/tests_origine.sh` (CMake + ctest), puis `bee/ci/differentiel.sh` (juges de la base, sources de la PR) |
-| Fuzzing | ubuntu-24.04 | `fuzzing` | `bee/fuzz/lancer.sh 600 --source pr` (libFuzzer, 2 harnais en parallèle, 10 min) |
+| Fuzzing | ubuntu-24.04 | `fuzzing` | `bee/fuzz/lancer.sh 600 --source pr --reference base` (libFuzzer, 2 harnais en parallèle, 10 min, mode discret ; seuls les écarts nouveaux font échouer) |
 | Banc A/B | ubuntu-24.04 | `banc_ab` | `ab.py --base <point de départ de la PR> --candidate <tête> --repetitions 10 --instructions` |
 | Verdict | ubuntu-24.04 | — | `bee/ci/verdict.py` produit `verdict.json`, publié en artefact `verdict` |
 
@@ -239,4 +246,6 @@ Ces chemins sont des **chemins juges** (`chemins_juges` de `projets/miniz.yaml` 
 - **Sandbox non construite.** Le Dockerfile n'a pas pu être construit dans l'environnement qui l'a écrit (pas de démon Docker), et son image de base n'est pas encore épinglée par digest : à faire par le premier mainteneur qui construit l'image.
 - **Non vérifié hors CI.** ARM64 et libFuzzer n'ont pas été exécutés localement (pas de machine ARM64, runtime libFuzzer absent) : leur premier passage a eu lieu sur GitHub Actions.
 - **Exclusion UBSan.** Le contrôle `pointer-overflow` de clang est désactivé dans les seuls fichiers sources de miniz, à cause de « pointeur nul + 0 » préexistants et bénins (tampons nuls de taille 0) : voir `bee/fuzz/ubsan-exclusions.txt`. ASan et tous les autres contrôles restent actifs.
+- **Assertions hors fuzzing.** Les harnais sont compilés avec `-DNDEBUG` (voir « Fuzzing ») : le fuzzing ne vérifie pas les assertions internes de miniz, seuls les tests différentiels le font, sur le corpus de référence.
+- **Pas d'entrée fautive en CI.** En mode discret, une entrée fautive trouvée en CI n'est conservée nulle part : seule son empreinte est publiée. La reproduire demande de relancer le fuzzing en privé (la graine affichée aide, sans garantir le même résultat).
 - **zlib de référence.** Les tests utilisent la zlib du système (1.3 sur Ubuntu 24.04, liée statiquement). Une autre version donnerait d'autres sorties `zlib->miniz`, mais aucune ne doit faire échouer les allers-retours.

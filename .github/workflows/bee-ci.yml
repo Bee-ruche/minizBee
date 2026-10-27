@@ -204,22 +204,21 @@ jobs:
           eval "$BEE_JUGES"
       - name: Outils (clang 18 et son runtime libFuzzer, zlib1g-dev)
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang-18 libclang-rt-18-dev zlib1g-dev
+      # Les entrées fautives, les journaux de libFuzzer et les traces ne quittent JAMAIS la machine de
+      # CI : journaux et artefacts d'un dépôt public sont publics (docs/securite.md du registre).
+      # lancer.sh est en mode discret sous GitHub Actions (empreintes seulement) et rejoue chaque
+      # entrée fautive sur la base : un écart qui y existe déjà est signalé sans compter contre la PR.
       - name: Fuzzing différentiel, 2 harnais en parallèle, 600 s chacun
         env:
           CLANG: clang-18
-          BEE_FUZZ_SORTIES: ${{ github.workspace }}/sorties-fuzz
-        run: base/bee/ci/etape.sh "$ETATS" fuzzing base/bee/fuzz/lancer.sh 600 --source pr
-      - name: Conserver l'état et les entrées fautives
-        if: always()
-        run: |
-          mkdir -p conserver
-          cp -r "$ETATS" conserver/etats 2>/dev/null || true
-          cp -r sorties-fuzz conserver/ 2>/dev/null || true
+          BEE_FUZZ_SORTIES: ${{ runner.temp }}/sorties-fuzz
+          BEE_FUZZ_DISCRET: "1"
+        run: base/bee/ci/etape.sh "$ETATS" fuzzing base/bee/fuzz/lancer.sh 600 --source pr --reference base
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: etat-fuzzing
-          path: conserver/
+          path: etats/
           if-no-files-found: warn
 
   banc-ab:
