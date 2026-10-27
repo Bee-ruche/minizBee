@@ -53,12 +53,17 @@ $(CONSTR)/differentiel: $(ICI)/tests/differentiel.c $(COMMUN) $(COMMUN_H) $(MINI
 	$(CC) $(OPT_TESTS) -std=gnu99 -D_GNU_SOURCE $(AVERTISSEMENTS) $(INCLUDES) \
 	  $(ICI)/tests/differentiel.c $(COMMUN) $(MINIZ_C) $(ZLIB_STATIQUE) -o $@
 
-$(CONSTR)/banc: $(ICI)/bench/banc.c $(COMMUN) $(COMMUN_H) $(MINIZ_C) $(MINIZ_H)
+# miniz est compilé seul, avec ses propres options (gnu90 comme dans CMakeLists.txt) ; -g ne change
+# pas le code produit et sert au profilage (callgrind, cachegrind).
+OBJETS_BANC := $(CONSTR)/banc-miniz.o $(CONSTR)/banc-miniz_tdef.o $(CONSTR)/banc-miniz_tinfl.o
+
+$(CONSTR)/banc-%.o: $(SOURCE)/%.c $(MINIZ_H)
 	@mkdir -p $(CONSTR)
-	$(CC) $(OPT_BANC) -std=gnu90 -D_GNU_SOURCE -c $(INCLUDES) $(MINIZ_C)
-	@mv miniz.o miniz_tdef.o miniz_tinfl.o $(CONSTR)/ 2>/dev/null || true
-	$(CC) $(OPT_BANC) -std=gnu99 -D_GNU_SOURCE $(AVERTISSEMENTS) $(CACHEGRIND) $(INCLUDES) \
-	  $(ICI)/bench/banc.c $(COMMUN) $(CONSTR)/miniz.o $(CONSTR)/miniz_tdef.o $(CONSTR)/miniz_tinfl.o -o $@
+	$(CC) $(OPT_BANC) -g -std=gnu90 -D_GNU_SOURCE $(INCLUDES) -c $< -o $@
+
+$(CONSTR)/banc: $(ICI)/bench/banc.c $(COMMUN) $(COMMUN_H) $(OBJETS_BANC)
+	$(CC) $(OPT_BANC) -g -std=gnu99 -D_GNU_SOURCE $(AVERTISSEMENTS) $(CACHEGRIND) $(INCLUDES) \
+	  $(ICI)/bench/banc.c $(COMMUN) $(OBJETS_BANC) -o $@
 
 # ------------------------------------------------------------------ fuzzing
 HARNAIS := fuzz_inflate fuzz_compression
