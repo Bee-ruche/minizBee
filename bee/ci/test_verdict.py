@@ -135,6 +135,10 @@ class Juges(unittest.TestCase):
                 os.makedirs(os.path.join(racine, "bee", "ci"))
                 with open(os.path.join(racine, "bee", "ci", "etape.sh"), "w") as f:
                     f.write("# " + racine + "\n")
+                # Le workflow est lui aussi un juge : il arrive avec bee/ et part avec lui à l'amorçage.
+                os.makedirs(os.path.join(racine, ".github", "workflows"))
+                with open(os.path.join(racine, ".github", "workflows", "bee-ci.yml"), "w") as f:
+                    f.write("# workflow de " + racine + "\n")
         return base, pr
 
     def lancer(self, d, base, pr, base_sha):
@@ -168,6 +172,8 @@ class Juges(unittest.TestCase):
             self.assertEqual(self.lire(d, "juges.txt"), "succes")
             with open(os.path.join(base, "bee", "ci", "etape.sh")) as f:
                 self.assertIn(pr, f.read())  # juges copiés depuis la PR
+            with open(os.path.join(base, ".github", "workflows", "bee-ci.yml")) as f:
+                self.assertIn(pr, f.read())  # le workflow aussi
 
     def test_autre_base_sans_juges_echoue(self):
         for sha in ("1" * 40, COMMIT_AMORCAGE[:-1] + "0", COMMIT_AMORCAGE[:12], COMMIT_AMORCAGE.upper(), ""):

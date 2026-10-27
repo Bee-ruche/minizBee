@@ -74,9 +74,12 @@ FUZZ_DRAPEAUX := -g -O1 -fno-omit-frame-pointer -fsanitize=address,undefined -fn
 fuzz-libfuzzer: $(addprefix $(CONSTR)/libfuzzer-,$(HARNAIS))
 fuzz-gcc: $(addprefix $(CONSTR)/gcc-,$(HARNAIS))
 
-$(CONSTR)/libfuzzer-%: $(ICI)/fuzz/%.c $(MINIZ_C) $(MINIZ_H)
+# Exclusions UBSan connues de clang, versionnées et commentées dans fuzz/ubsan-exclusions.txt.
+UBSAN_EXCLUSIONS := -fsanitize-ignorelist=$(ICI)/fuzz/ubsan-exclusions.txt
+
+$(CONSTR)/libfuzzer-%: $(ICI)/fuzz/%.c $(MINIZ_C) $(MINIZ_H) $(ICI)/fuzz/ubsan-exclusions.txt
 	@mkdir -p $(CONSTR)
-	$(CLANG) $(FUZZ_DRAPEAUX) -fsanitize=fuzzer -std=gnu99 -D_GNU_SOURCE $(INCLUDES) \
+	$(CLANG) $(FUZZ_DRAPEAUX) $(UBSAN_EXCLUSIONS) -fsanitize=fuzzer -std=gnu99 -D_GNU_SOURCE $(INCLUDES) \
 	  $< $(MINIZ_C) $(ZLIB_STATIQUE) -o $@
 
 $(CONSTR)/gcc-%: $(ICI)/fuzz/%.c $(ICI)/fuzz/pilote_aleatoire.c $(MINIZ_C) $(MINIZ_H)

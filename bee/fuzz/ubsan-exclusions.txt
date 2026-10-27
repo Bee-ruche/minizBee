@@ -1,0 +1,12 @@
+# Exclusions UBSan de clang pour les harnais libFuzzer (option -fsanitize-ignorelist).
+#
+# Chaque exclusion doit être aussi étroite que possible (un contrôle, une fonction), expliquée ici,
+# et ne viser qu'un comportement préexistant de miniz qui n'est pas un défaut de sécurité. Retirer
+# une exclusion est toujours bienvenu ; en ajouter une est une décision du conseil.
+#
+# pointer-overflow dans tinfl_decompress : « pointeur nul + 0 » dans le calcul des bornes des
+# tampons, quand l'appelant passe un tampon nul de taille 0. Comportement préexistant de miniz
+# d'origine, bénin (aucun accès mémoire), et défini à partir de la future norme C2y. Sans cette
+# exclusion, le fuzzing de chaque PR échouerait pour une raison étrangère à la PR.
+[pointer-overflow]
+fun:tinfl_decompress

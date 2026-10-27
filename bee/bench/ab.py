@@ -372,6 +372,7 @@ def main():
     afficher_tableau(rapport)
     texte = json.dumps(rapport, ensure_ascii=False, indent=2)
     if args.json:
+        os.makedirs(os.path.dirname(os.path.abspath(args.json)), exist_ok=True)
         with open(args.json, "w", encoding="utf-8") as f:
             f.write(texte + "\n")
     print(texte)

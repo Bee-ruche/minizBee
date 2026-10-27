@@ -34,6 +34,8 @@ elif [ "$base_sha" = "$BEE_COMMIT_AMORCAGE" ] && [ -f "$pr/bee/ci/etape.sh" ]; t
   echo "::warning::AMORÇAGE : la base $base_sha (commit d'amorçage épinglé) ne contient pas bee/ ; les juges viennent de la PR elle-même (verdict.json : amorcage: true)."
   rm -rf "$base/bee"
   cp -a "$pr/bee" "$base/bee"
+  mkdir -p "$base/.github/workflows"
+  cp -a "$pr/.github/workflows/bee-ci.yml" "$base/.github/workflows/bee-ci.yml"
   echo "oui" > "$etats/amorcage.txt"
   echo "succes" > "$etats/juges.txt"
 else
