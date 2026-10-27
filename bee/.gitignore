@@ -1,0 +1,8 @@
+# Fichiers produits par l'outillage Bee : jamais versionnés, tout se régénère.
+/corpus/donnees/
+/construction/
+/resultats/
+/fuzz/sorties/
+/fuzz/corpus-graines/
+__pycache__/
+*.pyc
