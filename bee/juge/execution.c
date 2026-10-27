@@ -19,9 +19,10 @@
        memoire        pour chaque f : m/NOM (mz_deflate niveau 6 par blocs de 64 Kio, lus au fil de l'eau,
                       sans charger le fichier : la mémoire mesurée de l'extérieur est celle de miniz)
      --prefixe N : ne garde que les N premiers octets de chaque fichier f (modes n1, n6, n9).
-   Avec -DBEE_AVEC_CACHEGRIND, seuls les appels à miniz des modes n1, n6, n9 et decompression sont
-   instrumentés (valgrind --tool=cachegrind --instr-at-start=no) : lecture et écriture des fichiers
-   restent hors du décompte. Code de sortie : 0 si toutes les sorties ont été écrites, 2 sinon. */
+   Pas de zone de mesure : le décompte d'instructions porte sur tout le processus. Une zone « mesurée »
+   laisserait au code de la PR des appels hors zone (mz_compressBound, par exemple) où déplacer son
+   travail (revue adverse du 27/10). Lecture et écriture des fichiers sont identiques pour A et B.
+   Code de sortie : 0 si toutes les sorties ont été écrites, 2 sinon. */
 
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #include "miniz.h"
@@ -32,15 +33,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-
-#ifdef BEE_AVEC_CACHEGRIND
-#include <valgrind/cachegrind.h>
-#define DEBUT_INSTRUMENTATION() CACHEGRIND_START_INSTRUMENTATION
-#define FIN_INSTRUMENTATION() CACHEGRIND_STOP_INSTRUMENTATION
-#else
-#define DEBUT_INSTRUMENTATION() ((void)0)
-#define FIN_INSTRUMENTATION() ((void)0)
-#endif
 
 #define BLOC_FLUX (64 * 1024)
 #define NOM_MAX 64
@@ -361,11 +353,9 @@ static int compresser(entree *liste, size_t n, int niveau)
             sorties[i] = (unsigned char *)allouer(tailles[i]);
         }
     }
-    DEBUT_INSTRUMENTATION();
     for (i = 0; i < n; i++)
         if (liste[i].type == 'f')
             codes[i] = mz_compress2(sorties[i], &tailles[i], liste[i].donnees, (mz_ulong)liste[i].longueur, niveau);
-    FIN_INSTRUMENTATION();
     creer_dossier("c");
     for (i = 0; i < n; i++)
         if (liste[i].type == 'f')
@@ -396,11 +386,9 @@ static int decompresser(entree *liste, size_t n)
             sorties[i] = (unsigned char *)allouer(liste[i].taille);
         }
     }
-    DEBUT_INSTRUMENTATION();
     for (i = 0; i < n; i++)
         if (liste[i].type == 'z')
             codes[i] = mz_uncompress(sorties[i], &tailles[i], liste[i].donnees, (mz_ulong)liste[i].longueur);
-    FIN_INSTRUMENTATION();
     creer_dossier("d");
     for (i = 0; i < n; i++)
         if (liste[i].type == 'z')

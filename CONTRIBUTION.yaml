@@ -31,6 +31,7 @@ teste:
   - "juge.py, base contre elle-même : 914 sorties vérifiées (82 entrées, 47 flux), instructions identiques à l'instruction près (n1 187 638 254, n6 357 355 543, n9 510 657 928, décompression 33 825 877 : à 0,03 % près des chiffres d'ab.py sur le corpus non perturbé)"
   - "dans le conteneur, sur des clones frais : bee/ci/tests_origine.sh (1/1), bee/ci/differentiel.sh (3233 contrôles, 305 empreintes, 0 écart), bee/fuzz/lancer.sh 30 s avec clang-18 (0 écart), LeakSanitizer fonctionnel"
   - "bee/ci/test_verdict.py : 16 tests (dont 2 nouveaux pour la section juge), tous réussis"
+  - "revue adverse par un agent indépendant (27/10) : un faux gain d'instructions démontré (initialisation déplacée dans mz_compressBound, appelée par le harnais hors de la zone comptée : +1,7 % à 128 Kio, +27,5 % à 4 Kio, rien de suspect). Corrigé : tout le processus du harnais est compté, fichiers bruts et flux passent dans des conteneurs séparés ; méta-test travail_deplace ajouté (gain < 0,2 %) ; 7 méta-tests sur 7 réussis en 273 s. Le constat sur les instructions rep (comptées une fois) a été vérifié faux : Valgrind compte chaque itération (1 000 000 d'itérations, +1 000 000 d'instructions). R4 exige désormais, dans le registre, que le chronomètre confirme un gain d'instructions"
 non_teste:
   - "la CI sur GitHub Actions avant cette PR (image tirée de mirror.gcr.io, Docker des machines GitHub, ARM64)"
   - "le temps total du job « Juge isolé » à 10 répétitions sur une machine GitHub (estimé à quelques minutes)"

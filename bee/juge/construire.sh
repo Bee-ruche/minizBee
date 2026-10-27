@@ -25,7 +25,7 @@ for f in miniz miniz_tdef miniz_tinfl; do
   cc -O3 -DNDEBUG -g -std=gnu90 -D_GNU_SOURCE -I"$source_miniz" -I"$outillage/bee/commun" \
     -c "$source_miniz/$f.c" -o "$sortie/obj/$f.o"
 done
-cc -O2 -g -std=gnu99 -D_GNU_SOURCE -DBEE_AVEC_CACHEGRIND -Wall -Wextra -Wno-unused-parameter \
+cc -O2 -g -std=gnu99 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter \
   -I"$outillage/miniz" -I"$outillage/bee/commun" \
   "$outillage/bee/juge/execution.c" "$sortie/obj/miniz.o" "$sortie/obj/miniz_tdef.o" "$sortie/obj/miniz_tinfl.o" \
   -o "$sortie/execution"

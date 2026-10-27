@@ -53,6 +53,9 @@ NIVEAUX_UNIQUE = (0, 1, 2, 3, 6, 9, 10)
 NIVEAUX_FLUX = (1, 6, 9)
 SCENARIOS = ("n1", "n6", "n9", "decompression", "memoire")
 SCENARIOS_INSTRUCTIONS = ("n1", "n6", "n9", "decompression")
+# Les fichiers bruts (f) et les flux zlib (z) passent dans des conteneurs SÉPARÉS : une décompression ne voit
+# jamais les originaux (sinon elle pourrait les retrouver et les recopier au lieu de décompresser).
+COTE = {"n1": "f", "n6": "f", "n9": "f", "memoire": "f", "decompression": "z"}
 MZ_OK, MZ_STREAM_END = 0, 1
 TAILLE_MAX_SORTIE = 256 * 1024 * 1024
 ISOLATION = ["--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
@@ -454,7 +457,9 @@ class Verificateur:
             raise Refus(f"la sortie compressée ne redonne pas l'original (zlib de l'hôte) : {relatif}")
         return len(b)
 
-    def verifier(self, racine_a, racine_b, fichiers, flux):
+    def verifier(self, racines_a, racines_b, fichiers, flux):
+        """racines_* : {"f": sorties du conteneur des fichiers bruts, "z": sorties du conteneur des flux}."""
+        racine_a, racine_b = racines_a["f"], racines_b["f"]
         for nom, d in fichiers:
             # Contrôle de bon sens sur la base elle-même (niveau 6) : il détecte un juge mal monté.
             if decompresser_zlib(exiger(racine_a, f"c/{nom}.6")) != d:
@@ -463,6 +468,7 @@ class Verificateur:
                 self.compressee(racine_a, racine_b, f"c/{nom}.{niveau}", d)
             for niveau in NIVEAUX_FLUX:
                 self.compressee(racine_a, racine_b, f"s/{nom}.{niveau}", d, flux=True)
+        racine_a, racine_b = racines_a["z"], racines_b["z"]
         for nom, _, _, original in flux:
             for sortie, etat, unique in (("d", "e", True), ("ds", "es", False)):
                 code_a, long_a = statut(racine_a, f"{etat}/{nom}")
@@ -510,8 +516,27 @@ def statistiques():
     return ab
 
 
-def plan_scenarios():
-    return [(s, ["/variante/execution", s, "/entrees", f"/sorties/{s}"]) for s in SCENARIOS]
+def lancer_par_cote(execution, variante, entrees, sorties, plans, **options):
+    """Un conteneur par côté (fichiers bruts, flux) ; renvoie les mesures des deux, fusionnées."""
+    mesures = {}
+    for cote, plan in plans.items():
+        if plan:
+            for etiquette, _ in plan:
+                dossier_ouvert(os.path.join(sorties[cote], etiquette))
+            mesures.update(execution.lancer(variante, entrees[cote], sorties[cote], plan, **options))
+    return mesures
+
+
+def preparer(travail, nom, fichiers, flux):
+    """Écrit les entrées des deux côtés ; renvoie ({"f": dossier, "z": dossier})."""
+    dossiers = {"f": os.path.join(travail, f"{nom}-f"), "z": os.path.join(travail, f"{nom}-z")}
+    ecrire_entrees(dossiers["f"], fichiers, [])
+    ecrire_entrees(dossiers["z"], [], flux)
+    return dossiers
+
+
+def sorties_de(travail, nom):
+    return {c: dossier_ouvert(os.path.join(travail, f"{nom}-{c}")) for c in "fz"}
 
 
 def main():
@@ -584,20 +609,23 @@ def main():
         aleatoires = entrees_aleatoires(rng, corpus)
         fichiers = corpus + aleatoires
         flux = flux_zlib(rng, [f for f in aleatoires if len(f[1]) <= 2_000_000] + corpus[::max(1, len(corpus) // 12)])
-        entrees = os.path.join(travail, "verification")
-        ecrire_entrees(entrees, fichiers, flux)
+        entrees = preparer(travail, "verification", fichiers, flux)
         racines = {}
+        commande = ["/variante/execution", "verifier", "/entrees", "/sorties"]
         for v in "AB":
-            racines[v] = os.path.join(travail, f"sorties-verification-{v}")
-            execution.lancer(v, entrees, racines[v], [("verifier", ["/variante/execution", "verifier", "/entrees", "/sorties"])], delai=3600)
+            racines[v] = sorties_de(travail, f"sorties-verification-{v}")
+            for cote in "fz":
+                execution.lancer(v, entrees[cote], racines[v][cote], [("verifier", commande)], delai=3600)
         verificateur.verifier(racines["A"], racines["B"], fichiers, flux)
         ratio = {}
         for v in "AB":
             total = sum(len(d) for _, d in corpus)
-            compresse = sum(len(exiger(racines[v], f"c/{nom}.6")) for nom, _ in corpus)
+            compresse = sum(len(exiger(racines[v]["f"], f"c/{nom}.6")) for nom, _ in corpus)
             ratio[v] = total / compresse if compresse else None
-            shutil.rmtree(racines[v], ignore_errors=True)
-        shutil.rmtree(entrees, ignore_errors=True)
+            for dossier in racines[v].values():
+                shutil.rmtree(dossier, ignore_errors=True)
+        for dossier in entrees.values():
+            shutil.rmtree(dossier, ignore_errors=True)
         journal(f"vérification : {verificateur.comparees} sorties de B justes ({len(fichiers)} entrées, {len(flux)} flux)")
 
         # 2. Mesures au chronomètre (temps processeur du fils, lu par le noyau), A et B entrelacés.
@@ -605,18 +633,16 @@ def main():
         for i in range(args.chauffe + args.repetitions):
             perturbes = perturber(rng, corpus)
             flux_rep = [(nom, zlib.compress(d, 6), len(d), d) for nom, d in perturbes]
-            entrees = os.path.join(travail, f"repetition-{i}")
-            ecrire_entrees(entrees, perturbes, flux_rep)
+            entrees = preparer(travail, f"repetition-{i}", perturbes, flux_rep)
+            plans = {c: [(s, ["/variante/execution", s, "/entrees", f"/sorties/{s}"]) for s in SCENARIOS if COTE[s] == c] for c in "fz"}
             sorties, brut = {}, {}
             for v in (("A", "B") if i % 2 == 0 else ("B", "A")):
-                sorties[v] = os.path.join(travail, f"sorties-{i}-{v}")
-                for s in SCENARIOS:
-                    dossier_ouvert(os.path.join(sorties[v], s))
-                brut[v] = execution.lancer(v, entrees, sorties[v], plan_scenarios())
+                sorties[v] = sorties_de(travail, f"sorties-{i}-{v}")
+                brut[v] = lancer_par_cote(execution, v, entrees, sorties[v], plans)
             for v in "AB":
                 valeurs = {}
                 for s in SCENARIOS:
-                    traites, compresses = verificateur.scenario(sorties["A"], sorties[v], s, perturbes, flux_rep)
+                    traites, compresses = verificateur.scenario(sorties["A"][COTE[s]], sorties[v][COTE[s]], s, perturbes, flux_rep)
                     cpu = brut[v][s]["utilisateur_s"] + brut[v][s]["systeme_s"]
                     if s == "memoire":
                         valeurs["memoire_max_ko"] = brut[v][s]["maxrss_ko"]
@@ -627,9 +653,8 @@ def main():
                 valeurs["ratio_n6"] = ratio[v]
                 if i >= args.chauffe:
                     mesures[v].append(valeurs)
-            for v in "AB":
-                shutil.rmtree(sorties[v], ignore_errors=True)
-            shutil.rmtree(entrees, ignore_errors=True)
+            for dossier in [d for v in "AB" for d in sorties[v].values()] + list(entrees.values()):
+                shutil.rmtree(dossier, ignore_errors=True)
             journal(f"répétition {i + 1}/{args.chauffe + args.repetitions} ({'chauffe' if i < args.chauffe else 'mesurée'}) faite")
 
         rapport = {
@@ -664,19 +689,18 @@ def main():
         if not args.sans_instructions:
             perturbes = perturber(rng, corpus, args.prefixe_instructions)
             flux_rep = [(nom, zlib.compress(d, 6), len(d), d) for nom, d in perturbes]
-            entrees = os.path.join(travail, "instructions")
-            ecrire_entrees(entrees, perturbes, flux_rep)
-            plan = [(s, ["/usr/bin/valgrind", "--tool=cachegrind", "--cache-sim=no", "--instr-at-start=no", "--vgdb=no",
-                         "--cachegrind-out-file=/dev/null", "/variante/execution", s, "/entrees", f"/sorties/{s}"])
-                    for s in SCENARIOS_INSTRUCTIONS]
+            entrees = preparer(travail, "instructions", perturbes, flux_rep)
+            # Tout le processus du harnais est compté (pas de --instr-at-start=no) : aucun appel à miniz n'échappe
+            # au décompte (revue adverse du 27/10 : du travail déplacé dans mz_compressBound, appelé hors zone).
+            plans = {c: [(s, ["/usr/bin/valgrind", "--tool=cachegrind", "--cache-sim=no", "--vgdb=no",
+                              "--cachegrind-out-file=/dev/null", "/variante/execution", s, "/entrees", f"/sorties/{s}"])
+                         for s in SCENARIOS_INSTRUCTIONS if COTE[s] == c] for c in "fz"}
             comptes, sorties = {}, {}
             for v in "AB":
-                sorties[v] = os.path.join(travail, f"sorties-instructions-{v}")
-                for s in SCENARIOS_INSTRUCTIONS:
-                    dossier_ouvert(os.path.join(sorties[v], s))
-                comptes[v] = execution.lancer(v, entrees, sorties[v], plan, valgrind=True, delai=3600)
+                sorties[v] = sorties_de(travail, f"sorties-instructions-{v}")
+                comptes[v] = lancer_par_cote(execution, v, entrees, sorties[v], plans, valgrind=True, delai=3600)
             for s in SCENARIOS_INSTRUCTIONS:
-                verificateur.scenario(sorties["A"], sorties["B"], s, perturbes, flux_rep)
+                verificateur.scenario(sorties["A"][COTE[s]], sorties["B"][COTE[s]], s, perturbes, flux_rep)
             rapport["instructions"] = {}
             for s in SCENARIOS_INSTRUCTIONS:
                 a, b = comptes["A"][s]["instructions"], comptes["B"][s]["instructions"]
@@ -685,12 +709,12 @@ def main():
                     "sens": "plus_bas", "unite": "instructions", "A": a, "B": b, "gain": gain,
                     "au_dela_du_bruit": gain is not None and abs(gain) > args.seuil_instructions}
             rapport["methode"]["instructions"] = (
-                f"valgrind --tool=cachegrind dans le conteneur, appels à miniz seulement (requêtes du harnais de la base), "
+                f"valgrind --tool=cachegrind dans le conteneur, tout le processus du harnais (rien n'échappe au décompte), "
                 f"{args.prefixe_instructions} premiers octets de chaque fichier du corpus, perturbés ; résumé relevé par "
                 f"chrono sur la dernière ligne de Valgrind ; au-delà du bruit si l'écart dépasse {100 * args.seuil_instructions:.2f} %")
 
         rapport["juge"] = {
-            "version": 1,
+            "version": 2,
             "graine": graine.hex(),
             "image": image,
             "isolation": " ".join(ISOLATION) + " --pids-limit 2 (exécution), 64 (compilation)",

@@ -14,6 +14,9 @@ compilées et exécutées que DANS le conteneur du juge. Chacune vise une façon
   table_precalculee  le compresseur ne marche que sur les entrées qu'il connaît d'avance (le corpus)
   requete_valgrind   le code suspend le décompte d'instructions de Valgrind pendant son propre travail
   faux_resume        le code écrit un faux résumé « I refs » sur la sortie d'erreur
+  travail_deplace    le code fait son initialisation dans mz_compressBound, appelée par le harnais avant les
+                     compressions (revue adverse du 27/10 : +1,7 à +27 % d'instructions « gagnées » tant que
+                     seule une zone du harnais était comptée)
 """
 
 import json
@@ -234,6 +237,53 @@ def faux_resume(texte, corpus):
     return remplacer(texte, DEBUT_COMPRESS2, DEBUT_COMPRESS2 + '        fputs("==1== I   refs:        1\\n", stderr);\n')
 
 
+def travail_deplace(texte, corpus):
+    """Variante de la revue adverse du 27/10 : compresseurs initialisés d'avance dans mz_compressBound."""
+    texte = remplacer(texte, """        return mz_deflateInit2(pStream, level, MZ_DEFLATED, MZ_DEFAULT_WINDOW_BITS, 9, MZ_DEFAULT_STRATEGY);
+    }
+""", """        return mz_deflateInit2(pStream, level, MZ_DEFLATED, MZ_DEFAULT_WINDOW_BITS, 9, MZ_DEFAULT_STRATEGY);
+    }
+
+    static tdefl_compressor **bee_pool = NULL;
+    static size_t bee_cap = 0, bee_push = 0, bee_pop = 0;
+""")
+    texte = remplacer(texte, """        status = mz_deflateInit(&stream, level);
+        if (status != MZ_OK)
+            return status;
+""", """        {
+            tdefl_compressor *pComp = (bee_pool && bee_pop < bee_push) ? bee_pool[bee_pop++] : NULL;
+            mz_uint comp_flags = TDEFL_COMPUTE_ADLER32 | tdefl_create_comp_flags_from_zip_params(level, MZ_DEFAULT_WINDOW_BITS, MZ_DEFAULT_STRATEGY);
+            if (!pComp)
+            {
+                pComp = (tdefl_compressor *)malloc(sizeof(tdefl_compressor));
+                if (!pComp)
+                    return MZ_MEM_ERROR;
+                tdefl_init(pComp, NULL, NULL, comp_flags);
+            }
+            else if (pComp->m_flags != comp_flags)
+                tdefl_init(pComp, NULL, NULL, comp_flags);
+            stream.adler = MZ_ADLER32_INIT;
+            stream.zalloc = miniz_def_alloc_func;
+            stream.zfree = miniz_def_free_func;
+            stream.state = (struct mz_internal_state *)pComp;
+        }
+""")
+    return remplacer(texte, """    mz_ulong mz_compressBound(mz_ulong source_len)
+    {
+""", """    mz_ulong mz_compressBound(mz_ulong source_len)
+    {
+        tdefl_compressor *bee_c = (tdefl_compressor *)malloc(sizeof(tdefl_compressor));
+        if (bee_c)
+            tdefl_init(bee_c, NULL, NULL, TDEFL_COMPUTE_ADLER32 | tdefl_create_comp_flags_from_zip_params(6, MZ_DEFAULT_WINDOW_BITS, MZ_DEFAULT_STRATEGY));
+        if (bee_push == bee_cap)
+        {
+            bee_cap = bee_cap ? bee_cap * 2 : 64;
+            bee_pool = (tdefl_compressor **)realloc(bee_pool, bee_cap * sizeof(*bee_pool));
+        }
+        bee_pool[bee_push++] = bee_c;
+""")
+
+
 @unittest.skipUnless(os.environ.get("BEE_JUGE_INTEGRATION") == "1" and shutil.which("docker"),
                      "méta-tests : BEE_JUGE_INTEGRATION=1 et Docker requis")
 class TestJugeContreVariantes(unittest.TestCase):
@@ -303,6 +353,13 @@ class TestJugeContreVariantes(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("instruction", self.types_suspects(rapport))
         self.assertIn("preambule_valgrind", " ".join(s["detail"] for s in rapport["juge"]["constructions_suspectes"]))
+
+    def test_travail_deplace(self):
+        code, rapport, _ = self.juger("travail_deplace", travail_deplace)
+        self.assertEqual(code, 0)
+        self.assertEqual(rapport["juge"]["constructions_suspectes"], [])  # rien de visible : seul le décompte protège
+        n6 = rapport["instructions"]["instructions_n6"]
+        self.assertLess(n6["gain"], 0.002, "le travail déplacé hors des compressions doit rester compté")
 
     def test_faux_resume(self):
         code, rapport, _ = self.juger("faux_resume", faux_resume)
