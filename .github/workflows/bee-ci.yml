@@ -392,7 +392,13 @@ jobs:
           RESULTATS_JOBS: ${{ toJSON(needs) }}
         run: |
           printf '%s' "$RESULTATS_JOBS" > resultats-jobs.json
-          python3 base/bee/ci/verdict.py --artefacts artefacts --etats "$ETATS" --jobs resultats-jobs.json \
+          verdict=base/bee/ci/verdict.py
+          if [ ! -f base/bee/juge/juge.py ]; then
+            # Même règle que pour le juge isolé : seule la PR qui l'introduit apporte l'assembleur qui le connaît.
+            echo "::warning::La base n'a pas encore de juge isolé : l'assembleur du verdict de la PR est utilisé (tâche d'outillage, relecture d'un gardien exigée par le registre)."
+            verdict=pr/bee/ci/verdict.py
+          fi
+          python3 "$verdict" --artefacts artefacts --etats "$ETATS" --jobs resultats-jobs.json \
             --depot pr --base "$BASE_SHA" --tete "$TETE_SHA" --sortie verdict.json
           cat verdict.json
       - name: Verdict de repli (base sans juges, verdict.py indisponible)
