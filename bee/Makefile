@@ -9,7 +9,8 @@
 #   SOURCE  dossier qui contient les sources de miniz à juger (défaut : la racine du dépôt).
 #           ab.py et la CI s'en servent pour compiler l'outillage d'une révision contre la
 #           bibliothèque d'une autre.
-#   CONSTR  dossier de construction (défaut : bee/construction).
+#   CONSTR  dossier de construction (défaut : bee/construction/<cible>, par exemple
+#           bee/construction/banc/banc et bee/construction/differentiel/differentiel).
 #   CC      compilateur C (défaut : cc, c'est-à-dire gcc sur Debian/Ubuntu).
 #
 # Seuls miniz.c, miniz_tdef.c et miniz_tinfl.c sont compilés : le périmètre v0 du fork exclut
@@ -18,7 +19,8 @@
 
 ICI     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 SOURCE  ?= $(abspath $(ICI)/..)
-CONSTR  ?= $(ICI)/construction
+# Un sous-dossier par cible par défaut ($(MAKECMDGOALS)) ; « tout » range chaque cible dans son dossier.
+CONSTR  ?= $(ICI)/construction/$(if $(filter-out tout,$(firstword $(MAKECMDGOALS))),$(firstword $(MAKECMDGOALS)),commun)
 CC      ?= cc
 CLANG   ?= clang
 

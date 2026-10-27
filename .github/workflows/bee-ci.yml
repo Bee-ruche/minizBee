@@ -39,6 +39,28 @@ env:
   TETE_SHA: ${{ github.event.pull_request.head.sha }}
   REGISTRE: Bee-ruche/registre
   ETATS: ${{ github.workspace }}/etats
+  # Amorçage : la première PR, qui apporte bee/, a pour base le master d'origine, sans juges.
+  # Pour CE commit seulement, les juges viennent de la PR elle-même (verdict : amorcage: true).
+  BEE_COMMIT_AMORCAGE: 2948eebafc5b9f1c69bebed80333e403a09bd62d
+  # Logique de bee/ci/juges.sh (copie identique, vérifiée par bee/ci/test_verdict.py), exécutée par
+  # l'étape « Juges » de chaque job : à l'amorçage, la base ne contient pas encore ce script.
+  # Variables attendues : base, pr, base_sha, etats.
+  BEE_JUGES: |
+    mkdir -p "$etats"
+    if [ -f "$base/bee/ci/etape.sh" ]; then
+      echo "Juges : bee/ de la base de la PR ($base_sha)."
+      echo "succes" > "$etats/juges.txt"
+    elif [ "$base_sha" = "$BEE_COMMIT_AMORCAGE" ] && [ -f "$pr/bee/ci/etape.sh" ]; then
+      echo "::warning::AMORÇAGE : la base $base_sha (commit d'amorçage épinglé) ne contient pas bee/ ; les juges viennent de la PR elle-même (verdict.json : amorcage: true)."
+      rm -rf "$base/bee"
+      cp -a "$pr/bee" "$base/bee"
+      echo "oui" > "$etats/amorcage.txt"
+      echo "succes" > "$etats/juges.txt"
+    else
+      echo "echec" > "$etats/juges.txt"
+      echo "::error::La base de la PR ($base_sha) ne contient pas bee/ : pas de juges, CI refusée (seul le commit d'amorçage $BEE_COMMIT_AMORCAGE est accepté sans juges)." >&2
+      exit 1
+    fi
 
 jobs:
   manifeste:
@@ -64,6 +86,10 @@ jobs:
           path: pr
           fetch-depth: 0
           persist-credentials: false
+      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+        run: |
+          export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
+          eval "$BEE_JUGES"
       - name: Registre Bee (branche main)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -130,6 +156,10 @@ jobs:
           path: pr
           fetch-depth: 0
           persist-credentials: false
+      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+        run: |
+          export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
+          eval "$BEE_JUGES"
       - name: Outils (gcc, g++, cmake, zlib1g-dev)
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends build-essential cmake zlib1g-dev
       - name: Compilation et tests d'origine de miniz
@@ -166,6 +196,10 @@ jobs:
           ref: ${{ env.TETE_SHA }}
           path: pr
           persist-credentials: false
+      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+        run: |
+          export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
+          eval "$BEE_JUGES"
       - name: Outils (clang 18 et son runtime libFuzzer, zlib1g-dev)
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang-18 libclang-rt-18-dev zlib1g-dev
       - name: Fuzzing différentiel, 2 harnais en parallèle, 600 s chacun
@@ -207,6 +241,10 @@ jobs:
           path: pr
           fetch-depth: 0
           persist-credentials: false
+      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+        run: |
+          export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
+          eval "$BEE_JUGES"
       - name: Outils (gcc, valgrind, zlib1g-dev)
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends build-essential valgrind zlib1g-dev
       - name: Banc A/B entrelacé, 10 répétitions, avec instructions
@@ -248,6 +286,11 @@ jobs:
           path: pr
           fetch-depth: 0
           persist-credentials: false
+      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+        id: juges
+        run: |
+          export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
+          eval "$BEE_JUGES"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
@@ -262,10 +305,16 @@ jobs:
           RESULTATS_JOBS: ${{ toJSON(needs) }}
         run: |
           printf '%s' "$RESULTATS_JOBS" > resultats-jobs.json
-          python3 base/bee/ci/verdict.py --artefacts artefacts --jobs resultats-jobs.json \
+          python3 base/bee/ci/verdict.py --artefacts artefacts --etats "$ETATS" --jobs resultats-jobs.json \
             --depot pr --base "$BASE_SHA" --tete "$TETE_SHA" --sortie verdict.json
           cat verdict.json
+      - name: Verdict de repli (base sans juges, verdict.py indisponible)
+        if: failure() && steps.juges.outcome == 'failure'
+        run: |
+          printf '%s\n' '{"ci": "rouge", "etape_en_echec": "Juges (base sans bee/)", "gain": null, "metrique": null, "au_dela_du_bruit": false, "mesures": {"A": {}, "B": {}}, "instructions": null, "degradations": {}, "lignes_modifiees": null, "amorcage": false}' > verdict.json
+          cat verdict.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
           name: verdict
           path: verdict.json

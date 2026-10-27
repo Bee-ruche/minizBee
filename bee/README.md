@@ -49,8 +49,8 @@ Seul le clone du fork est monté, dans `/travail`, et le conteneur n'a pas de r�
 L'outillage compile miniz lui-même, sans CMake, avec `bee/Makefile` :
 
 ```bash
-make -C bee differentiel     # bee/construction/differentiel : tests (-O2 -g, assertions de miniz actives)
-make -C bee banc             # bee/construction/banc : banc (-O3 -DNDEBUG, comme le « Release » de CMake)
+make -C bee differentiel     # bee/construction/differentiel/differentiel : tests (-O2 -g, assertions actives)
+make -C bee banc             # bee/construction/banc/banc : banc (-O3 -DNDEBUG, comme le « Release » de CMake)
 make -C bee fuzz-libfuzzer   # harnais libFuzzer (clang complet requis)
 make -C bee fuzz-gcc         # mêmes harnais, gcc + ASan/UBSan et pilote aléatoire (repli)
 make -C bee SOURCE=/autre/copie/de/miniz differentiel   # juger d'autres sources avec cet outillage

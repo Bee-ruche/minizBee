@@ -19,6 +19,7 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
   instructions      décompte Cachegrind par scénario sur un sous-corpus : {"instructions_n6": {"A", "B", "gain"}, ...}
   degradations      métriques dégradées au-delà du bruit (test du signe ; instructions au-delà du seuil), avec leur gain
   lignes_modifiees  lignes modifiées hors bee/**, tests/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
+  amorcage          true si les juges venaient de la PR elle-même (base = commit d'amorçage, voir bee/ci/juges.sh)
   etapes, details   pour les relecteurs
 
 Métrique principale, dans l'ordre : la clé « metrique » de la tâche du registre (tache.yaml), sinon une clé
@@ -38,8 +39,10 @@ import os
 import subprocess
 import sys
 
-# (étape, libellé, job GitHub qui la porte), dans l'ordre de la CI.
+# (étape, libellé, job GitHub qui la porte), dans l'ordre de la CI. « juges » est écrite par
+# bee/ci/juges.sh dans chaque job ; son job est None : elle compte dès qu'un job l'a écrite.
 ETAPES = [
+    ("juges", "Juges (base sans bee/)", None),
     ("manifeste_et_taille", "Manifeste et taille", "manifeste"),
     ("compilation_x86_64", "Compilation et tests d'origine (x86-64)", "compilation-et-tests"),
     ("compilation_arm64", "Compilation et tests d'origine (ARM64)", "compilation-et-tests"),
@@ -63,16 +66,19 @@ def lire_texte(chemin):
 
 
 def etats_depuis(dossiers):
-    etats = {}
+    """Renvoie (états des étapes, amorçage signalé par au moins un job)."""
+    etats, amorcage = {}, False
     for dossier in dossiers:
         for chemin in glob.glob(os.path.join(dossier, "**", "*.txt"), recursive=True):
             nom = os.path.basename(chemin)[:-4]
-            if any(nom == e for e, _, _ in ETAPES):
+            if nom == "amorcage":
+                amorcage = amorcage or lire_texte(chemin) == "oui"
+            elif any(nom == e for e, _, _ in ETAPES):
                 valeur = lire_texte(chemin)
                 # Un « echec » l'emporte toujours sur un « succes » du même nom.
                 if valeur in ("succes", "echec") and etats.get(nom) != "echec":
                     etats[nom] = valeur
-    return etats
+    return etats, amorcage
 
 
 def charger_yaml(chemin):
@@ -146,7 +152,7 @@ def main():
     if args.jobs:
         with open(args.jobs, encoding="utf-8") as f:
             jobs = json.load(f) or {}
-    etats = etats_depuis([d for d in (args.etats, args.artefacts) if d])
+    etats, amorcage = etats_depuis([d for d in (args.etats, args.artefacts) if d])
     chemin_ab = args.ab or trouver(args.artefacts, "ab.json")
     chemin_manifeste = args.manifeste or trouver(args.artefacts, "CONTRIBUTION.yaml")
     chemin_tache = args.tache or trouver(args.artefacts, "tache.yaml")
@@ -155,6 +161,9 @@ def main():
     resultat_etapes = {}
     for etape, _, job in ETAPES:
         etat = etats.get(etape, "absent")
+        if job is None:  # « juges » : un seul « echec » suffit ; absente hors CI (simulation sans juges.sh)
+            resultat_etapes[etape] = "echec" if etat == "echec" else ("succes" if etat == "succes" or not jobs else "absent")
+            continue
         resultat_job = (jobs.get(job) or {}).get("result") if jobs else None
         if jobs and resultat_job != "success":
             # Job en échec : l'étape garde son propre état ; une étape « succes » d'un job en échec reste
@@ -214,6 +223,7 @@ def main():
                          if instructions else None),
         "degradations": degradations,
         "lignes_modifiees": lignes_modifiees(args.depot, args.base, args.tete),
+        "amorcage": amorcage,
         "etapes": resultat_etapes,
         "details": {
             "origine_metrique": origine,
@@ -233,7 +243,9 @@ def main():
         json.dump(verdict, f, ensure_ascii=False, indent=2)
         f.write("\n")
     resume = {k: verdict[k] for k in ("ci", "etape_en_echec", "gain", "metrique", "au_dela_du_bruit", "degradations",
-                                      "lignes_modifiees") if k in verdict}
+                                      "lignes_modifiees", "amorcage") if k in verdict}
+    if amorcage:
+        print("AMORÇAGE : les juges de cette exécution venaient de la PR elle-même (amorcage: true).", file=sys.stderr)
     print(json.dumps(resume, ensure_ascii=False))
     return 0
 
