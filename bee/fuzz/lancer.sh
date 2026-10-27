@@ -72,6 +72,13 @@ case "$moteur" in
   gcc) cible="fuzz-gcc"; prefixe="gcc" ;;
   *) echo "moteur inconnu : $moteur" >&2; exit 2 ;;
 esac
+if [ "$moteur" = "gcc" ]; then
+  # Par défaut, ASan et UBSan quittent par _exit(1) : le pilote de repli, qui ne sauve l'entrée fautive
+  # que sur SIGABRT ou SIGSEGV, la perdait, et le classement nouveau / préexistant devenait impossible.
+  # abort_on_error=1 fait passer toute erreur par abort(), donc par la sauvegarde.
+  export ASAN_OPTIONS="abort_on_error=1${ASAN_OPTIONS:+:$ASAN_OPTIONS}"
+  export UBSAN_OPTIONS="abort_on_error=1:halt_on_error=1${UBSAN_OPTIONS:+:$UBSAN_OPTIONS}"
+fi
 
 echo "== Corpus et graines"
 python3 "$BEE/corpus/generer.py"
