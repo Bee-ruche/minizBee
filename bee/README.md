@@ -221,7 +221,7 @@ Les jobs « Compilation et tests » et « Fuzzing » exécutent leurs commandes 
 - Aucun secret, et aucun checkout ne conserve d'identifiants.
 - Le code C de la PR ne s'exécute **jamais** sur la machine de CI elle-même : seulement dans le conteneur du juge, sans réseau (section suivante).
 - Les **juges** (tests, corpus, banc, fuzzing, juge isolé, scripts) viennent de la **base** de la PR : la PR ne peut pas assouplir ce qui la juge.
-- `CONTRIBUTION.yaml` et la tâche sont lus comme des données.
+- Le manifeste de la PR (`manifestes/<tâche>.yaml`, un fichier par tâche ; l'ancien `CONTRIBUTION.yaml` à la racine reste lu) et la tâche sont lus comme des données.
 - `ci` se décide sur le résultat des jobs GitHub, que le code de la PR ne peut pas réécrire.
 
 Pour simuler la CI en local, prenez les commandes de la colonne de droite, dans l'ordre. Les scripts `bee/ci/*.sh` sont exactement ceux du workflow.

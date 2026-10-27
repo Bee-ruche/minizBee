@@ -23,8 +23,11 @@ changement: >
   « Juge isolé » ; « Compilation et tests » et « Fuzzing » exécutent leurs commandes dans le conteneur ; nouveau job
   « Méta-tests du juge isolé » quand la PR modifie bee/juge/. verdict.py lit juge.json et reporte la section juge
   (dont constructions_suspectes) dans verdict.json. Modèle de menace dans bee/README.md (« Juge isolé »).
-  Pour CETTE PR seulement, la base n'a pas encore de juge isolé : la CI utilise celui de la PR (avertissement dans
-  le journal), comme le prévoit déjà la règle des tâches d'outillage (relecture d'un gardien).
+  Pour CETTE PR seulement, la base n'a pas encore de juge isolé : bee/ci/juges.sh prend alors les juges de la PR
+  qui l'apporte, comme à l'amorçage (avertissement « INTRODUCTION DU JUGE ISOLÉ », verdict amorcage: true) ; c'est
+  une tâche d'outillage, relue par un gardien. Manifeste par tâche : ce manifeste est dans manifestes/miniz-0031.yaml
+  (bee/ci/manifeste.sh prend le seul fichier de manifestes/ que la PR ajoute ; l'ancien CONTRIBUTION.yaml à la racine
+  reste lu), pour que deux PR ouvertes en même temps n'entrent plus en conflit.
 teste:
   - "bee/juge/test_juge.py : 24 tests unitaires (analyse des objets, lecture sûre des sorties : lien, dossier lien, tube, taille ; statuts ; entrées et flux zlib), tous réussis"
   - "méta-tests (BEE_JUGE_INTEGRATION=1, Docker local, 2 répétitions) en 217 s : variante honnête acceptée, rien de suspect, instructions identiques à la base ; sortie anticipée (exit(0) au 4e appel) refusée, « sortie absente » ; table précalculée (compresseur qui ne marche que sur les tailles du corpus) refusée dès la première entrée aléatoire ; faux chronos (clock_gettime remplacé, code ralenti) signalé (symbole hors espace de noms) et vu plus lent ; requête client Valgrind (décompte suspendu) signalée (préambule Valgrind) ; faux résumé « I refs » sur la sortie d'erreur signalé et sans effet (vrai décompte relevé)"

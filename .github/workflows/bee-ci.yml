@@ -22,7 +22,7 @@
 #     .github/ ou bee/ peut fabriquer son propre verdict. Le registre le détecte de son côté (liste des
 #     fichiers de la PR lue auprès de l'API GitHub, verdicts.yml) : verdict refusé pour une optimisation,
 #     relecture du conseil ou d'un Confirmé exigée pour une tâche d'outillage (R3).
-#   - CONTRIBUTION.yaml et la tâche du registre sont des données (yaml.safe_load), jamais exécutées ;
+#   - le manifeste (manifestes/<tâche>.yaml) et la tâche du registre sont des données (yaml.safe_load), jamais exécutées ;
 #     les valeurs qui en sortent sont validées contre des listes fermées.
 #   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
 #     de la PR ne peut pas réécrire ; les fichiers d'état servent seulement à nommer l'étape en échec.
@@ -59,7 +59,15 @@ env:
   # Variables attendues : base, pr, base_sha, etats.
   BEE_JUGES: |
     mkdir -p "$etats"
-    if [ -f "$base/bee/ci/etape.sh" ]; then
+    if [ -f "$base/bee/ci/etape.sh" ] && [ ! -f "$base/bee/juge/juge.py" ] && [ -f "$pr/bee/juge/juge.py" ]; then
+      echo "::warning::INTRODUCTION DU JUGE ISOLÉ : la base $base_sha n'a pas encore bee/juge/ ; les juges viennent de la PR qui l'apporte (verdict.json : amorcage: true ; tâche d'outillage, relue par un gardien)."
+      rm -rf "$base/bee"
+      cp -a "$pr/bee" "$base/bee"
+      mkdir -p "$base/.github/workflows"
+      cp -a "$pr/.github/workflows/bee-ci.yml" "$base/.github/workflows/bee-ci.yml"
+      echo "oui" > "$etats/amorcage.txt"
+      echo "succes" > "$etats/juges.txt"
+    elif [ -f "$base/bee/ci/etape.sh" ]; then
       echo "Juges : bee/ de la base de la PR ($base_sha)."
       echo "succes" > "$etats/juges.txt"
     elif [ "$base_sha" = "$BEE_COMMIT_AMORCAGE" ] && [ -f "$pr/bee/ci/etape.sh" ]; then
@@ -76,16 +84,11 @@ env:
       exit 1
     fi
 
-  # Juge isolé : celui de la base. Seule la PR qui l'introduit (base sans bee/juge/juge.py) utilise le
-  # sien ; une PR qui modifie bee/ est de toute façon une tâche d'outillage, relue par un gardien (R3).
+  # Juge isolé : celui de la base (bee/juge/), après l'étape « Juges ».
   BEE_JUGE_ISOLE: |
     juge="$GITHUB_WORKSPACE/base/bee/juge"
-    if [ ! -f "$juge/juge.py" ]; then
-      echo "::warning::La base n'a pas encore de juge isolé : celui de la PR est utilisé (tâche d'outillage, relecture d'un gardien exigée par le registre)."
-      juge="$GITHUB_WORKSPACE/pr/bee/juge"
-    fi
     echo "JUGE=$juge" >> "$GITHUB_ENV"
-    echo "IMAGE=$(python3 "$juge/juge.py" --image-seulement --outillage "$(dirname "$(dirname "$juge")")")" >> "$GITHUB_ENV"
+    echo "IMAGE=$(python3 "$juge/juge.py" --image-seulement --outillage "$GITHUB_WORKSPACE/base")" >> "$GITHUB_ENV"
   # Copie de travail jetable pour une étape conteneurisée : la base et la PR, fraîches.
   BEE_TRAVAIL: |
     travail="$RUNNER_TEMP/travail-$1"
@@ -149,9 +152,14 @@ jobs:
           base/bee/ci/etape.sh "$ETATS" manifeste_et_taille base/bee/ci/manifeste.sh pr registre python3
       - name: Conserver le manifeste, la tâche et l'état
         if: always()
+        env:
+          MANIFESTE: ${{ steps.manifeste.outputs.manifeste }}
         run: |
           mkdir -p donnees
-          cp pr/CONTRIBUTION.yaml donnees/ 2>/dev/null || true
+          # Nom validé par bee/ci/manifeste.sh (manifestes/miniz-NNNN.yaml ou CONTRIBUTION.yaml).
+          case "$MANIFESTE" in
+            manifestes/miniz-[0-9][0-9][0-9][0-9].yaml|CONTRIBUTION.yaml) cp "pr/$MANIFESTE" donnees/CONTRIBUTION.yaml 2>/dev/null || true ;;
+          esac
           cp -r "$ETATS" donnees/etats 2>/dev/null || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
@@ -295,7 +303,7 @@ jobs:
           git -C pr worktree add --detach "$RUNNER_TEMP/source-a" "$depart"
           git -C pr worktree add --detach "$RUNNER_TEMP/source-b" "$TETE_SHA"
           base/bee/ci/etape.sh "$ETATS" juge_isole \
-            python3 "$JUGE/juge.py" --outillage "$(dirname "$(dirname "$JUGE")")" \
+            python3 "$JUGE/juge.py" --outillage base \
               --source-a "$RUNNER_TEMP/source-a" --source-b "$RUNNER_TEMP/source-b" \
               --sortie-compressee "$SORTIE_COMPRESSEE" --repetitions 10 \
               --depot-diff pr --base "$depart" --tete "$TETE_SHA" --json "$GITHUB_WORKSPACE/conserver/juge.json"
@@ -392,13 +400,7 @@ jobs:
           RESULTATS_JOBS: ${{ toJSON(needs) }}
         run: |
           printf '%s' "$RESULTATS_JOBS" > resultats-jobs.json
-          verdict=base/bee/ci/verdict.py
-          if [ ! -f base/bee/juge/juge.py ]; then
-            # Même règle que pour le juge isolé : seule la PR qui l'introduit apporte l'assembleur qui le connaît.
-            echo "::warning::La base n'a pas encore de juge isolé : l'assembleur du verdict de la PR est utilisé (tâche d'outillage, relecture d'un gardien exigée par le registre)."
-            verdict=pr/bee/ci/verdict.py
-          fi
-          python3 "$verdict" --artefacts artefacts --etats "$ETATS" --jobs resultats-jobs.json \
+          python3 base/bee/ci/verdict.py --artefacts artefacts --etats "$ETATS" --jobs resultats-jobs.json \
             --depot pr --base "$BASE_SHA" --tete "$TETE_SHA" --sortie verdict.json
           cat verdict.json
       - name: Verdict de repli (base sans juges, verdict.py indisponible)

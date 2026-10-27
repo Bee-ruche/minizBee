@@ -189,6 +189,33 @@ class Juges(unittest.TestCase):
             with open(os.path.join(base, ".github", "workflows", "bee-ci.yml")) as f:
                 self.assertIn(pr, f.read())  # le workflow aussi
 
+    def ajouter_juge(self, racine):
+        os.makedirs(os.path.join(racine, "bee", "juge"), exist_ok=True)
+        with open(os.path.join(racine, "bee", "juge", "juge.py"), "w") as f:
+            f.write("# juge de " + racine + "\n")
+
+    def test_introduction_du_juge_isole(self):
+        with tempfile.TemporaryDirectory() as d:
+            base, pr = self.preparer(d, base_avec_bee=True)
+            self.ajouter_juge(pr)
+            r = self.lancer(d, base, pr, "0" * 40)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("INTRODUCTION DU JUGE ISOLÉ", r.stdout)
+            self.assertEqual(self.lire(d, "amorcage.txt"), "oui")
+            with open(os.path.join(base, "bee", "juge", "juge.py")) as f:
+                self.assertIn(pr, f.read())
+
+    def test_juge_isole_de_la_base_garde(self):
+        with tempfile.TemporaryDirectory() as d:
+            base, pr = self.preparer(d, base_avec_bee=True)
+            self.ajouter_juge(base)
+            self.ajouter_juge(pr)
+            r = self.lancer(d, base, pr, "0" * 40)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIsNone(self.lire(d, "amorcage.txt"))
+            with open(os.path.join(base, "bee", "juge", "juge.py")) as f:
+                self.assertIn(base, f.read())  # une PR ne remplace jamais le juge de la base
+
     def test_autre_base_sans_juges_echoue(self):
         for sha in ("1" * 40, COMMIT_AMORCAGE[:-1] + "0", COMMIT_AMORCAGE[:12], COMMIT_AMORCAGE.upper(), ""):
             with self.subTest(sha=sha), tempfile.TemporaryDirectory() as d:
