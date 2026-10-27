@@ -26,6 +26,22 @@
 
 #include "miniz.h"
 
+/* Comparaison des correspondances par mots de 64 bits dans tdefl_find_match (tâche miniz-0015).
+   Sur plateforme petit-boutiste à registres 64 bits : XOR de 8 octets lus par memcpy (aucun
+   transtypage de pointeur), puis position du premier octet différent par __builtin_ctzll. La boucle
+   de mots ne s'exécute que tant qu'il reste au moins 8 octets sous le plafond max_match_len, et la
+   fin se fait octet par octet : elle calcule donc EXACTEMENT la même longueur que la comparaison
+   octet par octet (mêmes correspondances choisies, sortie compressée identique) et ne lit jamais
+   au-delà de max_match_len octets, donc jamais au-delà du dictionnaire. Repli octet par octet sinon.
+   Indépendant de MINIZ_USE_UNALIGNED_LOADS_AND_STORES ; peut être forcé avec -DTDEFL_FIND_MATCH_64BIT=0. */
+#if !defined(TDEFL_FIND_MATCH_64BIT)
+#if MINIZ_LITTLE_ENDIAN && MINIZ_HAS_64BIT_REGISTERS && (defined(__GNUC__) || defined(__clang__))
+#define TDEFL_FIND_MATCH_64BIT 1
+#else
+#define TDEFL_FIND_MATCH_64BIT 0
+#endif
+#endif
+
 #ifndef MINIZ_NO_DEFLATE_APIS
 
 #ifdef __cplusplus
@@ -856,9 +872,41 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             break;
         p = s;
         q = d->m_dict + probe_pos;
+#if TDEFL_FIND_MATCH_64BIT
+        probe_len = 0;
+        {
+            mz_uint trouve = 0;
+            while (!trouve && (max_match_len - probe_len) >= 8)
+            {
+                mz_uint64 wp, wq, x;
+                memcpy(&wp, p, sizeof(wp));
+                memcpy(&wq, q, sizeof(wq));
+                x = wp ^ wq;
+                if (x)
+                {
+                    probe_len += (mz_uint)(__builtin_ctzll(x) >> 3);
+                    trouve = 1;
+                }
+                else
+                {
+                    p += 8;
+                    q += 8;
+                    probe_len += 8;
+                }
+            }
+            if (!trouve)
+                while ((probe_len < max_match_len) && (*p == *q))
+                {
+                    p++;
+                    q++;
+                    probe_len++;
+                }
+        }
+#else
         for (probe_len = 0; probe_len < max_match_len; probe_len++)
             if (*p++ != *q++)
                 break;
+#endif
         if (probe_len > match_len)
         {
             *pMatch_dist = dist;
