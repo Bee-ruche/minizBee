@@ -1,48 +1,52 @@
 #!/usr/bin/env python3
-"""Assemble verdict.json pour la CI Bee du fork miniz.
+"""Assemble verdict.json pour la CI Bee du fork miniz (job « verdict » de .github/workflows/bee-ci.yml).
 
-Entrées (dossier --etats) : un fichier <etape>.txt par étape de la CI, contenant « succes », « echec »
-ou « saute », écrit par chaque job ; le rapport d'ab.py (--ab) ; le manifeste CONTRIBUTION.yaml de la
-PR (--manifeste), lu comme une DONNÉE, jamais exécuté ; la tâche du registre Bee (--tache, optionnel).
+Entrées :
+  --jobs        résultats des jobs GitHub (toJSON(needs) : {"manifeste": {"result": "success", "outputs": {...}}, ...}).
+                C'est la source de vérité de « ci » : le code de la PR ne peut pas les réécrire.
+  --artefacts   dossier où les artefacts « etat-* » ont été téléchargés : fichiers d'état <etape>.txt
+                (« succes » / « echec », écrits par bee/ci/etape.sh), rapport ab.json d'ab.py,
+                CONTRIBUTION.yaml de la PR et tache.yaml du registre. Ce sont des DONNÉES : lues, jamais exécutées.
+  --depot, --base, --tete   pour compter les lignes modifiées (git diff --numstat).
 
-Sortie : verdict.json, avec au minimum :
-  ci                « verte » ou « rouge »
-  etape_en_echec    nom de la première étape en échec, si rouge (sinon absent)
+Sortie (--sortie, défaut verdict.json), avec au minimum :
+  ci                « verte » si tous les jobs ont réussi, sinon « rouge »
+  etape_en_echec    première étape en échec dans l'ordre de la CI (si rouge)
   gain              gain relatif sur la métrique principale de la tâche (positif = mieux), ou null
   metrique          la métrique principale retenue, ou null
-  au_dela_du_bruit  booléen : test du signe d'ab.py sur la métrique principale (false si aucune)
-  mesures           {"A": {...6 métriques...}, "B": {...}} (médianes d'ab.py)
-  instructions      décompte Cachegrind par scénario (A, B, gain) sur un sous-corpus, ou null
-  degradations      métriques dégradées au-delà du bruit (test du signe), avec leur gain : donnée pour R5
-  lignes_modifiees  lignes modifiées hors chemins exclus (pour bee enregistrer-verdict)
+  au_dela_du_bruit  test du signe d'ab.py sur la métrique principale (false si aucune métrique)
+  mesures           {"A": {6 métriques}, "B": {6 métriques}} : médianes d'ab.py
+  instructions      décompte Cachegrind par scénario sur un sous-corpus : {"instructions_n6": {"A", "B", "gain"}, ...}
+  degradations      métriques dégradées au-delà du bruit (test du signe ; instructions au-delà du seuil), avec leur gain
+  lignes_modifiees  lignes modifiées hors bee/**, tests/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
+  etapes, details   pour les relecteurs
 
-La métrique principale vient, dans l'ordre : de la clé « metrique » de la tâche du registre si elle est
-fournie (--tache), sinon d'une clé « metrique » du manifeste, sinon d'une métrique unique présente dans
-mesures.avant du manifeste. Si aucune n'est désignée, gain vaut null.
+Métrique principale, dans l'ordre : la clé « metrique » de la tâche du registre (tache.yaml), sinon une clé
+« metrique » du manifeste, sinon la seule métrique de mesures.avant du manifeste. Faute de quoi, gain = null.
 
-La CI ne juge pas R4 et R5 (seuils de gain et d'effets de bord) : elle publie les mesures, le registre
-applique les règles. « ci » ne dit que si les étapes de vérification ont réussi.
+La CI ne tranche pas R4 et R5 (seuils de gain et d'effets de bord) : elle publie les mesures et les
+dégradations, l'outil du registre applique les règles.
 
-Dépendance : PyYAML, seulement pour lire le manifeste (python3-yaml ou pip install pyyaml) ; sans
-PyYAML, gain vaut null et la raison est écrite dans le verdict.
+Usage local (simulation) : python3 bee/ci/verdict.py --etats DOSSIER --ab ab.json [--manifeste F] [--tache F]
 """
 
 import argparse
 import fnmatch
+import glob
 import json
 import os
 import subprocess
 import sys
 
-# Ordre des étapes de la CI : la première en échec est rapportée.
+# (étape, libellé, job GitHub qui la porte), dans l'ordre de la CI.
 ETAPES = [
-    ("manifeste_et_taille", "Manifeste et taille"),
-    ("compilation_x86_64", "Compilation et tests d'origine (x86-64)"),
-    ("compilation_arm64", "Compilation et tests d'origine (ARM64)"),
-    ("differentiel_x86_64", "Tests différentiels et empreintes (x86-64)"),
-    ("differentiel_arm64", "Tests différentiels et empreintes (ARM64)"),
-    ("fuzzing", "Fuzzing (x86-64)"),
-    ("banc_ab", "Banc A/B"),
+    ("manifeste_et_taille", "Manifeste et taille", "manifeste"),
+    ("compilation_x86_64", "Compilation et tests d'origine (x86-64)", "compilation-et-tests"),
+    ("compilation_arm64", "Compilation et tests d'origine (ARM64)", "compilation-et-tests"),
+    ("differentiel_x86_64", "Tests différentiels et empreintes (x86-64)", "compilation-et-tests"),
+    ("differentiel_arm64", "Tests différentiels et empreintes (ARM64)", "compilation-et-tests"),
+    ("fuzzing", "Fuzzing (x86-64)", "fuzzing"),
+    ("banc_ab", "Banc A/B", "banc-ab"),
 ]
 METRIQUES = ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
              "debit_decompression", "ratio_n6", "memoire_max_ko"]
@@ -50,13 +54,25 @@ METRIQUES = ["debit_compression_n1", "debit_compression_n6", "debit_compression_
 CHEMINS_HORS_DECOMPTE = ["bee/**", "tests/**", "CONTRIBUTION.yaml"]
 
 
-def lire_etat(dossier, etape):
-    chemin = os.path.join(dossier, etape + ".txt")
+def lire_texte(chemin):
     try:
         with open(chemin, encoding="utf-8") as f:
-            return f.read().strip().lower() or "absent"
+            return f.read().strip().lower()
     except OSError:
-        return "absent"
+        return None
+
+
+def etats_depuis(dossiers):
+    etats = {}
+    for dossier in dossiers:
+        for chemin in glob.glob(os.path.join(dossier, "**", "*.txt"), recursive=True):
+            nom = os.path.basename(chemin)[:-4]
+            if any(nom == e for e, _, _ in ETAPES):
+                valeur = lire_texte(chemin)
+                # Un « echec » l'emporte toujours sur un « succes » du même nom.
+                if valeur in ("succes", "echec") and etats.get(nom) != "echec":
+                    etats[nom] = valeur
+    return etats
 
 
 def charger_yaml(chemin):
@@ -69,9 +85,9 @@ def charger_yaml(chemin):
     try:
         with open(chemin, encoding="utf-8") as f:
             donnees = yaml.safe_load(f)
-    except Exception as e:  # le manifeste vient de la PR : toute erreur de lecture est une donnée invalide
+    except Exception as e:  # donnée de la PR : toute erreur de lecture rend simplement la donnée invalide
         return None, f"illisible ({type(e).__name__})"
-    return (donnees if isinstance(donnees, dict) else None), ("ok" if isinstance(donnees, dict) else "pas un objet YAML")
+    return (donnees, "ok") if isinstance(donnees, dict) else (None, "pas un objet YAML")
 
 
 def metrique_principale(tache, manifeste):
@@ -99,71 +115,99 @@ def lignes_modifiees(depot, base, tete):
     total = 0
     for ligne in sortie.splitlines():
         ajoutees, retirees, chemin = ligne.split("\t", 2)
-        if any(fnmatch.fnmatchcase(chemin, m) for m in CHEMINS_HORS_DECOMPTE) or ajoutees == "-":
+        if ajoutees == "-" or any(fnmatch.fnmatchcase(chemin, m) for m in CHEMINS_HORS_DECOMPTE):
             continue
         total += int(ajoutees) + int(retirees)
     return total
 
 
+def trouver(dossier, nom):
+    if not dossier:
+        return None
+    trouves = sorted(glob.glob(os.path.join(dossier, "**", nom), recursive=True))
+    return trouves[0] if trouves else None
+
+
 def main():
     analyseur = argparse.ArgumentParser(description="Assemble verdict.json pour la CI Bee du fork miniz.")
-    analyseur.add_argument("--etats", required=True, help="dossier des fichiers <etape>.txt")
-    analyseur.add_argument("--ab", help="rapport JSON d'ab.py")
+    analyseur.add_argument("--jobs", help="toJSON(needs) du workflow : résultats des jobs (source de vérité de « ci »)")
+    analyseur.add_argument("--artefacts", help="dossier des artefacts etat-* téléchargés")
+    analyseur.add_argument("--etats", help="dossier des fichiers <etape>.txt (simulation locale)")
+    analyseur.add_argument("--ab", help="rapport JSON d'ab.py (défaut : ab.json trouvé dans --artefacts)")
     analyseur.add_argument("--manifeste", help="CONTRIBUTION.yaml de la PR (donnée)")
-    analyseur.add_argument("--tache", help="fichier YAML de la tâche dans le registre (optionnel)")
+    analyseur.add_argument("--tache", help="tâche du registre (défaut : tache.yaml trouvé dans --artefacts)")
     analyseur.add_argument("--depot", help="clone du fork, pour compter les lignes modifiées")
-    analyseur.add_argument("--base", help="commit de base de la PR")
-    analyseur.add_argument("--tete", help="commit de tête de la PR")
+    analyseur.add_argument("--base")
+    analyseur.add_argument("--tete")
     analyseur.add_argument("--sortie", default="verdict.json")
     args = analyseur.parse_args()
 
-    etats = {etape: lire_etat(args.etats, etape) for etape, _ in ETAPES}
-    en_echec = next((libelle for etape, libelle in ETAPES if etats[etape] not in ("succes", "saute")), None)
+    jobs = {}
+    if args.jobs:
+        with open(args.jobs, encoding="utf-8") as f:
+            jobs = json.load(f) or {}
+    etats = etats_depuis([d for d in (args.etats, args.artefacts) if d])
+    chemin_ab = args.ab or trouver(args.artefacts, "ab.json")
+    chemin_manifeste = args.manifeste or trouver(args.artefacts, "CONTRIBUTION.yaml")
+    chemin_tache = args.tache or trouver(args.artefacts, "tache.yaml")
 
-    manifeste, etat_manifeste = charger_yaml(args.manifeste)
-    tache, etat_tache = charger_yaml(args.tache)
+    # Étape par étape : réussie seulement si son fichier d'état dit « succes » ET (en CI) si son job a réussi.
+    resultat_etapes = {}
+    for etape, _, job in ETAPES:
+        etat = etats.get(etape, "absent")
+        resultat_job = (jobs.get(job) or {}).get("result") if jobs else None
+        if jobs and resultat_job != "success":
+            resultat_etapes[etape] = "echec" if etat != "succes" else f"echec (job {resultat_job})"
+        else:
+            resultat_etapes[etape] = "succes" if etat == "succes" else ("echec" if etat == "echec" else "absent")
+    jobs_en_echec = [nom for nom, v in jobs.items() if (v or {}).get("result") != "success"]
+    en_echec = next((libelle for etape, libelle, _ in ETAPES if resultat_etapes[etape] != "succes"), None)
+    if en_echec is None and jobs_en_echec:
+        en_echec = "job " + ", ".join(sorted(jobs_en_echec))
+
+    manifeste, etat_manifeste = charger_yaml(chemin_manifeste)
+    tache, etat_tache = charger_yaml(chemin_tache)
     metrique, origine = metrique_principale(tache, manifeste)
 
     rapport = None
-    if args.ab and os.path.exists(args.ab):
+    if chemin_ab and os.path.exists(chemin_ab):
         try:
-            with open(args.ab, encoding="utf-8") as f:
+            with open(chemin_ab, encoding="utf-8") as f:
                 rapport = json.load(f)
         except (OSError, ValueError):
             rapport = None
 
-    verdict = {"ci": "rouge" if en_echec else "verte"}
-    if en_echec:
-        verdict["etape_en_echec"] = en_echec
-    gain, bruit = None, False
-    mesures = {"A": {m: None for m in METRIQUES}, "B": {m: None for m in METRIQUES}}
-    if rapport:
-        mesures = rapport.get("mesures", mesures)
-        if metrique and metrique in rapport.get("metriques", {}):
-            gain = rapport["metriques"][metrique].get("gain")
-            bruit = bool(rapport["metriques"][metrique].get("au_dela_du_bruit"))
     metriques_ab = (rapport or {}).get("metriques", {})
     instructions = (rapport or {}).get("instructions")
+    gain, bruit = None, False
+    if metrique and metrique in metriques_ab:
+        gain = metriques_ab[metrique].get("gain")
+        bruit = bool(metriques_ab[metrique].get("au_dela_du_bruit"))
     degradations = {m: v.get("gain") for m, v in metriques_ab.items() if v.get("degradation_au_dela_du_bruit")}
     for nom, v in (instructions or {}).items():
         if v.get("au_dela_du_bruit") and (v.get("gain") or 0) < 0:
             degradations[nom] = v.get("gain")
+
+    verdict = {"ci": "rouge" if en_echec else "verte"}
+    if en_echec:
+        verdict["etape_en_echec"] = en_echec
     verdict.update({
         "gain": gain,
         "metrique": metrique,
         "au_dela_du_bruit": bruit,
-        "mesures": mesures,
+        "mesures": (rapport or {}).get("mesures") or {"A": {m: None for m in METRIQUES}, "B": {m: None for m in METRIQUES}},
         "instructions": ({nom: {"A": v.get("A"), "B": v.get("B"), "gain": v.get("gain")} for nom, v in instructions.items()}
                          if instructions else None),
         "degradations": degradations,
         "lignes_modifiees": lignes_modifiees(args.depot, args.base, args.tete),
-        "etapes": etats,
+        "etapes": resultat_etapes,
         "details": {
             "origine_metrique": origine,
             "manifeste": etat_manifeste,
             "tache": etat_tache,
             "base": args.base,
             "tete": args.tete,
+            "jobs": {nom: (v or {}).get("result") for nom, v in jobs.items()},
             "gains_par_metrique": {m: v.get("gain") for m, v in metriques_ab.items()},
             "test_du_signe": {m: v.get("test_du_signe") for m, v in metriques_ab.items()},
             "methode": (rapport or {}).get("methode"),
@@ -174,8 +218,9 @@ def main():
     with open(args.sortie, "w", encoding="utf-8") as f:
         json.dump(verdict, f, ensure_ascii=False, indent=2)
         f.write("\n")
-    print(json.dumps({k: verdict[k] for k in ("ci", "etape_en_echec", "gain", "metrique", "au_dela_du_bruit", "degradations",
-                                               "lignes_modifiees") if k in verdict}, ensure_ascii=False))
+    resume = {k: verdict[k] for k in ("ci", "etape_en_echec", "gain", "metrique", "au_dela_du_bruit", "degradations",
+                                      "lignes_modifiees") if k in verdict}
+    print(json.dumps(resume, ensure_ascii=False))
     return 0
 
 

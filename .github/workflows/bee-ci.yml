@@ -1,0 +1,271 @@
+# CI Bee du fork miniz (https://github.com/Bee-ruche/minizBee). Fork indépendant, non affilié au projet miniz.
+#
+# Étapes, dans l'ordre (la première en échec est rapportée, voir docs/evaluation.md du registre Bee) :
+#   1. manifeste et taille : bee verifier-fork, avec l'outil du registre (branche main)
+#   2. compilation et tests d'origine de miniz, x86-64 et ARM64
+#   3. tests différentiels contre zlib et empreintes de déterminisme, x86-64 et ARM64
+#   4. fuzzing libFuzzer, 2 harnais en parallèle pendant 10 minutes, x86-64
+#   5. banc A/B entrelacé : point de départ de la PR (merge-base avec la base) contre tête de la PR,
+#      10 répétitions, avec décompte d'instructions Cachegrind sur un sous-corpus
+#   6. verdict.json, publié en artefact « verdict » (lu par le workflow verdicts.yml du registre)
+#
+# Sécurité :
+#   - permissions: contents: read pour tout le workflow ; aucun secret ; checkouts sans identifiants
+#     conservés (persist-credentials: false). Déclencheur pull_request (jamais pull_request_target) :
+#     pour une PR venant d'un fork, GitHub ne fournit de toute façon ni secret ni jeton en écriture.
+#   - les juges (tests, corpus, banc, fuzzing, scripts de CI) viennent de la BASE de la PR ; seules les
+#     sources de miniz viennent de la PR, qui ne peut donc pas assouplir ce qui la juge.
+#   - CONTRIBUTION.yaml et la tâche du registre sont des données (yaml.safe_load), jamais exécutées ;
+#     les valeurs qui en sortent sont validées contre des listes fermées.
+#   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
+#     de la PR ne peut pas réécrire ; les fichiers d'état servent seulement à nommer l'étape en échec.
+#   - limite connue : un code de PR qui détourne le processus qui l'exécute (exit(0) dans un
+#     constructeur, par exemple) peut fausser l'étape qui l'exécute. C'est le rôle de la relecture
+#     humaine (R3) ; les relecteurs rejouent les mesures.
+name: bee-ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bee-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  TETE_SHA: ${{ github.event.pull_request.head.sha }}
+  REGISTRE: Bee-ruche/registre
+  ETATS: ${{ github.workspace }}/etats
+
+jobs:
+  manifeste:
+    name: Manifeste et taille
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tache: ${{ steps.manifeste.outputs.tache }}
+      type: ${{ steps.manifeste.outputs.type }}
+      metrique: ${{ steps.manifeste.outputs.metrique }}
+      sortie_compressee: ${{ steps.manifeste.outputs.sortie_compressee }}
+    steps:
+      - name: Base de la PR (juges)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          persist-credentials: false
+      - name: Tête de la PR (historique complet, pour le diff)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TETE_SHA }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Registre Bee (branche main)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.REGISTRE }}
+          ref: main
+          path: registre
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Dépendances de l'outil bee
+        run: pip install -r registre/outils/requirements.txt
+      - name: Manifeste, tâche, R1 et commandement 3
+        id: manifeste
+        env:
+          AUTEUR: ${{ github.event.pull_request.user.login }}
+          BEE_SORTIE_TACHE: ${{ github.workspace }}/donnees/tache.yaml
+        run: |
+          mkdir -p donnees
+          base/bee/ci/etape.sh "$ETATS" manifeste_et_taille base/bee/ci/manifeste.sh pr registre python3
+      - name: Conserver le manifeste, la tâche et l'état
+        if: always()
+        run: |
+          mkdir -p donnees
+          cp pr/CONTRIBUTION.yaml donnees/ 2>/dev/null || true
+          cp -r "$ETATS" donnees/etats 2>/dev/null || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: etat-manifeste
+          path: donnees/
+          if-no-files-found: warn
+
+  compilation-et-tests:
+    name: Compilation et tests (${{ matrix.arch }})
+    needs: manifeste
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            machine: ubuntu-24.04
+          - arch: arm64
+            machine: ubuntu-24.04-arm
+    runs-on: ${{ matrix.machine }}
+    timeout-minutes: 30
+    steps:
+      - name: Base de la PR (juges ; historique complet pour le corpus)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tête de la PR
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TETE_SHA }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Outils (gcc, g++, cmake, zlib1g-dev)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends build-essential cmake zlib1g-dev
+      - name: Compilation et tests d'origine de miniz
+        run: base/bee/ci/etape.sh "$ETATS" compilation_${{ matrix.arch }} base/bee/ci/tests_origine.sh pr "$RUNNER_TEMP/cmake"
+      - name: Tests différentiels et empreintes
+        if: always()
+        env:
+          SORTIE_COMPRESSEE: ${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
+        run: base/bee/ci/etape.sh "$ETATS" differentiel_${{ matrix.arch }} base/bee/ci/differentiel.sh pr
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: etat-tests-${{ matrix.arch }}
+          path: etats/
+          if-no-files-found: warn
+
+  fuzzing:
+    name: Fuzzing 10 minutes (x86-64)
+    needs: manifeste
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Base de la PR (harnais ; historique complet pour le corpus de graines)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tête de la PR
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TETE_SHA }}
+          path: pr
+          persist-credentials: false
+      - name: Outils (clang 18 et son runtime libFuzzer, zlib1g-dev)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends clang-18 libclang-rt-18-dev zlib1g-dev
+      - name: Fuzzing différentiel, 2 harnais en parallèle, 600 s chacun
+        env:
+          CLANG: clang-18
+          BEE_FUZZ_SORTIES: ${{ github.workspace }}/sorties-fuzz
+        run: base/bee/ci/etape.sh "$ETATS" fuzzing base/bee/fuzz/lancer.sh 600 --source pr
+      - name: Conserver l'état et les entrées fautives
+        if: always()
+        run: |
+          mkdir -p conserver
+          cp -r "$ETATS" conserver/etats 2>/dev/null || true
+          cp -r sorties-fuzz conserver/ 2>/dev/null || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: etat-fuzzing
+          path: conserver/
+          if-no-files-found: warn
+
+  banc-ab:
+    name: Banc A/B
+    needs: manifeste
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Base de la PR (banc ; historique complet pour le corpus)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tête de la PR (historique complet, qui contient base et tête, pour les git worktree d'ab.py)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TETE_SHA }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Outils (gcc, valgrind, zlib1g-dev)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends build-essential valgrind zlib1g-dev
+      - name: Banc A/B entrelacé, 10 répétitions, avec instructions
+        run: |
+          depart="$(git -C pr merge-base "$BASE_SHA" "$TETE_SHA")"
+          echo "A = point de départ de la PR $depart (base $BASE_SHA), B = tête $TETE_SHA"
+          base/bee/ci/etape.sh "$ETATS" banc_ab \
+            python3 base/bee/bench/ab.py --depot pr --base "$depart" --candidate "$TETE_SHA" \
+              --repetitions 10 --instructions --json "$GITHUB_WORKSPACE/conserver/ab.json"
+      - name: Conserver l'état
+        if: always()
+        run: |
+          mkdir -p conserver
+          cp -r "$ETATS" conserver/etats 2>/dev/null || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: etat-banc
+          path: conserver/
+          if-no-files-found: warn
+
+  verdict:
+    name: Verdict
+    needs: [manifeste, compilation-et-tests, fuzzing, banc-ab]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Base de la PR (verdict.py)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          persist-credentials: false
+      - name: Historique de la PR (lu par git diff seulement, pour compter les lignes)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TETE_SHA }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: PyYAML (lecture du manifeste et de la tâche)
+        run: pip install "pyyaml==6.0.2"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: etat-*
+          path: artefacts
+      - name: Assembler verdict.json
+        env:
+          RESULTATS_JOBS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s' "$RESULTATS_JOBS" > resultats-jobs.json
+          python3 base/bee/ci/verdict.py --artefacts artefacts --jobs resultats-jobs.json \
+            --depot pr --base "$BASE_SHA" --tete "$TETE_SHA" --sortie verdict.json
+          cat verdict.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verdict
+          path: verdict.json
+          if-no-files-found: error
+      - name: CI rouge si une étape a échoué
+        run: |
+          python3 -c 'import json, sys; v = json.load(open("verdict.json")); print("CI", v["ci"], v.get("etape_en_echec", "")); sys.exit(v["ci"] != "verte")'

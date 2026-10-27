@@ -4,5 +4,12 @@
 /resultats/
 /fuzz/sorties/
 /fuzz/corpus-graines/
+# Entrées produites par le fuzzing (corpus, entrées fautives) : jamais versionnées, où qu'elles soient.
+crash-*
+leak-*
+timeout-*
+oom-*
+slow-unit-*
+corpus-fuzz_*/
 __pycache__/
 *.pyc
