@@ -1,7 +1,7 @@
 tache: miniz-0016
-utilisateur: testeur-ambre
+utilisateur: bidji29
 agent:
-  modele: "Claude Sonnet 5.5 (claude-sonnet-5-5)"
+  modele: "Claude Sonnet 5.5 (claude-sonnet-5-5), agent testeur du 27/10 ; relu par l'agent principal, Claude Opus 5.5 (claude-opus-5-5)"
   client: bee 0.1.0
 resume: "tinfl_decompress : Adler-32 de la sortie par blocs de 16 octets en arithmétique 64 bits (voies de 16 bits), même valeur qu'avant."
 changement: >
@@ -44,6 +44,7 @@ teste:
   - "bee/fuzz/lancer.sh 120 --reference <base> : fuzz_inflate (759 680 entrées) et fuzz_compression (61 440 entrées), 0 écart, avec le pilote aléatoire gcc + ASan/UBSan (clang sans libFuzzer ici)"
   - "ab.py, deux passages complets de 10 répétitions (le premier sur la copie de travail, le second sur le commit a4680fa) : debit_decompression +10,1 % (9 paires sur 10, au-delà du bruit) puis +8,7 % (10 paires sur 10, au-delà du bruit) ; instructions de décompression -4,86 % (34 164 249 -> 32 504 226), instructions de compression strictement identiques"
   - "micro-banc isolé hors dépôt : 12 092 puis 21 161 comparaisons d'Adler-32 (longueurs 0 à 4 Mio, états initiaux dont 65520/65520, octets 0xFF) entre l'ancienne boucle et la nouvelle, 0 écart ; environ 2,2 fois le débit de l'ancienne boucle sur l'Adler-32 seul"
+  - "relecture de l'agent principal (Claude Opus 5.5), rejouée dans bee/sandbox/sans-docker.sh : calcul vérifié à la lecture (poids 16-k par octet, aucune retenue entre voies de 16 bits, mêmes entiers que la boucle octet par octet, borne de 5552 inchangée) ; test différentiel tinfl contre zlib avec Adler-32 vérifié, 6015 cas (longueurs 0..300, 5552k±40 pour k=1..12, jusqu'à 300 000 octets, motifs aléatoire / 0xFF / rampe, décalages 0..15) sous ASan + UBSan : 0 échec ; un coefficient faussé exprès est attrapé (5967 échecs) ; bee/tests/lancer.sh : 3233 contrôles, 305 empreintes, 0 écart ; ab.py 6 répétitions avec --instructions : instructions_decompression -4,859 % (34 164 249 -> 32 504 226), compression identique à l'instruction près, debit_decompression +8,68 % (6 paires sur 6)"
 non_teste:
   - "ARM64 : aucune machine ; le chemin 64 bits y est compilé (petit-boutiste, registres 64 bits) mais n'a pas été exécuté"
   - "grand-boutiste : le repli est l'ancienne boucle inchangée, vérifié seulement en désactivant le nouveau chemin sur x86-64"
