@@ -17,15 +17,22 @@ Déroulement :
      médiane des N valeurs de chaque métrique pour A et pour B.
   4. Gain relatif (positif = mieux) : médiane(B) / médiane(A) - 1 pour une métrique « plus haut »,
      1 - médiane(B) / médiane(A) pour une métrique « plus bas » (memoire_max_ko).
-  5. Bruit : « au_dela_du_bruit » vaut vrai seulement si les intervalles [min, max] des N mesures de A
-     et de B ne se chevauchent pas. C'est volontairement prudent : sur une machine partagée, une
-     seule mesure perturbée suffit à élargir un intervalle, ce qui protège contre les faux gains.
-     Pour une métrique déterministe (ratio_n6), les intervalles sont réduits à un point : toute
-     différence est « au-delà du bruit ».
-     Contrepartie mesurée sur une machine partagée à 2 cœurs : un ralentissement réel de 5 % au
-     niveau 6 est resté « dans le bruit ». Le critère protège des faux gains, pas des faux refus ;
-     le décompte d'instructions (--instructions) est le signal sensible et reproductible. Un critère
-     interquartile, plus sensible, a été écarté : environ 3 % de faux positifs à N = 10 en simulation.
+  5. Bruit, par un test du signe sur les paires entrelacées. La répétition i mesure A_i puis B_i côte à
+     côte : la paire i subit à peu près la même charge de la machine. B « gagne » la paire si B_i est
+     meilleur que A_i (plus haut, ou plus bas pour memoire_max_ko) ; une égalité ne compte pour personne.
+     Si A et B sont équivalents, le nombre X de paires gagnées par B suit une loi binomiale (N, 1/2).
+     Seuil : k = plus petit entier tel que P(X >= k | N, 1/2) <= 0,02 (test unilatéral) :
+         N  :  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20
+         k  :  6  7  8  8  9 10 10 11 12 12 13 14 14 15 16
+     Pour N = 10, k = 9 (p = 0,0107). En dessous de 6 répétitions, aucun seuil n'atteint 0,02 : rien
+     n'est jamais « au-delà du bruit », et ab.py le signale.
+       - au_dela_du_bruit : B gagne au moins k paires (amélioration significative) ;
+       - degradation_au_dela_du_bruit : A gagne au moins k paires (dégradation significative, pour R5).
+     Métrique déterministe (ratio_n6) : la même valeur à chaque répétition. Un écart non nul est alors
+     significatif, puisqu'il n'y a aucun bruit. Le test du signe donne le même résultat (B gagne
+     toutes les paires ou n'en gagne aucune).
+     Les intervalles [min, max] sont gardés dans le JSON à titre d'information (minmax_disjoints) ; ce
+     critère, plus prudent, n'avait pas vu un ralentissement réel de 5 % au niveau 6.
   6. Avec --instructions, chaque binaire passe aussi sous valgrind --tool=cachegrind, une fois par
      scénario (n1, n6, n9, decompression) sur un sous-ensemble du corpus (les 128 premiers Kio de
      chaque fichier, environ 3,3 Mo). Seules les passes chronométrées sont comptées (requêtes client
@@ -38,6 +45,7 @@ Code de sortie : 0 si la mesure a abouti (quel que soit le résultat), 2 en cas 
 
 import argparse
 import json
+import math
 import os
 import platform
 import re
@@ -148,6 +156,39 @@ def compter_instructions(binaire, corpus, scenario, dossier_travail, etiquette, 
     return int(trouve.group(1).replace(",", "")), bool(info.get("cachegrind_requetes_client"))
 
 
+SEUIL_TEST_DU_SIGNE = 0.02
+
+
+def seuil_signe(n, alpha=SEUIL_TEST_DU_SIGNE):
+    """Plus petit k tel que P(X >= k | n, 1/2) <= alpha ; None si aucun (n trop petit)."""
+    for k in range(n + 1):
+        if sum(math.comb(n, j) for j in range(k, n + 1)) / 2 ** n <= alpha:
+            return k
+    return None
+
+
+def p_unilaterale(n, k):
+    return sum(math.comb(n, j) for j in range(k, n + 1)) / 2 ** n
+
+
+def test_du_signe(valeurs_a, valeurs_b, sens):
+    """Compte les paires (A_i, B_i) gagnées par B et par A ; égalités à part."""
+    paires = [(a, b) for a, b in zip(valeurs_a, valeurs_b) if a is not None and b is not None]
+    n = len(paires)
+    meilleur = (lambda a, b: b > a) if sens == "plus_haut" else (lambda a, b: b < a)
+    victoires_b = sum(1 for a, b in paires if meilleur(a, b))
+    victoires_a = sum(1 for a, b in paires if meilleur(b, a))
+    k = seuil_signe(n)
+    return {
+        "paires": n, "victoires_B": victoires_b, "victoires_A": victoires_a, "egalites": n - victoires_a - victoires_b,
+        "seuil_k": k,
+        "p_amelioration": p_unilaterale(n, victoires_b) if n else None,
+        "p_degradation": p_unilaterale(n, victoires_a) if n else None,
+        "au_dela_du_bruit": k is not None and victoires_b >= k,
+        "degradation_au_dela_du_bruit": k is not None and victoires_a >= k,
+    }
+
+
 def resume(valeurs):
     valeurs = [v for v in valeurs if v is not None]
     if not valeurs:
@@ -181,22 +222,28 @@ def description_machine():
 
 
 def afficher_tableau(rapport):
-    lignes = [f"{'métrique':24s} {'médiane A':>12s} {'médiane B':>12s} {'gain':>8s}  {'dispersion A':>12s} {'dispersion B':>12s}  verdict"]
+    lignes = [f"{'métrique':26s} {'médiane A':>12s} {'médiane B':>12s} {'gain':>8s}  {'B gagne':>8s}  verdict"]
     for nom, m in rapport["metriques"].items():
         a, b = m["A"], m["B"]
         if a["mediane"] is None:
             continue
-
-        def dispersion(r):
-            return f"{100 * (r['max'] - r['min']) / r['mediane']:.1f} %" if r["mediane"] else "-"
-
+        s = m["test_du_signe"]
         gain = "-" if m["gain"] is None else f"{100 * m['gain']:+.2f} %"
-        verdict = "au-delà du bruit" if m["au_dela_du_bruit"] else "dans le bruit"
-        lignes.append(f"{nom:24s} {a['mediane']:12.3f} {b['mediane']:12.3f} {gain:>8s}  {dispersion(a):>12s} {dispersion(b):>12s}  {verdict}")
+        if m["au_dela_du_bruit"]:
+            verdict = "amélioration au-delà du bruit"
+        elif m["degradation_au_dela_du_bruit"]:
+            verdict = "DÉGRADATION au-delà du bruit"
+        else:
+            verdict = "dans le bruit"
+        lignes.append(f"{nom:26s} {a['mediane']:12.3f} {b['mediane']:12.3f} {gain:>8s}  "
+                      f"{s['victoires_B']:>3d}/{s['paires']:<4d}  {verdict}")
     for nom, m in (rapport.get("instructions") or {}).items():
         gain = "-" if m["gain"] is None else f"{100 * m['gain']:+.3f} %"
-        verdict = "au-delà du bruit" if m["au_dela_du_bruit"] else "dans le bruit"
-        lignes.append(f"{nom:24s} {m['A']:12d} {m['B']:12d} {gain:>8s}  {'':>12s} {'':>12s}  {verdict}")
+        if not m["au_dela_du_bruit"]:
+            verdict = "dans le bruit"
+        else:
+            verdict = "moins d'instructions" if m["gain"] > 0 else "PLUS d'instructions"
+        lignes.append(f"{nom:26s} {m['A']:12d} {m['B']:12d} {gain:>8s}  {'':>8s}  {verdict}")
     print("\n".join(lignes), file=sys.stderr)
 
 
@@ -258,17 +305,31 @@ def main():
             "methode": {
                 "valeur_retenue": "médiane des répétitions",
                 "gain": "médiane(B)/médiane(A) - 1 (plus_haut) ; 1 - médiane(B)/médiane(A) (plus_bas) ; positif = mieux",
-                "au_dela_du_bruit": "intervalles [min, max] de A et de B disjoints",
-                "limite": "prudent : protège des faux gains ; sur machine partagée, un écart réel de quelques % peut rester dans le bruit",
+                "au_dela_du_bruit": (f"test du signe sur les paires entrelacées (A_i, B_i) : B gagne au moins k paires, "
+                                     f"k = plus petit entier tel que P(X >= k | N, 1/2) <= {SEUIL_TEST_DU_SIGNE} ; "
+                                     f"ici N = {args.repetitions}, k = {seuil_signe(args.repetitions)}"),
+                "degradation_au_dela_du_bruit": "même test, A gagne au moins k paires",
+                "minmax_disjoints": "information seulement : intervalles [min, max] de A et de B disjoints",
             },
             "metriques": {}, "mesures": {"A": {}, "B": {}},
         }
+        if seuil_signe(args.repetitions) is None:
+            print(f"ab : attention, avec {args.repetitions} répétitions le test du signe ne peut jamais conclure "
+                  f"(il en faut au moins 6) : tout restera « dans le bruit ».", file=sys.stderr)
         for nom, sens, unite in METRIQUES:
-            a = resume([m.get(nom) for m in mesures["A"]])
-            b = resume([m.get(nom) for m in mesures["B"]])
+            valeurs_a = [m.get(nom) for m in mesures["A"]]
+            valeurs_b = [m.get(nom) for m in mesures["B"]]
+            a, b = resume(valeurs_a), resume(valeurs_b)
             disjoints = (a["mediane"] is not None and b["mediane"] is not None and (a["max"] < b["min"] or b["max"] < a["min"]))
-            rapport["metriques"][nom] = {"sens": sens, "unite": unite, "A": a, "B": b,
-                                         "gain": gain_relatif(a["mediane"], b["mediane"], sens), "au_dela_du_bruit": disjoints}
+            signe = test_du_signe(valeurs_a, valeurs_b, sens)
+            rapport["metriques"][nom] = {
+                "sens": sens, "unite": unite, "A": a, "B": b,
+                "gain": gain_relatif(a["mediane"], b["mediane"], sens),
+                "au_dela_du_bruit": signe["au_dela_du_bruit"],
+                "degradation_au_dela_du_bruit": signe["degradation_au_dela_du_bruit"],
+                "test_du_signe": signe,
+                "minmax_disjoints": disjoints,
+            }
             rapport["mesures"]["A"][nom] = a["mediane"]
             rapport["mesures"]["B"][nom] = b["mediane"]
 
