@@ -14,7 +14,11 @@
 #     conservés (persist-credentials: false). Déclencheur pull_request (jamais pull_request_target) :
 #     pour une PR venant d'un fork, GitHub ne fournit de toute façon ni secret ni jeton en écriture.
 #   - les juges (tests, corpus, banc, fuzzing, scripts de CI) viennent de la BASE de la PR ; seules les
-#     sources de miniz viennent de la PR, qui ne peut donc pas assouplir ce qui la juge.
+#     sources de miniz viennent de la PR, qui ne peut pas assouplir ces fichiers-là.
+#   - MAIS ce fichier de workflow est celui de la PR (déclencheur pull_request) : une PR qui modifie
+#     .github/ ou bee/ peut fabriquer son propre verdict. Le registre le détecte de son côté (liste des
+#     fichiers de la PR lue auprès de l'API GitHub, verdicts.yml) : verdict refusé pour une optimisation,
+#     relecture du conseil ou d'un Confirmé exigée pour une tâche d'outillage (R3).
 #   - CONTRIBUTION.yaml et la tâche du registre sont des données (yaml.safe_load), jamais exécutées ;
 #     les valeurs qui en sortent sont validées contre des listes fermées.
 #   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
