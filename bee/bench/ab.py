@@ -19,18 +19,21 @@ Déroulement :
      1 - médiane(B) / médiane(A) pour une métrique « plus bas » (memoire_max_ko).
   5. Bruit, par un test du signe sur les paires entrelacées. La répétition i mesure A_i puis B_i côte à
      côte : la paire i subit à peu près la même charge de la machine. B « gagne » la paire si B_i est
-     meilleur que A_i (plus haut, ou plus bas pour memoire_max_ko) ; une égalité ne compte pour personne.
-     Si A et B sont équivalents, le nombre X de paires gagnées par B suit une loi binomiale (N, 1/2).
+     meilleur que A_i (plus haut, ou plus bas pour memoire_max_ko). Les paires à égalité sont écartées
+     (test du signe standard) : N désigne ensuite le nombre de paires non égales. Si A et B sont
+     équivalents, le nombre X de paires gagnées par B suit une loi binomiale (N, 1/2).
      Seuil : k = plus petit entier tel que P(X >= k | N, 1/2) <= 0,02 (test unilatéral) :
          N  :  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20
          k  :  6  7  8  8  9 10 10 11 12 12 13 14 14 15 16
-     Pour N = 10, k = 9 (p = 0,0107). En dessous de 6 répétitions, aucun seuil n'atteint 0,02 : rien
-     n'est jamais « au-delà du bruit », et ab.py le signale.
+     Pour N = 10, k = 9 (p = 0,0107). En dessous de 6 paires non égales, aucun seuil n'atteint 0,02 :
+     rien n'est « au-delà du bruit » (ab.py prévient si --repetitions est inférieur à 6).
        - au_dela_du_bruit : B gagne au moins k paires (amélioration significative) ;
        - degradation_au_dela_du_bruit : A gagne au moins k paires (dégradation significative, pour R5).
-     Métrique déterministe (ratio_n6) : la même valeur à chaque répétition. Un écart non nul est alors
-     significatif, puisqu'il n'y a aucun bruit. Le test du signe donne le même résultat (B gagne
-     toutes les paires ou n'en gagne aucune).
+     Métrique déterministe (ratio_n6) : si rien ne change, toutes les paires sont à égalité, et le
+     test ne conclut ni à un gain ni à une dégradation ; si la valeur change, B gagne (ou perd) toutes
+     les paires, et l'écart est significatif. memoire_max_ko est presque déterministe : les
+     égalités sont écartées, et l'écart se juge sur les seules paires différentes.
+     Tests unitaires : python3 bee/bench/test_ab.py
      Les intervalles [min, max] sont gardés dans le JSON à titre d'information (minmax_disjoints) ; ce
      critère, plus prudent, n'avait pas vu un ralentissement réel de 5 % au niveau 6.
   6. Avec --instructions, chaque binaire passe aussi sous valgrind --tool=cachegrind, une fois par
@@ -172,18 +175,22 @@ def p_unilaterale(n, k):
 
 
 def test_du_signe(valeurs_a, valeurs_b, sens):
-    """Compte les paires (A_i, B_i) gagnées par B et par A ; égalités à part."""
+    """Test du signe standard sur les paires (A_i, B_i).
+
+    Les égalités sont écartées ; le seuil k et les valeurs p se calculent sur les N' paires restantes.
+    Si toutes les paires sont à égalité (N' = 0), il n'y a ni gain ni dégradation."""
     paires = [(a, b) for a, b in zip(valeurs_a, valeurs_b) if a is not None and b is not None]
-    n = len(paires)
     meilleur = (lambda a, b: b > a) if sens == "plus_haut" else (lambda a, b: b < a)
     victoires_b = sum(1 for a, b in paires if meilleur(a, b))
     victoires_a = sum(1 for a, b in paires if meilleur(b, a))
-    k = seuil_signe(n)
+    n_utiles = victoires_a + victoires_b
+    k = seuil_signe(n_utiles) if n_utiles else None
     return {
-        "paires": n, "victoires_B": victoires_b, "victoires_A": victoires_a, "egalites": n - victoires_a - victoires_b,
+        "paires": len(paires), "paires_utiles": n_utiles,
+        "victoires_B": victoires_b, "victoires_A": victoires_a, "egalites": len(paires) - n_utiles,
         "seuil_k": k,
-        "p_amelioration": p_unilaterale(n, victoires_b) if n else None,
-        "p_degradation": p_unilaterale(n, victoires_a) if n else None,
+        "p_amelioration": p_unilaterale(n_utiles, victoires_b) if n_utiles else None,
+        "p_degradation": p_unilaterale(n_utiles, victoires_a) if n_utiles else None,
         "au_dela_du_bruit": k is not None and victoires_b >= k,
         "degradation_au_dela_du_bruit": k is not None and victoires_a >= k,
     }
@@ -236,7 +243,8 @@ def afficher_tableau(rapport):
         else:
             verdict = "dans le bruit"
         lignes.append(f"{nom:26s} {a['mediane']:12.3f} {b['mediane']:12.3f} {gain:>8s}  "
-                      f"{s['victoires_B']:>3d}/{s['paires']:<4d}  {verdict}")
+                      f"{s['victoires_B']:>3d}/{s['paires_utiles']:<4d}  {verdict}"
+                      + (f" ({s['egalites']} égalités écartées)" if s["egalites"] else ""))
     for nom, m in (rapport.get("instructions") or {}).items():
         gain = "-" if m["gain"] is None else f"{100 * m['gain']:+.3f} %"
         if not m["au_dela_du_bruit"]:
