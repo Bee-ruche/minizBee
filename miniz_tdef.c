@@ -26,6 +26,23 @@
 
 #include "miniz.h"
 
+/* Sortie des bits par mots de 64 bits pour tdefl_compress_lz_codes (tâche miniz-0011). Elle accumule
+   les codes de Huffman dans un registre 64 bits et écrit 8 octets d'un coup par memcpy (aucun
+   transtypage de pointeur, donc aucun comportement indéfini ni violation d'alias strict ; seuls
+   bits_in >> 3 octets sont réellement avancés, les octets en trop tombent dans la marge de 16 octets
+   de m_pOutput_buf_end). On la compile dès que la plateforme est petit-boutiste avec des registres
+   64 bits rapides, indépendamment de MINIZ_USE_UNALIGNED_LOADS_AND_STORES (qui, lui, concerne aussi
+   la décompression, hors périmètre de cette tâche). La variante générique, gros-boutiste et 32 bits,
+   reste le repli et peut être forcée avec -DTDEFL_USE_64BIT_BITBUF=0. La sortie compressée est
+   strictement identique à celle de la variante générique (vérifié par les tests différentiels). */
+#if !defined(TDEFL_USE_64BIT_BITBUF)
+#if MINIZ_LITTLE_ENDIAN && MINIZ_HAS_64BIT_REGISTERS
+#define TDEFL_USE_64BIT_BITBUF 1
+#else
+#define TDEFL_USE_64BIT_BITBUF 0
+#endif
+#endif
+
 #ifndef MINIZ_NO_DEFLATE_APIS
 
 #ifdef __cplusplus
@@ -445,7 +462,7 @@ extern "C"
 
     static const mz_uint mz_bitmasks[17] = { 0x0000, 0x0001, 0x0003, 0x0007, 0x000F, 0x001F, 0x003F, 0x007F, 0x00FF, 0x01FF, 0x03FF, 0x07FF, 0x0FFF, 0x1FFF, 0x3FFF, 0x7FFF, 0xFFFF };
 
-#if MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN && MINIZ_HAS_64BIT_REGISTERS
+#if TDEFL_USE_64BIT_BITBUF
     static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
     {
         mz_uint flags;
@@ -587,7 +604,7 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
 
     return (d->m_pOutput_buf < d->m_pOutput_buf_end);
 }
-#endif /* MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN && MINIZ_HAS_64BIT_REGISTERS */
+#endif /* TDEFL_USE_64BIT_BITBUF */
 
     static mz_bool tdefl_compress_block(tdefl_compressor *d, mz_bool static_block)
     {
