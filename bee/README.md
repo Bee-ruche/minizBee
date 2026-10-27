@@ -174,6 +174,23 @@ python3 bee/bench/test_ab.py                                            # tests 
 
 **Validation sur cette machine.** Base contre elle-même, 10 répétitions : tous les gains entre −1,4 % et +0,5 %, tous « dans le bruit », instructions identiques. Ralentissement injecté pour l'essai (environ 4 % aux niveaux 1, 6 et 9) : B ne gagne aucune paire sur 10 aux trois niveaux, donc « dégradation au-delà du bruit » ; la décompression, non touchée, reste dans le bruit. Une exécution complète dure environ 2 min 30, Cachegrind compris.
 
+## Profilage
+
+```bash
+make -C bee banc && python3 bee/bench/profil.py --json bee/construction/profil/profil.json   # ≈ 10 s
+```
+
+`profil.py` lance le banc sous `valgrind --tool=callgrind --toggle-collect=…`, scénario par scénario, sur les 128 premiers Kio de chaque fichier (2,2 Mo en tout). Seules les passes mesurées sont comptées. Le coût exclusif de chaque ligne est ensuite attribué à la fonction qui la contient dans le source, ce qui fait apparaître séparément les fonctions inline (`tdefl_find_match`, `tdefl_record_*`) que callgrind fond dans leur appelant. Les fichiers `callgrind.<scénario>` s'ouvrent avec `callgrind_annotate --auto=yes`.
+
+Profil de la base (part des instructions des passes mesurées, gcc 13.3 -O3, x86-64 ; « l. 829 » désigne la variante de `tdefl_find_match` compilée par défaut) :
+
+| Scénario | 1ʳᵉ fonction | 2ᵉ | 3ᵉ | Reste |
+| --- | --- | --- | --- | --- |
+| compression n1 (202 M) | `tdefl_compress_normal` 48,2 % | `tdefl_find_match` 22,7 % | `tdefl_compress_lz_codes` 13,6 % | `mz_adler32` 3,7 %, `tdefl_record_match` 3,3 %, libc 3,1 % |
+| compression n6 (381 M) | `tdefl_find_match` 60,0 % | `tdefl_compress_normal` 26,8 % | `tdefl_compress_lz_codes` 5,7 % | `mz_adler32` 2,0 %, libc 1,6 % |
+| compression n9 (543 M) | `tdefl_find_match` 72,1 % | `tdefl_compress_normal` 18,7 % | `tdefl_compress_lz_codes` 4,0 % | `mz_adler32` 1,4 % |
+| décompression (34 M) | `tinfl_decompress` 99,3 % | libc 0,6 % | — | — |
+
 ## CI : `.github/workflows/bee-ci.yml`
 
 Déclenchée sur chaque pull request, avec le seul droit `contents: read`.
@@ -208,9 +225,9 @@ bee/
 ├── corpus/                 generer.py, SHA256SUMS (les données vont dans corpus/donnees/, non versionné)
 ├── tests/                  differentiel.c, lancer.sh, empreintes-reference.txt
 ├── fuzz/                   fuzz_inflate.c, fuzz_compression.c, pilote_aleatoire.c, graines.py, lancer.sh
-├── bench/                  banc.c, ab.py, test_ab.py
+├── bench/                  banc.c, ab.py, test_ab.py, profil.py
 ├── sandbox/                Dockerfile
-└── ci/                     etape.sh, manifeste.sh, tache.py, tests_origine.sh, differentiel.sh, verdict.py, test_verdict.py
+└── ci/                     etape.sh, juges.sh, manifeste.sh, tache.py, tests_origine.sh, differentiel.sh, verdict.py, test_verdict.py
 .github/workflows/bee-ci.yml
 ```
 
