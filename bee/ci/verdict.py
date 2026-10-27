@@ -157,11 +157,22 @@ def main():
         etat = etats.get(etape, "absent")
         resultat_job = (jobs.get(job) or {}).get("result") if jobs else None
         if jobs and resultat_job != "success":
-            resultat_etapes[etape] = "echec" if etat != "succes" else f"echec (job {resultat_job})"
+            # Job en échec : l'étape garde son propre état ; une étape « succes » d'un job en échec reste
+            # suspecte (autre étape du même job en échec, ou job interrompu après coup).
+            if etat == "echec":
+                resultat_etapes[etape] = "echec"
+            elif etat == "succes":
+                resultat_etapes[etape] = f"succes (job {resultat_job})"
+            else:
+                resultat_etapes[etape] = "absent"
         else:
             resultat_etapes[etape] = "succes" if etat == "succes" else ("echec" if etat == "echec" else "absent")
     jobs_en_echec = [nom for nom, v in jobs.items() if (v or {}).get("result") != "success"]
-    en_echec = next((libelle for etape, libelle, _ in ETAPES if resultat_etapes[etape] != "succes"), None)
+    # D'abord la première étape explicitement en échec ; sinon la première sans résultat (job annulé,
+    # délai dépassé, machine ARM64 indisponible…) ; sinon le job en échec.
+    en_echec = next((libelle for etape, libelle, _ in ETAPES if resultat_etapes[etape].startswith("echec")), None)
+    if en_echec is None:
+        en_echec = next((libelle + " (sans résultat)" for etape, libelle, _ in ETAPES if resultat_etapes[etape] != "succes"), None)
     if en_echec is None and jobs_en_echec:
         en_echec = "job " + ", ".join(sorted(jobs_en_echec))
 
@@ -188,6 +199,9 @@ def main():
         if v.get("au_dela_du_bruit") and (v.get("gain") or 0) < 0:
             degradations[nom] = v.get("gain")
 
+    # « verte » exige que toutes les étapes aient réussi ET (en CI) que tous les jobs aient réussi.
+    if en_echec is None and any(v != "succes" for v in resultat_etapes.values()):
+        en_echec = "étape au résultat incohérent"
     verdict = {"ci": "rouge" if en_echec else "verte"}
     if en_echec:
         verdict["etape_en_echec"] = en_echec

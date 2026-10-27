@@ -76,6 +76,10 @@ jobs:
           python-version: "3.12"
       - name: Dépendances de l'outil bee
         run: pip install -r registre/outils/requirements.txt
+      - name: Tests unitaires de l'outillage de la base (ab.py, verdict.py)
+        run: |
+          python3 base/bee/bench/test_ab.py
+          python3 base/bee/ci/test_verdict.py
       - name: Manifeste, tâche, R1 et commandement 3
         id: manifeste
         env:
