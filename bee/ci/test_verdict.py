@@ -17,9 +17,10 @@ JUGES = os.path.join(ICI, "juges.sh")
 WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(ICI)), ".github", "workflows", "bee-ci.yml")
 COMMIT_AMORCAGE = "2948eebafc5b9f1c69bebed80333e403a09bd62d"
 ETAPES = ["juges", "manifeste_et_taille", "compilation_x86_64", "compilation_arm64", "differentiel_x86_64",
-          "differentiel_arm64", "fuzzing", "banc_ab"]
+          "differentiel_arm64", "fuzzing", "juge_isole", "meta_juge"]
 JOBS_OK = {"manifeste": {"result": "success"}, "compilation-et-tests": {"result": "success"},
-           "fuzzing": {"result": "success"}, "banc-ab": {"result": "success"}}
+           "fuzzing": {"result": "success"}, "juge": {"result": "success"},
+           "meta-juge": {"result": "success"}}
 
 
 def rapport_ab(gain_n6=0.03, signe_n6=True, degradation_n1=False):
@@ -35,7 +36,7 @@ def rapport_ab(gain_n6=0.03, signe_n6=True, degradation_n1=False):
 
 
 class Verdict(unittest.TestCase):
-    def executer(self, etats, jobs=None, ab=None, tache=None):
+    def executer(self, etats, jobs=None, ab=None, tache=None, nom_rapport="ab.json"):
         with tempfile.TemporaryDirectory() as d:
             artefacts = os.path.join(d, "artefacts")
             os.makedirs(os.path.join(artefacts, "x", "etats"))
@@ -48,7 +49,7 @@ class Verdict(unittest.TestCase):
                     json.dump(jobs, f)
                 commande += ["--jobs", os.path.join(d, "jobs.json")]
             if ab is not None:
-                with open(os.path.join(artefacts, "x", "ab.json"), "w") as f:
+                with open(os.path.join(artefacts, "x", nom_rapport), "w") as f:
                     json.dump(ab, f)
             if tache is not None:
                 with open(os.path.join(artefacts, "x", "tache.yaml"), "w") as f:
@@ -85,8 +86,21 @@ class Verdict(unittest.TestCase):
 
     def test_etat_succes_mais_job_en_echec(self):
         # Le code de la PR ne peut pas rendre la CI verte en écrivant « succes » : le résultat du job prime.
-        v = self.executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, **{"banc-ab": {"result": "failure"}}), rapport_ab())
+        v = self.executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, **{"juge": {"result": "failure"}}), rapport_ab())
         self.assertEqual(v["ci"], "rouge")
+
+    def test_juge_isole_et_constructions_suspectes(self):
+        rapport = rapport_ab()
+        rapport["juge"] = {"version": 1, "graine": "ab" * 16, "verification": {"sorties_comparees": 914},
+                           "constructions_suspectes": [{"type": "instruction", "detail": "syscall : 1 occurrence(s)"}]}
+        v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, rapport, "metrique: debit_compression_n6\n", nom_rapport="juge.json")
+        self.assertEqual(v["ci"], "verte")
+        self.assertEqual(v["juge"]["sorties_comparees"], 914)
+        self.assertEqual(v["juge"]["constructions_suspectes"], [{"type": "instruction", "detail": "syscall : 1 occurrence(s)"}])
+
+    def test_sans_juge_isole(self):
+        v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, rapport_ab(), "metrique: debit_compression_n6\n")
+        self.assertIsNone(v["juge"])
 
     def test_sans_metrique_designee_gain_null(self):
         v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, rapport_ab(), "type: test\nmetrique: null\n")
@@ -174,6 +188,33 @@ class Juges(unittest.TestCase):
                 self.assertIn(pr, f.read())  # juges copiés depuis la PR
             with open(os.path.join(base, ".github", "workflows", "bee-ci.yml")) as f:
                 self.assertIn(pr, f.read())  # le workflow aussi
+
+    def ajouter_juge(self, racine):
+        os.makedirs(os.path.join(racine, "bee", "juge"), exist_ok=True)
+        with open(os.path.join(racine, "bee", "juge", "juge.py"), "w") as f:
+            f.write("# juge de " + racine + "\n")
+
+    def test_introduction_du_juge_isole(self):
+        with tempfile.TemporaryDirectory() as d:
+            base, pr = self.preparer(d, base_avec_bee=True)
+            self.ajouter_juge(pr)
+            r = self.lancer(d, base, pr, "0" * 40)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("INTRODUCTION DU JUGE ISOLÉ", r.stdout)
+            self.assertEqual(self.lire(d, "amorcage.txt"), "oui")
+            with open(os.path.join(base, "bee", "juge", "juge.py")) as f:
+                self.assertIn(pr, f.read())
+
+    def test_juge_isole_de_la_base_garde(self):
+        with tempfile.TemporaryDirectory() as d:
+            base, pr = self.preparer(d, base_avec_bee=True)
+            self.ajouter_juge(base)
+            self.ajouter_juge(pr)
+            r = self.lancer(d, base, pr, "0" * 40)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIsNone(self.lire(d, "amorcage.txt"))
+            with open(os.path.join(base, "bee", "juge", "juge.py")) as f:
+                self.assertIn(base, f.read())  # une PR ne remplace jamais le juge de la base
 
     def test_autre_base_sans_juges_echoue(self):
         for sha in ("1" * 40, COMMIT_AMORCAGE[:-1] + "0", COMMIT_AMORCAGE[:12], COMMIT_AMORCAGE.upper(), ""):
