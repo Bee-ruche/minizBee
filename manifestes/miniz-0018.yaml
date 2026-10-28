@@ -12,8 +12,8 @@ changement: >
   chaque ré-entrée de la coroutine. Équivalence exacte : pOut_buf_cur reste dans [pOut_buf_next, pOut_buf_end], et
   pour une taille >= 2, cur < end - 1 <=> end - cur >= 2 ; pour une taille 0 ou 1, ni l'ancien ni le nouveau test ne
   prend le chemin rapide ; sortie nulle : NULL >= NULL, chemin lent comme avant. Le choix chemin rapide / chemin lent
-  est donc le même à chaque tour, ce qui compte car les deux chemins ne se comportent pas pareil sur une table
-  incomplète. Le test d'entrée (pIn_buf_end - pIn_buf_cur) < 4 est laissé tel quel : sa version précalculée a été
+  est donc le même à chaque tour.
+  Le test d'entrée (pIn_buf_end - pIn_buf_cur) < 4 est laissé tel quel : sa version précalculée a été
   essayée (trois écritures) et donne plus d'instructions (gcc la recalcule à chaque entrée de boucle, ou déplace des
   variables sur la pile) : -2,2 % à -3,4 % au lieu de -3,76 %.
   (2) Les deux tests code_len == 0 (états 40 et 54) passent dans la branche rare. Les seules écritures de m_look_up
