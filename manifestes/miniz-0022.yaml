@@ -1,0 +1,83 @@
+tache: miniz-0022
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "tinfl_decompress : chaque code court est écrit une fois puis la table est doublée par copie (comme libdeflate) ; tables, statuts et état identiques ; -2,80 % d'instructions en décompression."
+changement: >
+  Construction des tables de Huffman de tinfl_decompress (miniz_tinfl.c, boucle « for (; (int)r->m_type >= 0; ...) »),
+  rien d'autre ; 25 lignes ajoutées, 15 retirées. Avant : chaque code de 10 bits au plus écrivait ses 2^(10-L) copies
+  dans m_look_up (environ 1024 écritures par table, 6 instructions chacune avec gcc 13.3, qui relit pLookUp sur la pile
+  à chaque tour), après un renversement bit à bit de son code (environ 4 instructions par bit). Profil callgrind du
+  scénario des instructions : 824 K instructions pour le remplissage, 286 K pour le renversement, 1,40 M en tout
+  (4,09 %). Maintenant, après la remise à zéro, l'arbre vidé, le décompte et le contrôle de validité, laissés tels
+  quels : (1) tri par dénombrement des symboles selon leur longueur, à partir de total_syms déjà calculé (longueurs 1 à
+  10 dans un compartiment chacune, codes de plus de 10 bits dans un dernier compartiment, dans l'ordre des symboles) ;
+  (2) pour i = 1 à 10, chaque code de longueur i est écrit une seule fois, à son code renversé rev (< 2^i), puis les
+  2^i premières entrées sont recopiées sur les 2^i suivantes (doublement de table, technique de build_decode_table de
+  libdeflate, licence MIT ; idée reprise, aucun code copié). rev est tenu sous forme renversée par un incrément
+  renversé (le +1 du code canonique bascule les 1 de poids faible à partir du bit i-1) ; passer à la longueur i+1
+  double le code canonique (next_code[i+1] = (next_code[i] + total_syms[i]) << 1), ce qui laisse rev inchangé : on
+  obtient exactement les codes de next_code[], symbole par symbole. (3) Les codes longs passent ensuite par la boucle
+  d'origine, dans l'ordre des symboles : même allocation de tree_next, même arbre. Pourquoi la table finale est
+  identique : après la longueur i, l'entrée x < 2^i contient le code de longueur <= i dont le code renversé vaut x
+  modulo 2^longueur, ou 0 ; c'est exactement ce que l'ancien remplissage met dans [0, 2^i). Un code qui passe le
+  contrôle (complet, ou au plus un symbole) est sans préfixe : un code court n'écrit jamais l'entrée-préfixe d'un code
+  long, qui reste à 0 (memset conservé) jusqu'à la passe des codes longs, comme avant, où les deux remplissages
+  touchaient des entrées disjointes. Le code ajouté ne contient aucun TINFL_CR_RETURN ; l'échec à l'état 35 arrive
+  avant lui, avec le même état (table remise à zéro, arbre vidé). Coût : 672 octets de pile de plus (syms[288] en
+  mz_uint16, pos[12]) : 448 -> 1120 octets pour tinfl_decompress avec gcc 13.3 -O3 (-fstack-usage), et 800 octets
+  de code. Variantes essayées puis écartées : sauter les doublements tant que la table est vide (+3,8 K
+  instructions, aucun gain au chronomètre) ; tri sans branche, symboles de longueur 0 dans un compartiment final (+36 K
+  instructions, +0,08 % au chronomètre sur le scénario 1 Kio). Fusion vérifiée avec git merge-tree : propre avec
+  tache/miniz-0018 (boucle des littéraux) et tache/miniz-0016 (Adler-32). Gains cumulables : miniz-0018 seule
+  32 880 282 instructions, fusionnée avec cette tâche 31 934 498 (-2,88 % de plus).
+mesures:
+  machine: "Intel Xeon @ 2,10 GHz virtualisé (Firecracker), 2 cœurs, machine partagée, Linux 6.18.44 x86_64, gcc 13.3.0 (Ubuntu 24.04), dans bee/sandbox/sans-docker.sh (sans réseau, env -i)"
+  commande: "python3 bee/bench/ab.py --base upstream/master --candidate HEAD --repetitions 10 --instructions"
+  repetitions: 10
+  avant:
+    debit_decompression: 420.34
+    debit_compression_n1: 99.51
+    debit_compression_n6: 24.87
+    debit_compression_n9: 14.96
+    ratio_n6: 3.5054
+    memoire_max_ko: 1672
+  apres:
+    debit_decompression: 422.13
+    debit_compression_n1: 100.16
+    debit_compression_n6: 24.98
+    debit_compression_n9: 15.25
+    ratio_n6: 3.5054
+    memoire_max_ko: 1670
+teste:
+  - "Décompte d'instructions (ab.py --instructions, Cachegrind, 131072 premiers octets par fichier) : instructions_decompression 34 164 249 -> 33 206 954 (-2,802 %, identique sur les deux passages) ; instructions n1, n6 et n9 strictement identiques. Sur le corpus complet (même banc, --prefixe 100000000) : 180 133 842 -> 178 222 687 (-1,06 %)"
+  - "Profil callgrind par ligne (scénario des instructions) : construction des tables 1 398 527 -> 388 492 instructions, plus 53 K pour la copie de doublement que gcc développe en ligne (rep movsq)"
+  - "ab.py --repetitions 10 --instructions, premier passage (chiffres ci-dessus) : debit_decompression +0,43 % (5 paires sur 10, dans le bruit) ; second passage : +1,78 % (7 sur 10, dans le bruit) ; aucune dégradation au-delà du bruit, aucune autre métrique touchée (code de compression inchangé)"
+  - "Chronométrage entrelacé hors dépôt (bancs du dépôt compilés contre la base A, une copie identique de la base A' pour le contrôle A/A, et le candidat B ; scénario decompression du banc, ordre tournant, cœur 1, charge < 2) : préfixe 1 Kio par fichier (30 tours, 400 passes) B +44,6 % (30 tours sur 30), A' +0,28 % ; préfixe 128 Kio, le scénario des instructions (40 tours, 40 passes) : B +1,95 % (31 sur 40, p unilatéral 0,0003), contre A' +1,95 % (28 sur 40, p 0,008), A/A 0,00 % ; corpus complet, la métrique de R4 (100 tours, 15 passes) : B +0,36 % (57 sur 100, p 0,097), contre A' +0,48 % (58 sur 100, p 0,067), A/A -0,12 % ; corpus complet, second passage plus long (300 tours, 15 passes) : B +0,63 % (171 sur 300, p 0,009), contre A' +0,60 % (173 sur 300, p 0,005), A/A +0,03 % (140 sur 300, p 0,89)"
+  - "bee/tests/lancer.sh : 3233 contrôles, 0 écart, 305 empreintes identiques à la référence"
+  - "bee/tests/lancer.sh --sanitiseurs (ASan + UBSan) : 3233 contrôles, 0 écart"
+  - "bee/ci/tests_origine.sh (CMake + ctest) : 1/1 réussi"
+  - "bee/fuzz/lancer.sh 120 --reference <copie de upstream/master> (libFuzzer) : fuzz_inflate 55 431 et fuzz_compression 54 499 exécutions, aucun écart ; puis bee/fuzz/lancer.sh 600 --harnais fuzz_inflate --reference <même copie> : 259 812 exécutions, aucun écart"
+  - "Comparaison différentielle hors dépôt de l'ÉTAT ENTIER : base et candidat compilés côte à côte (symboles renommés), mêmes appels ; après chaque appel sont comparés statut, octets consommés et produits, octets écrits et la structure tinfl_decompressor entière octet par octet (m_look_up, m_tree_0/1/2, m_code_size_*, m_len_codes, état scalaire), les deux structures partant du même contenu aléatoire. Entrées : blocs dynamiques fabriqués aux longueurs de codes tirées au hasard (codes complets jusqu'à 15 bits, souvent profonds, un seul code de longueur quelconque, aucun code, sur-souscrits, incomplets à 2 codes ou plus, code des longueurs invalide, HLIT jusqu'à 288 et HDIST jusqu'à 32), 1 à 4 blocs par flux mêlés de blocs fixes et stockés ; flux réels de tdefl (niveaux 0 à 10, stratégies) et de zlib (niveaux, stratégies, memLevel) ; mutations et troncatures ; octets aléatoires. Chaque flux en une fois, en flux avec tampon circulant de 32 Kio, et en flux à sortie linéaire, morceaux d'entrée et de sortie de 1 octet à 64 Kio (reprise à tous les états, y compris pendant la lecture des en-têtes). Cinq graines, 814 905 flux, 13 285 853 appels comparés (363 617 flux décodés jusqu'au bout, 450 410 échecs identiques, 209 267 blocs fabriqués avec des codes de plus de 10 bits), 0 écart ; dont 28 133 flux et 440 929 appels avec les deux versions compilées sous ASan + UBSan, sans erreur. Même harnais sur la fusion avec tache/miniz-0018 (base contre fusion) : 112 490 flux, 1 781 151 appels, 0 écart. Générateur validé : en mode strict, 1000 flux synthétiques sur 1000 décodés par zlib"
+  - "Le harnais attrape cinq régressions semées dans des copies : sans memset (ne diffère que sur les préfixes des codes longs et l'état d'erreur), sans le dernier doublement, incrément renversé faux, arbre non vidé, codes longs parcourus à l'envers"
+  - "Avertissements : aucun avec gcc -std=c89, gnu90, c99, c11 -pedantic -Wall -Wextra -Wdeclaration-after-statement, clang -std=c89 -pedantic, g++ ; -Wconversion : mêmes avertissements que la base"
+non_teste:
+  - "ARM64 : aucune machine ; ni tests ni mesure (la CI le fera)"
+  - "Tampon de bits 32 bits (TINFL_USE_64BIT_BITBUF à 0) et vraie cible 32 bits : non testés ; le code changé ne touche pas au tampon de bits"
+  - "Grand-boutiste : non testé (tableaux de mz_int16 et mz_uint16 indexés, aucune réinterprétation de la mémoire)"
+  - "Autres compilateurs que gcc 13.3 pour le banc (clang seulement sous libFuzzer) : la copie de doublement est développée en ligne par gcc ; un autre compilateur peut appeler memcpy et donner un autre chiffre"
+  - "Juge isolé (bee/juge/juge.py) : absent de cette base, et pas de Docker utilisé ici"
+  - "Cibles à très petite pile : effet des 672 octets de pile en plus non évalué sur une vraie cible embarquée"
+doutes: >
+  Le critère d'instructions de R4 est atteint (-2,80 % sur le scénario des instructions), mais le chronomètre de
+  debit_decompression, mesuré sur le corpus complet, ne voit qu'environ +0,4 à +0,6 % : ce corpus n'a que 84 blocs
+  Huffman pour 12 Mo (instructions : -1,06 % seulement sur le corpus complet), et la construction des tables n'y pesait,
+  d'après ces mesures, qu'environ 1 % du temps. Ce petit gain n'apparaît au-delà du bruit qu'avec 300 tours entrelacés
+  (p 0,009 contre la base, 0,005 contre sa copie, contrôle A/A neutre), pas avec ab.py à 10 répétitions (+0,43 % puis
+  +1,78 %, dans le bruit). Le gain est net quand les blocs sont nombreux par octet (+1,95 % sur les préfixes de 128 Kio,
+  +44,6 % sur les préfixes de 1 Kio). La confirmation par la CI, avec son juge isolé (bruit annoncé d'environ 0,4 %, du
+  même ordre que le gain attendu sur le corpus complet), n'est donc pas certaine. Le gain d'instructions dépend de gcc
+  (copie en ligne, allocation de registres). La pile de tinfl_decompress passe de 448 à 1120 octets (gcc 13.3 -O3), ce
+  qui peut compter sur une cible embarquée à petite pile.
+taille_reelle: S
