@@ -654,7 +654,28 @@ extern "C"
             size_t block_len = buf_len % 5552;
             while (buf_len)
             {
-                for (i = 0; i + 7 < block_len; i += 8, ptr += 8)
+                i = 0;
+#if MINIZ_LITTLE_ENDIAN && MINIZ_HAS_64BIT_REGISTERS
+                /* Adler-32 par blocs de 16 octets (tâche miniz-0016). Deux mots de 64 bits lus par memcpy ; dans chacun, les octets
+                   pairs (e) et impairs (o) sont isolés dans des voies de 16 bits. Un produit par une constante donne en voie 3 la
+                   somme des 4 voies (s1) ou leur somme pondérée (s2) : au plus 2 * 255 * 36 = 18360 par voie, donc aucune retenue entre
+                   voies. Sur 16 octets, s1 += a0 + a1 et s2 += 16 * s1 + 8 * a0 + d0 + d1 : exactement la boucle octet par octet, donc
+                   les mêmes entiers avant la réduction modulo (sous 2^32 sur 5552 octets, borne de zlib : 255n(n+1)/2 + (n+1)*65520). */
+                for (; i + 15 < block_len; i += 16, ptr += 16)
+                {
+                    mz_uint64 w0, w1, e0, o0, e1, o1;
+                    mz_uint32 a0, a1;
+                    memcpy(&w0, ptr, sizeof(w0));
+                    memcpy(&w1, ptr + 8, sizeof(w1));
+                    e0 = w0 & 0x00FF00FF00FF00FFULL, o0 = (w0 >> 8) & 0x00FF00FF00FF00FFULL;
+                    e1 = w1 & 0x00FF00FF00FF00FFULL, o1 = (w1 >> 8) & 0x00FF00FF00FF00FFULL;
+                    a0 = (mz_uint32)(((e0 + o0) * 0x0001000100010001ULL) >> 48);
+                    a1 = (mz_uint32)(((e1 + o1) * 0x0001000100010001ULL) >> 48);
+                    s2 += (s1 << 4) + (a0 << 3) + (mz_uint32)((e0 * 0x0008000600040002ULL + o0 * 0x0007000500030001ULL + e1 * 0x0008000600040002ULL + o1 * 0x0007000500030001ULL) >> 48);
+                    s1 += a0 + a1;
+                }
+#endif
+                for (; i + 7 < block_len; i += 8, ptr += 8)
                 {
                     s1 += ptr[0], s2 += s1;
                     s1 += ptr[1], s2 += s1;
