@@ -330,7 +330,8 @@ extern "C"
                     mz_int16 *pLookUp;
                     mz_int16 *pTree;
                     mz_uint8 *pCode_size;
-                    mz_uint i, j, used_syms, total, sym_index, next_code[17], total_syms[16];
+                    mz_uint i, j, used_syms, total, sym_index, next_code[17], total_syms[16], pos[TINFL_FAST_LOOKUP_BITS + 2], n, rev, bit;
+                    mz_uint16 syms[TINFL_MAX_HUFF_SYMBOLS_0];
                     pLookUp = r->m_look_up[r->m_type];
                     pTree = pTrees[r->m_type];
                     pCode_size = pCode_sizes[r->m_type];
@@ -350,24 +351,33 @@ extern "C"
                     {
                         TINFL_CR_RETURN_FOREVER(35, TINFL_STATUS_FAILED);
                     }
-                    for (tree_next = -1, sym_index = 0; sym_index < r->m_table_sizes[r->m_type]; ++sym_index)
+                    /* Symbols sorted by code length, then index; codes longer than TINFL_FAST_LOOKUP_BITS share the last bucket, in index order. */
+                    for (pos[1] = 0, i = 1; i <= TINFL_FAST_LOOKUP_BITS; ++i)
+                        pos[i + 1] = pos[i] + total_syms[i];
+                    for (i = 0; i < r->m_table_sizes[r->m_type]; ++i)
+                        if (pCode_size[i])
+                            syms[pos[MZ_MIN(pCode_size[i], TINFL_FAST_LOOKUP_BITS + 1)]++] = (mz_uint16)i;
+                    /* Short codes, by increasing length: each one is written once, at its bit-reversed code rev (kept reversed by a reversed */
+                    /* increment), into the first 2^i entries, which are then copied over the next 2^i (table doubling, as in libdeflate). */
+                    /* Same final table as filling every rev + k * 2^i: entries of longer codes stay 0 (memset above), and a valid code is prefix-free. */
+                    for (n = 0, rev = 0, i = 1; i <= TINFL_FAST_LOOKUP_BITS; ++i)
                     {
-                        mz_uint rev_code = 0, l, cur_code, code_size = pCode_size[sym_index];
-                        if (!code_size)
-                            continue;
+                        for (; n < pos[i]; ++n)
+                        {
+                            pLookUp[rev] = (mz_int16)((i << 9) | syms[n]);
+                            for (bit = 1u << (i - 1); rev & bit; bit >>= 1)
+                                rev ^= bit;
+                            rev |= bit;
+                        }
+                        if (i < TINFL_FAST_LOOKUP_BITS)
+                            TINFL_MEMCPY(pLookUp + (1 << i), pLookUp, sizeof(mz_int16) << i);
+                    }
+                    for (tree_next = -1; n < used_syms; ++n)
+                    {
+                        mz_uint rev_code = 0, l, cur_code, code_size = pCode_size[sym_index = syms[n]];
                         cur_code = next_code[code_size]++;
                         for (l = code_size; l > 0; l--, cur_code >>= 1)
                             rev_code = (rev_code << 1) | (cur_code & 1);
-                        if (code_size <= TINFL_FAST_LOOKUP_BITS)
-                        {
-                            mz_int16 k = (mz_int16)((code_size << 9) | sym_index);
-                            while (rev_code < TINFL_FAST_LOOKUP_SIZE)
-                            {
-                                pLookUp[rev_code] = k;
-                                rev_code += (1 << code_size);
-                            }
-                            continue;
-                        }
                         if (0 == (tree_cur = pLookUp[rev_code & (TINFL_FAST_LOOKUP_SIZE - 1)]))
                         {
                             pLookUp[rev_code & (TINFL_FAST_LOOKUP_SIZE - 1)] = (mz_int16)tree_next;
