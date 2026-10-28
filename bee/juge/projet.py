@@ -142,9 +142,10 @@ class Projet:
     # Paquets en plus de l'image commune : tests d'origine (g++, cmake), tests différentiels (zlib1g-dev),
     # générateur du corpus (git), fuzzing libFuzzer (clang-18, libclang-rt-18-dev), lancés par isoler.sh.
     PAQUETS = ["g++", "cmake", "zlib1g-dev", "git", "clang-18", "libclang-rt-18-dev"]
-    SOURCES = ["miniz*.c", "miniz*.h"]
+    # Fichiers compilés par construire.sh (miniz_zip.c ne l'est pas : il n'est ni copié, ni jugé) ; le diff
+    # analysé est celui de ces fichiers, et chaque .c doit laisser son objet dans obj/.
+    SOURCES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz*.h"]
     SOURCES_REQUISES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz.h"]
-    DIFF = ["miniz*.c", "miniz*.h"]
     OUTILLAGE = ["bee/juge", "bee/commun"]
     EN_TETES_BASE = ["miniz*.h"]
     CONSTRUIRE = "bee/juge/construire.sh"
