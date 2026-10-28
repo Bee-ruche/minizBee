@@ -22,7 +22,7 @@ changement: >
   table teste maintenant sym2 > 0 au lieu de sym2 >= 0 (même coût) et, dans la branche « sinon », une entrée nulle
   échoue aussitôt avec le même état (40 ou 54), le même counter (0 pour l'état 40, inchangé pour 54), bit_buf et
   num_bits inchangés (l'ancien code les décalait de 0) et aucun octet écrit, exactement comme avant. Le chemin lent
-  (TINFL_HUFF_DECODE), qui sur une entrée nulle produit un 0 sans consommer de bit, n'est pas touché. Effet : 2
+  (TINFL_HUFF_DECODE) n'est pas touché. Effet : 2
   instructions de moins par symbole décodé dans le chemin rapide, 3 par tour pour le test de sortie (registre au lieu
   de mov/sub/cmp). Le code de compression compilé est identique octet pour octet (sections .text de miniz.o et
   miniz_tdef.o comparées) ; tinfl_decompress passe de 9429 à 9621 octets de code. La piste « pointeurs locaux vers
