@@ -209,19 +209,76 @@ Déclenchée sur chaque pull request, avec le seul droit `contents: read`.
 | Manifeste et taille | ubuntu-24.04 | `manifeste_et_taille` | `bee/ci/manifeste.sh` : tâche lue dans le registre, puis `bee verifier-fork` (R1, commandement 3, manifeste) |
 | Compilation et tests | ubuntu-24.04 **et** ubuntu-24.04-arm | `compilation_<arch>`, `differentiel_<arch>` | `bee/ci/tests_origine.sh` (CMake + ctest), puis `bee/ci/differentiel.sh` (juges de la base, sources de la PR) |
 | Fuzzing | ubuntu-24.04 | `fuzzing` | `bee/fuzz/lancer.sh 600 --source pr --reference base` (libFuzzer, 2 harnais en parallèle, 10 min, mode discret ; seuls les écarts nouveaux font échouer) |
-| Banc A/B | ubuntu-24.04 | `banc_ab` | `ab.py --base <point de départ de la PR> --candidate <tête> --repetitions 10 --instructions` |
+| Juge isolé | ubuntu-24.04 | `juge_isole` | `bee/juge/juge.py --source-a <point de départ de la PR> --source-b <tête> --repetitions 10` : vérification de l'extérieur, mesures, instructions, analyse des objets (voir « Juge isolé ») |
+| Méta-tests du juge | ubuntu-24.04 | `meta_juge` | `bee/juge/test_juge.py` avec `BEE_JUGE_INTEGRATION=1`, seulement si la PR modifie `bee/juge/` |
 | Verdict | ubuntu-24.04 | — | `bee/ci/verdict.py` produit `verdict.json`, publié en artefact `verdict` |
 
-`verdict.json` contient au minimum `ci` (« verte » ou « rouge »), `etape_en_echec` (si rouge), `gain` (sur la métrique de la tâche si le registre ou le manifeste la désigne, sinon `null`), `au_dela_du_bruit`, `mesures` (médianes A et B des six métriques), `instructions` (Cachegrind sur le sous-corpus), `degradations` et `lignes_modifiees`. Le workflow `verdicts.yml` du registre télécharge cet artefact et le reporte avec `bee enregistrer-verdict`.
+Les jobs « Compilation et tests » et « Fuzzing » exécutent leurs commandes dans le conteneur du juge, par `bee/juge/isoler.sh <image> <copie de travail> -- <commande>`, sur une copie fraîche de la base et de la PR pour chaque étape.
+
+`verdict.json` contient au minimum `ci` (« verte » ou « rouge »), `etape_en_echec` (si rouge), `gain` (sur la métrique de la tâche si le registre ou le manifeste la désigne, sinon `null`), `au_dela_du_bruit`, `mesures` (médianes A et B des six métriques, mesurées par le juge isolé), `instructions` (Cachegrind sur le sous-corpus), `degradations`, `lignes_modifiees` et `juge` (graine, nombre de sorties vérifiées, `constructions_suspectes`). Le workflow `verdicts.yml` du registre télécharge cet artefact et le reporte avec `bee enregistrer-verdict`.
 
 **Sécurité.**
 - Aucun secret, et aucun checkout ne conserve d'identifiants.
-- Le code de la PR ne tourne qu'avec ce jeton en lecture seule.
-- Les **juges** (tests, corpus, banc, fuzzing, scripts) viennent de la **base** de la PR : la PR ne peut pas assouplir ce qui la juge.
-- `CONTRIBUTION.yaml` et la tâche sont lus comme des données.
+- Le code C de la PR ne s'exécute **jamais** sur la machine de CI elle-même : seulement dans le conteneur du juge, sans réseau (section suivante).
+- Les **juges** (tests, corpus, banc, fuzzing, juge isolé, scripts) viennent de la **base** de la PR : la PR ne peut pas assouplir ce qui la juge.
+- Le manifeste de la PR (`manifestes/<tâche>.yaml`, un fichier par tâche ; l'ancien `CONTRIBUTION.yaml` à la racine reste lu) et la tâche sont lus comme des données.
 - `ci` se décide sur le résultat des jobs GitHub, que le code de la PR ne peut pas réécrire.
 
 Pour simuler la CI en local, prenez les commandes de la colonne de droite, dans l'ordre. Les scripts `bee/ci/*.sh` sont exactement ceux du workflow.
+
+## Juge isolé : `bee/juge/`
+
+Jusqu'au 27 octobre 2026, le code de la PR s'exécutait dans le processus même qui le jugeait : un code malveillant pouvait s'arrêter « avec succès » au milieu des tests, annoncer de faux temps ou reconnaître le corpus. Le juge isolé ne fait plus confiance au processus qui exécute le code de la PR.
+
+```bash
+python3 bee/juge/juge.py --source-a <dossier de la base> --source-b <dossier de la PR> [--repetitions 10] [--json juge.json]
+python3 bee/juge/test_juge.py                              # tests unitaires
+BEE_JUGE_INTEGRATION=1 python3 bee/juge/test_juge.py      # + méta-tests contre des variantes malveillantes (Docker, ≈ 4 min)
+```
+(Sans pont Docker, comme dans certaines sessions cloud : ajoutez `--reseau-construction host`, ou `BEE_JUGE_RESEAU=host` pour les méta-tests.)
+
+**Déroulement.**
+1. **Image** (`bee/juge/Dockerfile`, Ubuntu 24.04 épinglée par empreinte) : construite avant que le moindre fichier de la PR ne soit monté. C'est la seule étape avec réseau.
+2. **Compilation dans le conteneur** (`construire.sh`) : miniz de A (point de départ de la PR) et de B (tête), chacun avec ses propres en-têtes ; le harnais `execution.c` est compilé avec les en-têtes de la **base**, si bien qu'une macro glissée dans `miniz.h` ne peut pas le réécrire. Le lanceur `chrono.c` est compilé sans une ligne de la PR.
+3. **Analyse des objets** (`analyse.py`) : ce que les objets de B ajoutent par rapport à A, parmi ce qui pourrait tromper une mesure de l'intérieur (voir plus bas). Le résultat est la liste `constructions_suspectes`.
+4. **Vérification de l'extérieur** : le corpus, plus 21 entrées tirées au hasard (graine choisie après la compilation : vide, 1 octet, bornes de 32 et 64 Kio, texte, répétitions, motifs périodiques, données structurées, mélanges, 4 Mo), compressés à 7 niveaux par `mz_compress2` et à 3 niveaux en flux découpé (morceaux de 1 à 64 Kio, vidages `MZ_SYNC_FLUSH`) ; plus environ 45 flux zlib produits par **la zlib de l'hôte** (niveaux, stratégies, fenêtres, vidages), dont une quinzaine invalides (tronqués, bit inversé, Adler-32 faux, tampon trop petit, déchets, en-tête faux, données après la fin), décompressés par `mz_uncompress` et `mz_inflate` en flux découpé. L'hôte exige que chaque sortie compressée de B soit identique octet pour octet à celle de A (ou, si la tâche le permet, qu'elle redonne l'original avec la zlib de l'hôte), et que chaque décompression se comporte comme A : même code, mêmes octets. Les fichiers bruts et les flux passent dans des conteneurs **séparés** : une décompression ne voit jamais les originaux.
+5. **Mesures** : 10 répétitions (plus une de chauffe), A et B en alternance, sur un corpus **perturbé à chaque répétition** (quelques octets changés au hasard). Chaque scénario (n1, n6, n9, décompression, mémoire) est un processus lancé par `chrono`, qui lit son temps processeur et sa mémoire maximale avec `wait4` : c'est le noyau qui mesure. Toutes les sorties des mesures sont vérifiées comme à l'étape 4.
+6. **Instructions** : Valgrind (Cachegrind) dans le conteneur, sur les 128 premiers Kio de chaque fichier (perturbés), **tout le processus du harnais** (lecture, appels à miniz, écriture ; hors miniz, le travail est identique pour A et B) : aucun appel à miniz n'échappe au décompte. Le résumé est relevé par `chrono` sur la dernière ligne écrite par Valgrind. Le registre (R4) exige en plus que le chronomètre confirme un gain d'instructions.
+
+Le rapport (`juge.json`) a le format de celui d'`ab.py`, plus une section `juge`. Code de sortie : 0 si toutes les sorties de B sont justes, 1 si le juge refuse B, 2 si l'environnement ne convient pas.
+
+### Modèle de menace
+
+**L'attaquant** est l'auteur d'une PR qui ne modifie que les sources de miniz. Une PR qui touche `bee/` ou `.github/` change ses propres juges : le registre le détecte (fichiers de la PR lus auprès de GitHub) et exige la relecture d'un gardien (R3).
+
+**Ce que le code de la PR peut faire**, dans son conteneur : tout ce qu'un programme peut faire dans son propre processus. Lire et écrire sa mémoire et celle du harnais, écrire ce qu'il veut dans son dossier de sorties, consommer du temps et de la mémoire jusqu'aux limites, s'arrêter quand il veut, chercher à savoir s'il est mesuré.
+
+**Ce qu'il ne peut plus faire :**
+
+| Attaque | Pourquoi elle échoue |
+| --- | --- |
+| Toucher la machine de CI (artefacts, autres étapes, jetons) | Le code de la PR ne s'exécute que dans le conteneur : réseau coupé, système de fichiers en lecture seule, utilisateur 65534 sans aucune capacité, `no-new-privileges`, deux processus au plus. Il ne voit que ses entrées et son dossier de sorties. L'hôte lit les sorties sans suivre de lien symbolique, refuse fichiers spéciaux et fichiers trop gros, et n'exécute jamais rien de ce que le conteneur produit. |
+| S'arrêter « avec succès » au milieu des tests | Une sortie absente est un refus. |
+| Produire une sortie fausse qui passe | L'hôte vérifie chaque sortie avec sa propre zlib et la compare à celle de la base. |
+| Reconnaître le corpus et rendre des réponses précalculées | Une part des entrées est tirée au hasard à chaque exécution, avec une graine choisie après la compilation, et les entrées des mesures sont perturbées à chaque répétition. |
+| Mettre des résultats en cache d'une répétition à l'autre | Chaque scénario est un nouveau processus, sur des entrées différentes à chaque répétition. |
+| Recopier l'original au lieu de décompresser | Les flux sont décompressés dans un conteneur qui ne voit pas les originaux. |
+| Déplacer son travail hors de la zone comptée (initialiser d'avance dans `mz_compressBound`, que le harnais appelle avant de compresser) | Tout le processus est compté. Trouvé par la revue adverse du 27/10 (+1,7 à +27 % d'instructions « gagnées » quand seule une zone l'était) ; méta-test `travail_deplace`. |
+| Annoncer de faux temps (remplacer `clock_gettime`, écrire de faux résultats) | Les temps sont lus par `wait4` dans `chrono`, un autre processus. Le processus mesuré n'a accès ni à la sortie du conteneur (descripteurs redirigés, `chrono` non « dumpable », donc `/proc/1/fd` fermé), ni à l'entrée qui porte le jeton de chaque ligne de mesure. |
+| Forger le décompte d'instructions (faux fichier `cachegrind.out`, faux résumé sur la sortie d'erreur) | `cachegrind.out` n'est jamais lu ; `chrono` relève la dernière ligne écrite par Valgrind, qui l'écrit après la fin du programme. Un processus tué avant ce résumé est refusé. |
+| Réécrire le harnais par une macro de `miniz.h` | Le harnais est compilé avec les en-têtes de la base. |
+| Remplacer une fonction du harnais ou de la libc (`memcmp`, `clock_gettime`…) | Tout symbole global de B hors de l'espace de noms de miniz est une construction suspecte. |
+
+**Constructions suspectes.** Certaines attaques restent possibles de l'intérieur du processus mesuré, mais elles demandent des constructions qui n'ont rien à faire dans un compresseur, et qui se voient dans les objets compilés : appels système directs (`syscall`, `int`), appels à des fonctions externes hors d'une liste fermée (mémoire et chaînes), requêtes client de Valgrind (qui suspendent le décompte d'instructions), lecture du compteur de cycles ou de `cpuid`, constructeurs et sections exécutées avant le programme, fonctions indirectes (`ifunc`), symboles globaux hors de l'espace de noms de miniz, assembleur en ligne et en-têtes système ajoutés au source. `analyse.py` liste ce que B ajoute par rapport à A ; le registre exige alors la relecture d'un gardien. Une construction suspecte n'est pas une faute (une détection de SIMD à l'exécution, par exemple, peut être légitime) : elle retire seulement la confiance automatique dans les mesures.
+
+**Ce qui reste hors de portée :**
+- Moins d'instructions ne veut pas toujours dire plus rapide (mélange d'instructions, travail confié au noyau, comme la mise à zéro de pages neuves). C'est pourquoi le registre exige que le chronomètre confirme un gain d'instructions au-delà du bruit, ou qu'une autre configuration le reproduise (R4).
+- Une écriture délibérée dans la mémoire de Valgrind, par arithmétique de pointeurs, fausserait le décompte d'instructions sans construction visible. C'est un comportement indéfini que le fuzzing (ASan) et la relecture visent ; au pire, elle fait accepter un faux gain sur un code par ailleurs juste.
+- Le juge vérifie les sorties sur le corpus et sur des entrées tirées au hasard ; il ne prouve pas l'absence d'une porte dérobée qui ne se déclencherait que sur une entrée précise. Le fuzzing, la relecture et le vote de la ruche réduisent ce risque.
+- Les étapes « compilation et tests », « tests différentiels » et « fuzzing » jugent de l'intérieur : un code malveillant peut les fausser, sans en sortir. Elles restent utiles contre les erreurs honnêtes ; le juge isolé fait foi.
+- Le noyau, Docker et Valgrind sont de confiance. Une faille du noyau qui permettrait de sortir d'un conteneur sans privilège est hors du modèle.
+
+**Méta-tests.** `bee/juge/test_juge.py` fait juger par le juge complet des variantes de miniz écrites pour le tromper : sortie anticipée, faux chronos (`clock_gettime` remplacé, code ralenti), table de réponses précalculées (le compresseur ne marche que sur les tailles du corpus), requête client Valgrind (décompte suspendu), faux résumé de Valgrind, travail déplacé hors des compressions. Résultats attendus, vérifiés : la sortie anticipée et la table précalculée sont refusées ; les faux chronos et le faux résumé sont signalés et ne changent pas les mesures (B est vu plus lent, le vrai décompte est relevé) ; la requête Valgrind fausse le décompte d'instructions, mais elle est signalée, et le registre exige alors un gardien ; le travail déplacé dans `mz_compressBound` ne fait plus rien gagner. Une variante honnête passe sans rien signaler, avec un décompte identique à la base. La CI lance ces méta-tests sur toute PR qui modifie `bee/juge/`.
 
 ## Arborescence
 
@@ -236,6 +293,7 @@ bee/
 ├── fuzz/                   fuzz_inflate.c, fuzz_compression.c, pilote_aleatoire.c, graines.py, lancer.sh
 ├── bench/                  banc.c, ab.py, test_ab.py, profil.py
 ├── sandbox/                Dockerfile
+├── juge/                   juge isolé : Dockerfile, execution.c, chrono.c, construire.sh, isoler.sh, analyse.py, juge.py, test_juge.py
 └── ci/                     etape.sh, juges.sh, manifeste.sh, tache.py, tests_origine.sh, differentiel.sh, verdict.py, test_verdict.py
 .github/workflows/bee-ci.yml
 ```
@@ -244,7 +302,8 @@ Ces chemins sont des **chemins juges** (`chemins_juges` de `projets/miniz.yaml` 
 
 ## Limites connues
 
-- **Machine partagée.** Les débits varient de quelques % d'une exécution à l'autre. Le test du signe et le décompte d'instructions limitent les faux verdicts, sans les supprimer. En cas de doute, rejouez `ab.py` et comparez les instructions.
+- **Machine partagée.** Les débits varient de quelques % d'une exécution à l'autre. Le test du signe et le décompte d'instructions limitent les faux verdicts, sans les supprimer. En cas de doute, rejouez `ab.py` ou `bee/juge/juge.py` et comparez les instructions.
+- **Débits du juge isolé.** Le temps processeur et le décompte d'instructions du juge couvrent tout le processus d'un scénario (lecture des entrées, appels à miniz, écriture des sorties) : les débits sont plus bas que ceux du banc (`ab.py`, passes chronométrées seulement), et les écarts relatifs un peu atténués. C'est le prix d'un décompte dont rien ne s'échappe.
 - **Sandbox non construite.** Le Dockerfile n'a pas pu être construit dans l'environnement qui l'a écrit (pas de démon Docker), et son image de base n'est pas encore épinglée par digest : à faire par le premier mainteneur qui construit l'image.
 - **Non vérifié hors CI.** ARM64 et libFuzzer n'ont pas été exécutés localement (pas de machine ARM64, runtime libFuzzer absent) : leur premier passage a eu lieu sur GitHub Actions.
 - **Exclusion UBSan.** Le contrôle `pointer-overflow` de clang est désactivé dans les seuls fichiers sources de miniz, à cause de « pointeur nul + 0 » préexistants et bénins (tampons nuls de taille 0) : voir `bee/fuzz/ubsan-exclusions.txt`. ASan et tous les autres contrôles restent actifs.
