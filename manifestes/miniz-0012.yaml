@@ -1,0 +1,100 @@
+tache: miniz-0012
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "tinfl_decompress : correspondances sans chevauchement copiées par deux mouvements de 4 octets (longueur 4 à 8) ou par blocs de 8 octets (9 et plus), sans écrire au-delà de la correspondance."
+changement: >
+  miniz_tinfl.c, tinfl_decompress, copie des correspondances seulement : 33 lignes ajoutées, aucune
+  retirée, juste avant la boucle octet par octet, après le test de fin de tampon (inchangé) et après
+  le bloc MINIZ_USE_UNALIGNED_LOADS_AND_STORES existant (laissé tel quel). Aucune autre région du
+  fichier n'est touchée : ni la boucle des littéraux et les tests code_len (miniz-0018), ni la fin de
+  la fonction (miniz-0016) ; git merge-tree fusionne la branche sans conflit avec chacune des deux.
+  Nouveau chemin, pris quand la correspondance tient entière dans le tampon (condition d'origine),
+  fait au moins 4 octets et ne chevauche pas sa source : pOut_buf_cur - pSrc >= counter (différence
+  de deux pointeurs du même tampon, négative si la source est après la destination, cas laissé à la
+  boucle octet par octet). Longueur 4 à 8 : deux mouvements de 4 octets, l'un au début, l'autre
+  finissant pile à la fin (ils se recouvrent si la longueur est inférieure à 8). Longueur 9 et plus :
+  blocs de 8 octets, puis un dernier bloc de 8 octets qui finit pile à la fin de la correspondance.
+  Tous les mouvements passent par memcpy vers ou depuis une variable locale (mz_uint32, mz_uint64),
+  sans transtypage de pointeur ; rien n'est écrit au-delà de la fin de la correspondance (le reste du
+  tampon de l'appelant et le dictionnaire circulaire ne sont pas touchés). Pourquoi la sortie est
+  identique : source et destination sont disjointes, donc chaque octet lu est un octet antérieur à la
+  correspondance, que la copie ne modifie pas ; la copie octet par octet ferait exactement les mêmes
+  écritures, et le dernier bloc réécrit les mêmes valeurs là où il recouvre le précédent. En sortie,
+  counter vaut counter % 3, la valeur que laisse la boucle octet par octet (elle est sauvée dans
+  r->m_counter si le décodage suivant se suspend) : l'état du décompresseur est identique, octet pour
+  octet (vérifié, voir teste). La copie octet par octet reste le chemin générique : correspondances
+  qui se chevauchent (séries, distance 1 comprise), longueur 3, correspondance qui touche la fin du
+  tampon (chemin lent inchangé). Pas de #if : le chemin est compilé dans toutes les configurations, y
+  compris clang avec UBSan (où miniz.h force MINIZ_USE_UNALIGNED_LOADS_AND_STORES à 0) et
+  bee/tests/lancer.sh --sanitiseurs (gcc) ; le #error temporaire suggéré par la tâche est donc sans
+  objet, et des mutants semés dans ce chemin sont détectés sous ASan et UBSan (voir teste).
+  Pourquoi la copie 8 octets existante ne gagne pas, et ce qui gagne. Statistiques des
+  correspondances du scénario de décompression (tout le corpus, niveau 6, outil local hors dépôt) :
+  751 807 correspondances passent par la copie rapide (85,5 % des octets produits) ; longueur 3 :
+  19,4 % des correspondances ; longueur 4 à 8 (distance >= 8) : 41,4 % des correspondances et 17,8 %
+  des octets copiés ; longueur 9 et plus (distance >= 8) : 38,4 % et 70,0 % des octets ; distance
+  inférieure à 8 : 0,8 % des correspondances et 8,0 % des octets (séries longues, 130 octets en
+  moyenne). La condition du bloc existant (counter >= 9 et counter <= dist) couvre 38,3 % des
+  correspondances et 67,3 % des octets : elle laisse à la boucle octet par octet les 61 % de
+  correspondances courtes, ainsi que les restes de 3 à 7 octets. Mesuré sur cette machine, le bloc
+  existant (base compilée avec MINIZ_USE_UNALIGNED_LOADS_AND_STORES=1 et MINIZ_UNALIGNED_USE_MEMCPY,
+  ce qui change aussi MZ_READ_LE16/32, donc la mesure n'isole pas la seule copie) : -1,9 %
+  d'instructions (34 164 249 -> 33 508 322) et aucun gain au chronomètre (deux séries de 10 paires :
+  médiane -6,6 % avec B gagnant 4/10, puis +0,8 % en paires avec 5/10). Variantes essayées (outil
+  local d'A/B entrelacé, binaires du banc, scénario décompression, 10 paires sauf mention ; mêmes
+  instructions que ab.py) : blocs de 8 octets seuls (longueur >= 8, distance >= 16, chevauchement
+  permis) : -7,1 % d'instructions, débit +6 à +9 % ; avec en plus les deux mouvements de 4 octets
+  pour les longueurs 4 à 8 : -8,7 %, +15 % ; blocs de 16 octets en plus : -6,0 % seulement et pas de
+  gain de plus, écartés ; seuils de distance 4, 8 ou 16 : indiscernables sur le corpus. L'essentiel
+  du gain vient donc des correspondances de 4 à 8 octets, copiées sans boucle ; hypothèse non vérifiée
+  faute de compteurs matériels dans la VM : la boucle octet par octet, au nombre de tours variable,
+  coûte surtout en prédictions de branchement manquées. Pourquoi refuser le chevauchement : une
+  première version qui l'acceptait dès la distance 8 gagnait autant sur le corpus (+13 à +17 %, trois
+  passages d'ab.py), mais perdait 38 % de débit sur des données synthétiques périodiques de période 9
+  à 15 (longues correspondances qui se chevauchent) et 7 à 11 % aux périodes 48 à 127 : un
+  chargement de 8 octets qui recouvre en partie des écritures toutes récentes attend leur sortie du
+  tampon d'écriture (échec de la redirection écriture-lecture). Des seuils de distance de 16 à 128
+  pour les correspondances chevauchantes donnaient des résultats irréguliers selon la période ; la
+  condition sans chevauchement est la seule qui reste neutre sur ces données (voir teste). Écartée
+  aussi : memcpy(pOut_buf_cur, pSrc, counter) de la libc pour le même cas, -7,0 % d'instructions et
+  +17,5 % au chronomètre (7/10) mais +11 % seulement sur des correspondances courtes synthétiques
+  contre +14 % pour la version retenue, et dépendant du memcpy de chaque plate-forme.
+mesures:
+  machine: "Intel Xeon @ 2,10 GHz virtualisé (Sapphire Rapids d'après les drapeaux AMX), 2 cœurs, Ubuntu 24.04, noyau 6.18, gcc 13.3.0 (-O3 -DNDEBUG), valgrind 3.22 ; machine partagée avec d'autres agents (charge moyenne entre 0,9 et 1,3 pendant les mesures)"
+  commande: "bee/sandbox/sans-docker.sh python3 bee/bench/ab.py --base upstream/master --candidate HEAD --repetitions 10 --cpu 1 --instructions (base 1c625c3, candidat c649855 ; un second passage sans --cpu est décrit dans teste)"
+  repetitions: 10
+  avant:
+    debit_decompression: 415.676
+    debit_compression_n1: 97.688
+    debit_compression_n6: 24.46
+    debit_compression_n9: 14.721
+    ratio_n6: 3.5054
+    memoire_max_ko: 1772
+  apres:
+    debit_decompression: 484.1765
+    debit_compression_n1: 98.4145
+    debit_compression_n6: 24.301
+    debit_compression_n9: 14.6145
+    ratio_n6: 3.5054
+    memoire_max_ko: 1768
+teste:
+  - "Instructions (ab.py --instructions, cachegrind, 128 Kio par fichier, passes mesurées seulement) : décompression 34 164 249 -> 31 622 112 (-7,44 %) ; n1 187 597 150, n6 357 228 867, n9 510 229 776, identiques entre A et B"
+  - "Chronomètre, ab.py 10 répétitions entrelacées sur c649855, charge entre 0,9 et 1,3 : (1) avec --cpu 1 (chiffres déclarés ci-dessus) : décompression +16,48 %, B gagne 10/10, amélioration au-delà du bruit ; n1 +0,74 % (5/10), n6 -0,65 % (4/10), n9 -0,72 % (3/10), mémoire +0,23 %, tous dans le bruit, ratio identique ; (2) sans --cpu : décompression +16,31 %, 9/10, au-delà du bruit ; n1 -4,59 % (3/10), n6 +2,29 % (7/10), n9 +1,53 % (7/10), mémoire -0,12 %, dans le bruit. Les écarts de compression sont du bruit : miniz_tdef.o est identique au désassemblage près entre base et candidat et tdefl_compress reste à la même adresse dans le binaire du banc (seul miniz_tinfl.o, lié après, grossit de 288 octets), et les instructions n1, n6, n9 sont identiques"
+  - "Première version (chevauchement permis dès la distance 8, jamais publiée, remplacée par amendement du commit local) : ab.py trois passages, décompression +13,4 % (7/10), +17,4 % (10/10, --cpu 1), +15,7 % (10/10, --cpu 1), instructions -7,07 % ; écartée pour sa perte sur données périodiques (voir changement)"
+  - "Données synthétiques (fichiers de 1 Mo générés localement, hors dépôt : motif de période fixe avec 0,2 % d'octets aléatoires, donc surtout des correspondances de 258 octets qui se chevauchent ; banc --scenario decompression --corpus <dossier>, A/B entrelacé), version retenue contre la base, écart médian des paires : périodes 9 à 15 -0,10 % (B gagne 6/12 ; la première version : -37,7 %, 0/12), 16 à 23 -0,59 % (4/8), 24 à 31 -0,25 % (3/8), 32 à 47 +2,54 % (6/8), 48 à 63 +0,23 % (5/8), 64 à 127 +0,41 % (4/8) : neutre, dans le bruit ; correspondances courtes à distances 8 à 40 (12 % d'octets aléatoires) : +14,0 % (7/8)"
+  - "bee/tests/lancer.sh (sandbox) : 3233 contrôles, 0 écart, 305 empreintes identiques à la référence"
+  - "bee/tests/lancer.sh --sanitiseurs (gcc, ASan + UBSan) : 3233 contrôles, 0 écart, 305 empreintes ; le nouveau chemin n'est sous aucun #if, il est donc compilé dans cette construction"
+  - "bee/ci/tests_origine.sh (CMake Release + ctest) : 1/1 test passé ; avertissements seulement dans examples/ (préexistants) ; miniz_tinfl.c compilé sans avertissement avec gcc -std=gnu90 -pedantic -Wall -Wextra -Wshadow -Wdeclaration-after-statement, clang 18 -std=gnu90 -pedantic -Wall -Wextra -Wshadow et g++ -x c++ -Wall -Wextra -Wshadow"
+  - "bee/fuzz/lancer.sh 120 --reference <extraction de upstream/master> (libFuzzer) : fuzz_inflate 59 656 entrées, fuzz_compression 52 119 entrées, aucun écart (et un premier passage sur la première version : 85 482 et 62 997 entrées, aucun écart)"
+  - "Différentiel direct hors dépôt, base contre candidat dans le même programme (miniz_tinfl.c de la base compilé avec ses symboles renommés) : après CHAQUE appel à tinfl_decompress, comparaison du statut, des octets consommés et produits, de tout le tampon de sortie (y compris au-delà des octets produits, rempli d'un motif au départ) et de toute la structure tinfl_decompressor (memcmp). Entrées : les 61 fichiers du corpus (256 Kio au plus chacun) et 400 fichiers synthétiques (motifs de période 1 à 40 avec mutations), compressés aux niveaux 1, 6, 9 (et MZ_RLE), plus 6 flux abîmés par compressé (1 à 4 octets modifiés) ; sortie non circulaire (taille exacte, trop petite de moitié, entrée en une fois ou par morceaux de 1 à 4000 octets) et dictionnaire circulaire de 32768, 4096, 512, 64 et 16 octets (morceaux d'entrée et de sortie de 1 à 300 octets, ou en une fois) : 51 060 cas, 4 636 087 appels, 0 écart, dans 7 configurations : gcc -O2, -O3, -O2 avec assertions, -O3 avec MINIZ_USE_UNALIGNED_LOADS_AND_STORES=1 et MINIZ_UNALIGNED_USE_MEMCPY, ASan + UBSan, clang -O2, clang ASan + UBSan. Le programme détecte trois mutants semés dans la version finale : counter non ramené à counter % 3 (écart d'état du décompresseur), un octet écrit après la fin de la correspondance (écart de tampon), condition de distance affaiblie à 4 (écart de tampon) ; un quatrième mutant (chevauchement d'un octet permis) s'est révélé équivalent, ce qui est attendu"
+non_teste:
+  - "ARM64 et toute autre architecture que x86-64 (pas de machine) : la correction ne dépend ni du boutisme ni de l'alignement (memcpy d'octets), mais le gain n'est mesuré que sur ce Xeon virtualisé"
+  - "x86 32 bits (-m32 indisponible ici), MSVC, compilateurs autres que gcc 13.3 et clang 18"
+  - "Plates-formes sans accès non aligné rapide : memcpy de 4 ou 8 octets non alignés peut y devenir une suite d'octets ; la sortie reste identique, le débit n'est pas mesuré"
+  - "Le juge isolé (bee/juge/juge.py) n'existe pas dans ce dépôt à la base 1c625c3 : non lancé"
+  - "Fuzzing local de 120 s seulement par harnais (la CI en fait 600)"
+  - "Combinaison avec miniz-0018 et miniz-0016 : fusion sans conflit vérifiée (git merge-tree), mais ni testée ni mesurée ensemble"
+doutes: "Le gain dépend de la microarchitecture : sur ce Xeon, il vient surtout des correspondances de 4 à 8 octets copiées sans boucle, mais un processeur qui prédit mieux la boucle octet par octet, ou qui traite autrement les chargements de 8 octets non alignés, peut gagner moins. Une correspondance sans chevauchement peut encore lire des octets écrits juste avant (littéraux ou correspondance précédente), ce qui peut coûter une attente du tampon d'écriture ; sur le corpus et sur les données synthétiques essayées, ce n'est pas visible, mais d'autres formes de données n'ont pas été mesurées. Les chiffres du chronomètre viennent d'une machine partagée ; les instructions, elles, sont exactes."
+taille_reelle: S
