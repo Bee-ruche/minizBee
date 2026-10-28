@@ -10,13 +10,16 @@
                       mz_compress2 (même résultat quel que soit le découpage de l'entrée) ;
      [brut]           Deflate brut (window_bits = -15) en flux 4096, puis inflate brut de zlib ;
                       le flux brut doit être identique au flux zlib privé de son en-tête et de son Adler-32.
-   Pour chaque fichier, au niveau 6 seulement :
+   Pour chaque fichier, au niveau 10 (« caché », 1500 sondes), que zlib n'a pas :
+     [miniz->zlib] et [miniz->miniz] seulement.
+   Pour chaque fichier, aux niveaux 1, 6 et 9 :
      [vidages]        mz_deflate avec MZ_SYNC_FLUSH tous les 10007 octets et MZ_FULL_FLUSH tous les
                       50021 octets, puis inflate de zlib : identique.
    Pour chaque fichier :
      [sommes]         mz_adler32 et mz_crc32 égales à adler32 et crc32 de zlib (en une fois et par morceaux).
-   Déterminisme : l'empreinte SHA-256 de chaque sortie compressée (niveaux 0, 1, 6, 9 et « 6v » pour
-   la variante avec vidages) est comparée au fichier de référence produit sur la version de base.
+   Déterminisme : l'empreinte SHA-256 de chaque sortie compressée (niveaux 0, 1, 6, 9, 10 et « 1v »,
+   « 6v », « 9v » pour les variantes avec vidages) est comparée au fichier de référence produit sur la
+   version de base.
 
    Usage : differentiel [--corpus DOSSIER] [--empreintes FICHIER] [--regenerer-empreintes]
                         [--sans-empreintes] [--rapide] [--verbeux]
@@ -36,8 +39,8 @@
 #include "corpus.h"
 #include "sha256.h"
 
-#define NB_NIVEAUX 4
-static const int NIVEAUX[NB_NIVEAUX] = { 0, 1, 6, 9 };
+#define NB_NIVEAUX 5
+static const int NIVEAUX[NB_NIVEAUX] = { 0, 1, 6, 9, 10 };
 
 /* Au-delà de cette taille, l'option --rapide limite le flux à 1 octet au premier Mo du fichier. */
 #define LIMITE_FLUX_1_RAPIDE (64u * 1024u)
@@ -493,6 +496,10 @@ int main(int argc, char **argv)
                     verifier_identique("miniz->miniz", nom, nom_niveau, d, taille_d, f->donnees, f->taille);
             }
 
+            /* Niveau 10 : zlib n'a pas de niveau 10 ([zlib->miniz] impossible) ; les contrôles suivants s'arrêtent au niveau 9. */
+            if (niveau == 10)
+                goto suivant;
+
             /* [zlib->miniz] */
             r = compress2(z, &taille_z, f->donnees, (uLong)f->taille, niveau);
             if (r != Z_OK)
@@ -557,26 +564,29 @@ int main(int argc, char **argv)
                     verifier_identique("brut", nom, nom_niveau, retour.octets, retour.taille, f->donnees, f->taille);
             }
 
-            /* [vidages] au niveau 6 */
-            if (niveau == 6)
+            /* [vidages] aux niveaux 1 (analyse gloutonne), 6 et 9 (sondes longues) */
+            if (niveau == 1 || niveau == 6 || niveau == 9)
             {
-                if (miniz_deflate_flux(f->donnees, f->taille, 6, MZ_DEFAULT_WINDOW_BITS, 4096, 4096, 10007, 50021, &flux, erreur,
+                char nom_vidages[8];
+                snprintf(nom_vidages, sizeof(nom_vidages), "%dv", niveau);
+                if (miniz_deflate_flux(f->donnees, f->taille, niveau, MZ_DEFAULT_WINDOW_BITS, 4096, 4096, 10007, 50021, &flux, erreur,
                                        sizeof(erreur)) != 0)
-                    echec("vidages", nom, "6v", "compression : %s", erreur);
+                    echec("vidages", nom, nom_vidages, "compression : %s", erreur);
                 else
                 {
                     bee_sha256_hex(flux.octets, flux.taille, sha);
-                    empreinte_ajouter(&obtenues, "6v", nom, flux.taille, sha);
+                    empreinte_ajouter(&obtenues, nom_vidages, nom, flux.taille, sha);
                     if (zlib_inflate_flux(flux.octets, flux.taille, MAX_WBITS, &retour, erreur, sizeof(erreur)) != 0)
-                        echec("vidages", nom, "6v", "%s", erreur);
+                        echec("vidages", nom, nom_vidages, "%s", erreur);
                     else
-                        verifier_identique("vidages", nom, "6v", retour.octets, retour.taille, f->donnees, f->taille);
+                        verifier_identique("vidages", nom, nom_vidages, retour.octets, retour.taille, f->donnees, f->taille);
                     if (miniz_inflate_flux(flux.octets, flux.taille, MZ_DEFAULT_WINDOW_BITS, 1000, 1000, &retour, erreur, sizeof(erreur)) != 0)
-                        echec("vidages", nom, "6v", "mz_inflate : %s", erreur);
+                        echec("vidages", nom, nom_vidages, "mz_inflate : %s", erreur);
                     else
-                        verifier_identique("vidages", nom, "6v", retour.octets, retour.taille, f->donnees, f->taille);
+                        verifier_identique("vidages", nom, nom_vidages, retour.octets, retour.taille, f->donnees, f->taille);
                 }
             }
+        suivant:
             free(c);
             free(z);
             free(d);
@@ -603,6 +613,7 @@ int main(int argc, char **argv)
         fprintf(e, "# Empreintes SHA-256 des sorties compressées de miniz sur le corpus de référence Bee.\n");
         fprintf(e, "# Produites par bee/tests/lancer.sh --regenerer-empreintes. Colonnes : niveau, taille compressée,\n");
         fprintf(e, "# SHA-256, fichier. « 6v » : niveau 6 en flux avec MZ_SYNC_FLUSH et MZ_FULL_FLUSH (voir differentiel.c).\n");
+        fprintf(e, "# « 1v » et « 9v » : idem aux niveaux 1 et 9. « 10 » : niveau caché (1500 sondes), mz_compress2 seul.\n");
         for (i = 0; i < obtenues.nombre; i++)
             fprintf(e, "%s %lu %s %s\n", obtenues.elements[i].niveau, obtenues.elements[i].taille, obtenues.elements[i].sha,
                     obtenues.elements[i].fichier);
