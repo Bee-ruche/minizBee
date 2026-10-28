@@ -1,0 +1,94 @@
+tache: miniz-0033
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "profil.py repère les fonctions hors commentaires et chaînes : plus de fausse fonction « octet » sur miniz_tdef.c ; test d'exemple ajouté, lancé par la CI des PR suivantes."
+changement: |
+  bee/bench/profil.py : plages_de_fonctions() applique DEBUT_FONCTION et compte les accolades sur le
+  source passé par sans_commentaires(), qui remplace par des espaces les commentaires de bloc, les
+  commentaires de ligne (prolongés par « \ » en fin de ligne), les chaînes et les caractères littéraux,
+  en gardant les sauts de ligne (numéros de ligne inchangés). Une seule expression balayée de gauche à
+  droite : un « /* » dans une chaîne ou un « " » dans un commentaire ne sont pas mal pris. L'expression
+  DEBUT_FONCTION, nom_de() et le format de sortie ne changent pas. Le fichier est aussi fermé
+  proprement (with open), ce qui supprime un ResourceWarning sous unittest.
+
+  bee/bench/test_profil.py (nouveau, unittest, ni Valgrind ni compilation) : écrit un petit fichier C
+  dans un dossier temporaire (commentaire de bloc sur plusieurs lignes avec « octet par octet (… »,
+  commentaire de ligne contenant « { », chaîne contenant « ( », « { » et « /* », caractère littéral
+  '}', prototype, fonctions static et static MZ_FORCEINLINE, deux variantes « cherche » sous #if/#else
+  dont une à en-tête sur deux lignes, fonction non static) et vérifie les plages exactes, l'attribution
+  de lignes par nom_de() (ligne du commentaire « hors fonction », variantes « cherche (l. 30) » et
+  « cherche (l. 36) »), et sans_commentaires() sur des morceaux gardés ou effacés.
+
+  .github/workflows/bee-ci.yml : une ligne dans l'étape « Tests unitaires de l'outillage de la base » :
+  « if [ -f base/bee/bench/test_profil.py ]; then python3 base/bee/bench/test_profil.py; fi ». La CI
+  prend ses juges dans la base : sur cette PR le fichier n'existe pas encore dans la base et la ligne ne
+  fait rien ; elle servira aux PR suivantes. Nom de l'étape inchangé.
+
+  Comparaison avant/après de plages_de_fonctions(), sources de la base 1c625c3 (nom début-fin) :
+  - miniz_tdef.c, ancien code : une seule plage, octet 51-1664 (la ligne 51 du commentaire de miniz-0015).
+  - miniz_tdef.c, nouveau code (31 plages) : tdefl_radix_sort_syms 133-164,
+    tdefl_calculate_minimum_redundancy 167-220, tdefl_huffman_enforce_max_code_size 227-249,
+    tdefl_optimize_huffman_table 251-302, tdefl_start_dynamic_block 370-455, tdefl_start_static_block
+    457-477, tdefl_compress_lz_codes 482-575, tdefl_compress_lz_codes 577-622, tdefl_compress_block
+    625-632, tdefl_flush_block 636-789, tdefl_find_match 809-860, tdefl_find_match 862-936,
+    tdefl_compress_fast 950-1121, tdefl_record_literal 1124-1135, tdefl_record_match 1137-1163,
+    tdefl_compress_normal 1165-1308, tdefl_flush_output_buffer 1310-1329, tdefl_compress 1331-1397,
+    tdefl_compress_buffer 1399-1403, tdefl_init 1405-1439, tdefl_get_prev_return_status 1441-1444,
+    tdefl_get_adler32 1446-1449, tdefl_compress_mem_to_output 1451-1464, tdefl_output_buffer_putter
+    1473-1496, tdefl_compress_mem_to_heap 1498-1511, tdefl_compress_mem_to_mem 1513-1524,
+    tdefl_create_comp_flags_from_zip_params 1527-1545, tdefl_write_image_to_png_file_in_memory_ex
+    1555-1637, tdefl_write_image_to_png_file_in_memory 1638-1642, tdefl_compressor_alloc 1648-1651,
+    tdefl_compressor_free 1653-1656. Bornes de tdefl_find_match et tdefl_compress_normal vérifiées à
+    l'œil (en-tête et accolade fermante).
+  - miniz_tdef.c, référence : l'ancien code sur une copie où seule la « ( » de la ligne 51 est remplacée
+    par une espace (mêmes numéros de ligne) donne exactement ces 31 plages. L'ancien code sur
+    miniz_tdef.c de 839b676 (juste avant miniz-0015, quand il marchait) donne les mêmes 31 noms dans le
+    même ordre, décalés de +16 lignes jusqu'au début de la variante 64 bits de tdefl_find_match, puis
+    de +48 (lignes ajoutées par miniz-0015) ; le nouveau code y donne la même chose que l'ancien.
+  - miniz_tinfl.c : identique (7 plages) : tinfl_clear_tree 177-185, tinfl_decompress 187-679,
+    tinfl_decompress_mem_to_heap 682-718, tinfl_decompress_mem_to_mem 720-727,
+    tinfl_decompress_mem_to_callback 729-757, tinfl_decompressor_alloc 760-766,
+    tinfl_decompressor_free 768-771.
+  - miniz.c : identique (15 plages) : mz_adler32 40-66, mz_crc32 70-85, mz_crc32 95-158, mz_free
+    161-164, miniz_def_alloc_func 166-170, miniz_def_free_func 171-175, miniz_def_realloc_func 176-180,
+    mz_version 182-185, mz_deflate 241-297, mz_compress2 318-346, mz_compress 348-351, mz_inflate
+    438-548, mz_uncompress2 561-590, mz_uncompress 592-595, mz_error 599-613.
+
+  Profil callgrind (un seul passage, fichiers callgrind attribués par les deux codes, --reutiliser) :
+  totaux identiques (n1 186 193 051, n6 356 107 496, n9 509 113 765, décompression 34 153 592 Ir) ;
+  entrées hors miniz_tdef.c identiques ; la somme des fonctions de miniz_tdef.c du nouveau code égale
+  exactement le coût d'« octet » de l'ancien. Ancien : « octet » 91,98 % (n1), 95,51 % (n6), 96,71 % (n9).
+  Nouveau : n1 tdefl_compress_normal 52,72 %, tdefl_find_match (l. 862) 20,17 %,
+  tdefl_compress_lz_codes (l. 482) 9,76 % ; n6 tdefl_find_match (l. 862) 58,49 %,
+  tdefl_compress_normal 28,88 % ; n9 tdefl_find_match (l. 862) 70,91 %, tdefl_compress_normal 20,14 % ;
+  décompression tinfl_decompress 99,36 % (inchangé).
+teste:
+  - "python3 bee/bench/test_profil.py dans la sandbox (bee/sandbox/sans-docker.sh) avec le nouveau profil.py : « Ran 4 tests … OK »."
+  - "Le même test à côté de l'ancien profil.py (upstream/master), dans la sandbox : « FAILED (failures=2, errors=2) » ; plages obtenues [(7, 48, 'octet')] au lieu des 6 attendues, ligne 7 attribuée à « octet », sans_commentaires absent."
+  - "Chaque piège pris seul (les trois autres neutralisés dans une copie de l'exemple) trompe l'ancien code : commentaire de bloc → fausse fonction octet 7-15 ; « { » en commentaire de ligne → compte_non_nuls 9-48 ; chaîne avec « { » → etat 17-48 ; caractère '}' → etat 17-19."
+  - "Comparaison avant/après de plages_de_fonctions() sur miniz_tdef.c, miniz_tinfl.c et miniz.c de la base, plus la référence (ligne 51 neutralisée) et miniz_tdef.c de 839b676 : voir changement."
+  - "Un profil callgrind complet (python3 bee/bench/profil.py, ≈ 9 s) puis l'ancien code sur les mêmes fichiers callgrind : voir changement."
+  - "bee/tests/lancer.sh dans la sandbox : 3233 contrôles, 0 écart, 305 empreintes identiques (sources de miniz non modifiées)."
+  - "python3 bee/bench/test_ab.py dans la sandbox : 10 tests OK. Le YAML de bee-ci.yml se charge (yaml.safe_load)."
+non_teste:
+  - "La nouvelle ligne de bee-ci.yml n'a pas tourné sous GitHub Actions : la CI de cette PR prend ses juges dans la base, où test_profil.py n'existe pas encore, donc la ligne ne s'y exécute pas ; elle ne servira qu'aux PR suivantes. Sortie du test jointe ci-dessus à la place."
+  - "Pas de profil sur ARM64 ni avec un autre compilateur (le repérage est purement textuel, il ne dépend pas de la machine)."
+  - "Non vérifié sous Python 3.8 (testé sous 3.13 ; rien de plus récent que 3.8 n'est utilisé)."
+doutes: |
+  Le repérage reste textuel : sans_commentaires() ne fait pas de prétraitement (macros, #if 0, trigraphes,
+  séparateurs de chiffres C23 1'000) ; une apostrophe isolée sur une ligne n'est pas prise pour un caractère
+  littéral (il ne franchit pas une fin de ligne), mais un code C exotique pourrait encore tromper l'outil.
+  Limite préexistante, laissée telle quelle puisque les plages doivent rester inchangées : DEBUT_FONCTION
+  n'accepte que des noms en minuscules, donc mz_deflateInit, mz_deflateInit2, mz_deflateReset,
+  mz_deflateEnd, mz_deflateBound, mz_compressBound, mz_inflateInit, mz_inflateInit2, mz_inflateReset,
+  mz_inflateEnd (miniz.c) et TDEFL_READ_UNALIGNED_WORD* (miniz_tdef.c, sous #if) ne sont pas repérées ;
+  leur coût part en « miniz.c (hors fonction) » (≈ 4 500 Ir par scénario de compression, négligeable).
+  Piste pour une tâche suivante.
+  Remarques hors périmètre : avec bee/sandbox/sans-docker.sh, le dépôt est monté à un chemin temporaire
+  différent à chaque session ; si le banc est compilé dans une session et profilé dans une autre,
+  callgrind_annotate ne retrouve pas les sources et tout part en « hors miniz » : il faut compiler et
+  profiler dans la même session (make -B -C bee banc && python3 bee/bench/profil.py). Le tableau de
+  profil de bee/README.md date d'avant miniz-0011/0015 (lignes et parts périmées) ; non modifié ici.
+taille_reelle: S
