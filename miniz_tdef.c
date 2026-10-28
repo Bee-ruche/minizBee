@@ -863,8 +863,13 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
 {
     mz_uint dist, pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK, match_len = *pMatch_len, probe_pos = pos, next_probe_pos, probe_len;
     mz_uint num_probes_left = d->m_max_probes[match_len >= 32];
-    const mz_uint8 *s = d->m_dict + pos, *p, *q;
-    mz_uint8 c0 = d->m_dict[pos + match_len], c1 = d->m_dict[pos + match_len - 1];
+    /* pTail pointe sur m_dict + match_len - 1 : les deux octets de fin de correspondance (positions
+       match_len - 1 et match_len) se lisent en une fois par memcpy, sans calcul d'indice par sonde.
+       L'égalité de deux mots lus de la même façon équivaut à celle des deux octets, quel que soit
+       le boutisme ; ce sont les mêmes octets que lisait la version octet par octet (match_len >= 1). */
+    const mz_uint8 *s = d->m_dict + pos, *p, *q, *pTail = d->m_dict + match_len - 1;
+    mz_uint16 c01, w;
+    memcpy(&c01, pTail + pos, sizeof(c01));
     MZ_ASSERT(max_match_len <= TDEFL_MAX_MATCH_LEN);
     if (max_match_len <= match_len)
         return;
@@ -879,7 +884,8 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
     if ((!next_probe_pos) || ((dist = (mz_uint16)(lookahead_pos - next_probe_pos)) > max_dist))   \
         return;                                                                                   \
     probe_pos = next_probe_pos & TDEFL_LZ_DICT_SIZE_MASK;                                         \
-    if ((d->m_dict[probe_pos + match_len] == c0) && (d->m_dict[probe_pos + match_len - 1] == c1)) \
+    memcpy(&w, pTail + probe_pos, sizeof(w));                                                     \
+    if (w == c01)                                                                                 \
         break;
             TDEFL_PROBE;
             TDEFL_PROBE;
@@ -929,8 +935,8 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             *pMatch_dist = dist;
             if ((*pMatch_len = match_len = probe_len) == max_match_len)
                 return;
-            c0 = d->m_dict[pos + match_len];
-            c1 = d->m_dict[pos + match_len - 1];
+            pTail = d->m_dict + match_len - 1;
+            memcpy(&c01, pTail + pos, sizeof(c01));
         }
     }
 }
