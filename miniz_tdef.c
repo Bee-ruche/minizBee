@@ -1175,22 +1175,55 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             if ((d->m_lookahead_size + d->m_dict_size) >= (TDEFL_MIN_MATCH_LEN - 1))
             {
                 mz_uint dst_pos = (d->m_lookahead_pos + d->m_lookahead_size) & TDEFL_LZ_DICT_SIZE_MASK, ins_pos = d->m_lookahead_pos + d->m_lookahead_size - 2;
-                mz_uint hash = (d->m_dict[ins_pos & TDEFL_LZ_DICT_SIZE_MASK] << TDEFL_LZ_HASH_SHIFT) ^ d->m_dict[(ins_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK];
+                size_t hash = (d->m_dict[ins_pos & TDEFL_LZ_DICT_SIZE_MASK] << TDEFL_LZ_HASH_SHIFT) ^ d->m_dict[(ins_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK];
                 mz_uint num_bytes_to_process = (mz_uint)MZ_MIN(src_buf_left, TDEFL_MAX_MATCH_LEN - d->m_lookahead_size);
-                const mz_uint8 *pSrc_end = pSrc ? pSrc + num_bytes_to_process : NULL;
                 src_buf_left -= num_bytes_to_process;
                 d->m_lookahead_size += num_bytes_to_process;
-                while (pSrc != pSrc_end)
+                if ((dst_pos >= (TDEFL_MAX_MATCH_LEN - 1)) && ((dst_pos + num_bytes_to_process) <= TDEFL_LZ_DICT_SIZE))
                 {
-                    mz_uint8 c = *pSrc++;
-                    d->m_dict[dst_pos] = c;
-                    if (dst_pos < (TDEFL_MAX_MATCH_LEN - 1))
-                        d->m_dict[TDEFL_LZ_DICT_SIZE + dst_pos] = c;
-                    hash = ((hash << TDEFL_LZ_HASH_SHIFT) ^ c) & (TDEFL_LZ_HASH_SIZE - 1);
-                    d->m_next[ins_pos & TDEFL_LZ_DICT_SIZE_MASK] = d->m_hash[hash];
-                    d->m_hash[hash] = (mz_uint16)(ins_pos);
-                    dst_pos = (dst_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK;
-                    ins_pos++;
+                    /* Cas courant (tâche miniz-0013) : ni dst_pos ni ins_pos ne reviennent au début de la
+                       fenêtre, et aucun octet ne tombe dans la copie miroir (dst_pos >= TDEFL_MAX_MATCH_LEN - 1),
+                       donc ins_pos & TDEFL_LZ_DICT_SIZE_MASK == dst_pos - 2. Mêmes écritures, dans le même
+                       ordre (octet k = 0, 1, 2…), que la boucle générale ci-dessous, sans masque ni test
+                       par octet ; boucle déroulée par deux, l'octet impair éventuel passe en premier. */
+                    mz_uint8 *pDst = d->m_dict + dst_pos;
+                    mz_uint16 *pNext = d->m_next + (dst_pos - 2);
+                    size_t i = num_bytes_to_process & 1;
+#define TDEFL_INSERT_BYTE(k)                                                   \
+    do                                                                         \
+    {                                                                          \
+        mz_uint8 c = pSrc[k];                                                  \
+        pDst[k] = c;                                                           \
+        hash = ((hash << TDEFL_LZ_HASH_SHIFT) ^ c) & (TDEFL_LZ_HASH_SIZE - 1); \
+        pNext[k] = d->m_hash[hash];                                            \
+        d->m_hash[hash] = (mz_uint16)(ins_pos + (k));                          \
+    } MZ_MACRO_END
+                    if (i)
+                        TDEFL_INSERT_BYTE(0);
+                    for (; i < num_bytes_to_process; i += 2)
+                    {
+                        TDEFL_INSERT_BYTE(i);
+                        TDEFL_INSERT_BYTE(i + 1);
+                    }
+#undef TDEFL_INSERT_BYTE
+                    if (num_bytes_to_process)
+                        pSrc += num_bytes_to_process;
+                }
+                else
+                {
+                    const mz_uint8 *pSrc_end = pSrc ? pSrc + num_bytes_to_process : NULL;
+                    while (pSrc != pSrc_end)
+                    {
+                        mz_uint8 c = *pSrc++;
+                        d->m_dict[dst_pos] = c;
+                        if (dst_pos < (TDEFL_MAX_MATCH_LEN - 1))
+                            d->m_dict[TDEFL_LZ_DICT_SIZE + dst_pos] = c;
+                        hash = ((hash << TDEFL_LZ_HASH_SHIFT) ^ c) & (TDEFL_LZ_HASH_SIZE - 1);
+                        d->m_next[ins_pos & TDEFL_LZ_DICT_SIZE_MASK] = d->m_hash[hash];
+                        d->m_hash[hash] = (mz_uint16)(ins_pos);
+                        dst_pos = (dst_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK;
+                        ins_pos++;
+                    }
                 }
             }
             else
