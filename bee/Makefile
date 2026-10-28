@@ -1,6 +1,7 @@
 # Construction de l'outillage Bee pour miniz.
 #
 #   make -C bee differentiel     tests différentiels (assertions de miniz actives)
+#   make -C bee api              cas limites de l'API compatible zlib, miniz contre zlib (mêmes options)
 #   make -C bee banc             banc de mesure (options de compilation « Release » de miniz)
 #   make -C bee fuzz-libfuzzer   harnais libFuzzer (clang complet requis)
 #   make -C bee fuzz-gcc         mêmes harnais, pilote aléatoire + ASan/UBSan de gcc (repli local)
@@ -43,17 +44,23 @@ OPT_TESTS ?= -O2 -g
 # (option --instructions de ab.py) ; sinon le décompte inclut aussi la lecture du corpus.
 CACHEGRIND := $(shell printf '\043include <valgrind/cachegrind.h>\nint main(void){return 0;}\n' | $(CC) -x c - -o /dev/null 2>/dev/null && echo -DBEE_AVEC_CACHEGRIND)
 
-.PHONY: differentiel banc fuzz-libfuzzer fuzz-gcc tout nettoyer
+.PHONY: differentiel api banc fuzz-libfuzzer fuzz-gcc tout nettoyer
 
-tout: differentiel banc
+tout: differentiel api banc
 
 differentiel: $(CONSTR)/differentiel
+api: $(CONSTR)/api
 banc: $(CONSTR)/banc
 
 $(CONSTR)/differentiel: $(ICI)/tests/differentiel.c $(COMMUN) $(COMMUN_H) $(MINIZ_C) $(MINIZ_H)
 	@mkdir -p $(CONSTR)
 	$(CC) $(OPT_TESTS) -std=gnu99 -D_GNU_SOURCE $(AVERTISSEMENTS) $(INCLUDES) \
 	  $(ICI)/tests/differentiel.c $(COMMUN) $(MINIZ_C) $(ZLIB_STATIQUE) -o $@
+
+$(CONSTR)/api: $(ICI)/tests/api.c $(MINIZ_C) $(MINIZ_H)
+	@mkdir -p $(CONSTR)
+	$(CC) $(OPT_TESTS) -std=gnu99 -D_GNU_SOURCE $(AVERTISSEMENTS) $(INCLUDES) \
+	  $(ICI)/tests/api.c $(MINIZ_C) $(ZLIB_STATIQUE) -o $@
 
 # miniz est compilé seul, avec ses propres options (gnu90 comme dans CMakeLists.txt) ; -g ne change
 # pas le code produit et sert au profilage (callgrind, cachegrind).
