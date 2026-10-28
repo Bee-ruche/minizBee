@@ -18,7 +18,7 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
   mesures           {"A": {6 métriques}, "B": {6 métriques}} : médianes d'ab.py
   instructions      décompte Cachegrind par scénario sur un sous-corpus : {"instructions_n6": {"A", "B", "gain"}, ...}
   degradations      métriques dégradées au-delà du bruit (test du signe ; instructions au-delà du seuil), avec leur gain
-  lignes_modifiees  lignes modifiées hors bee/**, tests/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
+  lignes_modifiees  lignes modifiées hors bee/**, tests/**, manifestes/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
   amorcage          true si les juges venaient de la PR elle-même (base = commit d'amorçage, voir bee/ci/juges.sh)
   etapes, details   pour les relecteurs
 
@@ -54,7 +54,7 @@ ETAPES = [
 METRIQUES = ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
              "debit_decompression", "ratio_n6", "memoire_max_ko"]
 # Repris de projets/miniz.yaml (chemins_hors_decompte) dans le registre Bee.
-CHEMINS_HORS_DECOMPTE = ["bee/**", "tests/**", "CONTRIBUTION.yaml"]
+CHEMINS_HORS_DECOMPTE = ["bee/**", "tests/**", "CONTRIBUTION.yaml", "manifestes/**"]
 
 
 def lire_texte(chemin):

@@ -19,7 +19,7 @@
 #     .github/ ou bee/ peut fabriquer son propre verdict. Le registre le détecte de son côté (liste des
 #     fichiers de la PR lue auprès de l'API GitHub, verdicts.yml) : verdict refusé pour une optimisation,
 #     relecture du conseil ou d'un Confirmé exigée pour une tâche d'outillage (R3).
-#   - CONTRIBUTION.yaml et la tâche du registre sont des données (yaml.safe_load), jamais exécutées ;
+#   - le manifeste (manifestes/<tâche>.yaml) et la tâche du registre sont des données (yaml.safe_load), jamais exécutées ;
 #     les valeurs qui en sortent sont validées contre des listes fermées.
 #   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
 #     de la PR ne peut pas réécrire ; les fichiers d'état servent seulement à nommer l'étape en échec.
@@ -122,9 +122,14 @@ jobs:
           base/bee/ci/etape.sh "$ETATS" manifeste_et_taille base/bee/ci/manifeste.sh pr registre python3
       - name: Conserver le manifeste, la tâche et l'état
         if: always()
+        env:
+          MANIFESTE: ${{ steps.manifeste.outputs.manifeste }}
         run: |
           mkdir -p donnees
-          cp pr/CONTRIBUTION.yaml donnees/ 2>/dev/null || true
+          # Nom validé par bee/ci/manifeste.sh (manifestes/miniz-NNNN.yaml ou CONTRIBUTION.yaml).
+          case "$MANIFESTE" in
+            manifestes/miniz-[0-9][0-9][0-9][0-9].yaml|CONTRIBUTION.yaml) cp "pr/$MANIFESTE" donnees/CONTRIBUTION.yaml 2>/dev/null || true ;;
+          esac
           cp -r "$ETATS" donnees/etats 2>/dev/null || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
