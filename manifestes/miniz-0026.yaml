@@ -1,0 +1,136 @@
+tache: miniz-0026
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "Nouveau bee/tests/api.c : 192 cas limites de l'API compatible zlib, code de miniz comparé à zlib (55 écarts tolérés, justifiés) ; branches prises de miniz.c : 55,0 % → 94,4 %."
+changement: |
+  Trois fichiers, tous dans bee/ (hors décompte R1) ; aucun code de miniz modifié.
+
+  bee/tests/api.c (nouveau, 1126 lignes). Chaque cas fait le même appel avec miniz (mz_*) et avec zlib (liée
+  statiquement, comme differentiel), puis compare les deux codes de retour à des attendus écrits dans le fichier.
+  Un code de miniz différent de l'attendu est un ÉCHEC (code de sortie 1) ; un code de zlib différent de
+  l'attendu n'est qu'un AVERTISSEMENT, car les attendus sont ceux de zlib 1.3 (celle de la CI) et une autre
+  version ne met pas miniz en cause. Autour des codes, 106 contrôles sur miniz : total_in et total_out, octets
+  consommés et octets laissés après le flux égaux à ceux de zlib, flux toujours utilisable après un appel refusé
+  (même sortie que mz_compress2 ensuite), sortie identique à un flux neuf après mz_deflateReset ou
+  mz_inflateReset (niveaux 1, 6 et 9, flux zlib et Deflate brut), flux de miniz relu par zlib pour chaque
+  paramètre accepté, allocateur de l'appelant (opaque transmis, toute allocation libérée). Cas couverts :
+  - mz_deflateInit2 : niveaux -2, -1, 0, 1, 9, 10, 11 ; méthode 7 ; window_bits 15, -15, 14, 9, 8, -9, 31, 7,
+    -8, 0, 16, -16 ; mem_level 0, 1, 9, 10 ; les cinq stratégies, 5 et -1 ; flux nul ; allocation refusée ;
+  - mz_inflateInit2 : window_bits 15, -15, 8, 14, -8, 0, 16, 31, 47, 7, -7, -16, 48 ; flux nul ; allocation refusée ;
+  - mz_deflate : flux nul, sans next_out (avail_out 100 et 0), avail_out = 0 (sans vidage et MZ_FINISH), vidages
+    -1, 6 et MZ_BLOCK, MZ_SYNC_FLUSH, MZ_PARTIAL_FLUSH et MZ_FULL_FLUSH au milieu de l'entrée (MZ_PARTIAL_FLUSH doit
+    donner la même sortie que MZ_SYNC_FLUSH), appels sans entrée, appels après la fin du flux et après
+    mz_deflateEnd, mz_deflateEnd inachevé, deux fois, nul ;
+  - mz_compress2 et mz_compress : tampon de mz_compressBound, de taille exacte, exacte - 1, moitié, 1 et 0 octet,
+    sans tampon de sortie, entrée vide, niveaux -1, 10, 11, 100, -2, longueur de sortie de 2^32 octets ;
+  - mz_uncompress et mz_uncompress2 : sortie exacte, plus grande, exacte - 1, moitié, 1 et 0 octet ; flux vide ;
+    données après la fin du flux ; entrée tronquée à 0, 1, 2, 6, n/2, n-4 et n-1 octets ; somme d'en-tête et
+    Adler-32 faux ; en-tête avec dictionnaire prédéfini ; longueur de sortie de 2^32 octets ;
+  - mz_deflateReset et mz_inflateReset : flux nul, après la fin du flux, en cours de flux, après MZ_BUF_ERROR et
+    après MZ_DATA_ERROR (décompression) ;
+  - mz_inflate : flux nul, sans entrée, avail_out = 0, vidages 1, 2, 3, 5 et -1, MZ_FINISH au premier appel avec
+    une sortie trop petite (blocs compressés et stockés), MZ_FINISH ensuite (sortie trop petite, puis trop courte
+    d'un octet), appels après la fin du flux, données après le flux, Adler-32 faux, dictionnaire prédéfini, après
+    mz_inflateEnd, mz_inflateEnd deux fois et nul ;
+  - constantes MZ_* égales à Z_* (codes, vidages, stratégies) ; mz_error ; mz_adler32(0, NULL, 0) et
+    mz_crc32(0, NULL, 0) égales à zlib (idiome de zlib.h pour la valeur initiale).
+
+  Écarts de code tolérés (55 cas sur 192), chacun renvoie dans api.c à cette liste, recopiée en tête du fichier :
+  - E1 (12 cas) paramètre invalide : miniz rend MZ_PARAM_ERROR (-10000), code propre à miniz que zlib n'a pas ;
+    zlib rend Z_STREAM_ERROR. Les deux refusent l'appel.
+  - E2 (12 cas) fenêtre : miniz n'accepte que window_bits = 15 ou -15 (fenêtre de 32 Kio, documenté dans miniz.h) ;
+    zlib accepte aussi 8 à 14, gzip (+16), la détection automatique (+32) et, en décompression, 0.
+  - E3 (9 cas) niveau et stratégie : miniz accepte un niveau hors de -1..9 (10 = MZ_UBER_COMPRESSION, au-delà ramené
+    à 10, autre négatif traité comme -1 : même sortie, vérifiée) et une stratégie inconnue (stratégie par défaut) ;
+    zlib refuse. Le flux produit reste valide (relu par zlib).
+  - E4 (4 cas) vidages : mz_deflate refuse MZ_BLOCK ; mz_inflate n'accepte que NO_FLUSH, PARTIAL_FLUSH, SYNC_FLUSH
+    et FINISH (miniz.h) et refuse 3, 5 et -1, que zlib accepte. Après le refus, rien n'est consommé et le flux de
+    mz_inflate reste utilisable (vérifié).
+  - E5 (1) premier mz_deflate sans entrée ni vidage : miniz n'a rien à produire (MZ_BUF_ERROR) ; zlib écrit déjà
+    l'en-tête (Z_OK).
+  - E6 (1) MZ_SYNC_FLUSH répété sans nouvelle entrée : miniz émet un nouveau bloc vide (MZ_OK, vérifié) ; zlib
+    refuse un vidage sans effet (Z_BUF_ERROR).
+  - E7 (3) mz_deflate après la fin du flux : sans MZ_FINISH, MZ_BUF_ERROR au lieu de Z_STREAM_ERROR ; avec
+    MZ_FINISH et une nouvelle entrée, MZ_STREAM_END sans consommer l'entrée (vérifié) au lieu de Z_BUF_ERROR.
+  - E8 (4) mz_inflate et MZ_FINISH, comportement documenté dans miniz.h : MZ_FINISH au premier appel suppose des
+    tampons suffisants ; si la sortie est trop petite, le flux ne reprend pas (MZ_DATA_ERROR ensuite) alors que zlib
+    reprend ; après un MZ_FINISH, un appel sans MZ_FINISH est refusé (MZ_STREAM_ERROR). Seule une remise à zéro
+    relance le flux (vérifié).
+  - E9 (1) dictionnaire prédéfini (bit FDICT) : miniz ne le gère pas (MZ_DATA_ERROR) ; zlib rend Z_NEED_DICT. Par
+    mz_uncompress, les deux rendent une erreur de données (cas identique).
+  - E10 (3) libération : mz_deflateEnd et mz_inflateEnd rendent MZ_OK sur un flux déjà libéré (zlib :
+    Z_STREAM_ERROR), et mz_deflateEnd sur un flux inachevé (zlib : Z_DATA_ERROR).
+  - E11 (2) longueur de sortie au-delà de 32 bits (mz_ulong de 64 bits) : mz_compress2 et mz_uncompress2 rendent
+    MZ_PARAM_ERROR sans toucher aux tampons ; zlib traite la longueur par tranches. zlib n'y écrit que le flux
+    produit, qui tient dans le tampon réel.
+  - E12 (3) uncompress de zlib déduit l'erreur de l'état de la sortie : sortie de 0 octet pour un flux non vide,
+    Z_DATA_ERROR ; sortie remplie pile au moment où l'entrée tronquée s'épuise (Adler-32 manquant, ou bloc stocké
+    coupé), Z_BUF_ERROR. mz_uncompress rend MZ_BUF_ERROR dans le premier cas et MZ_DATA_ERROR dans le second.
+    Avec une sortie d'un octet de plus, les troncatures donnent Z_DATA_ERROR des deux côtés (cas identiques).
+  Aucun écart n'est masqué : les 137 autres cas exigent le même code des deux côtés.
+
+  bee/tests/lancer.sh : quatrième étape « Cas limites de l'API compatible zlib » après les tests différentiels.
+  differentiel et api tournent tous les deux même si le premier échoue ; le code de sortie est celui de
+  differentiel s'il est non nul, sinon celui d'api. --verbeux est aussi transmis à api (un cas par ligne, avec
+  les deux codes). Les numéros d'étape passent de /3 à /4.
+
+  bee/Makefile : cible api (mêmes options que differentiel : OPT_TESTS, -std=gnu99, -Wall -Wextra, zlib statique,
+  SOURCE pour juger d'autres sources), ajoutée à « tout » et à .PHONY.
+
+  Couverture (gcov 13.3, miniz compilé une fois en -O0 --coverage, objets partagés par differentiel et api ;
+  « avant » = differentiel seul sur le corpus, « après » = differentiel puis api) :
+    miniz.c        lignes 75,25 % → 96,32 % (225 → 288 sur 299) ; branches prises 55,00 % → 94,44 % (99 → 170 sur 180) ;
+                   branches exécutées 83,33 % → 100 %
+    miniz_tdef.c   lignes 79,06 % → 80,82 % ; branches prises 70,68 % → 72,66 % (499 → 513 sur 706)
+    miniz_tinfl.c  lignes 76,49 % → 77,38 % ; branches prises 67,04 % → 71,11 % (297 → 315 sur 443)
+  Les chiffres « avant » retrouvent ceux de la tâche (75,3 % et 55,0 %). api seul : miniz.c 92,64 % des lignes,
+  91,11 % des branches prises.
+
+  Régressions semées (méta-test), chacune dans une copie jetable de miniz.c hors du dépôt (jamais commitée), jugée
+  par api et par differentiel compilés contre cette copie, dans la sandbox. 14 sur 15 font échouer api ; aucune ne
+  fait échouer differentiel (3233 contrôles, 0 écart pour chacune) :
+    M1 mz_compress2 rend MZ_OK sur sortie trop petite (5 échecs) ; M2 contrôle avail_out = 0 de mz_deflate retiré
+    (4) ; M3 mz_deflateInit2 accepte les fenêtres 8 à 15 (8) ; M4 mem_level non vérifié (2) ; M5 mz_deflateReset
+    ne remet pas total_in/total_out à zéro (9) ; M6 mz_inflateReset ne remet pas m_has_flushed à zéro (8) ;
+    M7 mz_inflate accepte MZ_FULL_FLUSH (2) ; M9 mz_uncompress2 ne rend pas les octets consommés (1) ; M10 l'erreur
+    de données de mz_inflate n'est plus persistante (1) ; M11 limite de 32 bits de mz_compress2 retirée (1) ;
+    M12 mz_deflate après la fin rend toujours MZ_STREAM_END (2) ; M13 mz_inflateInit2 accepte les fenêtres 8 à 15
+    (3) ; M14 mz_uncompress2 ne convertit plus MZ_BUF_ERROR sans entrée restante en MZ_DATA_ERROR (1) ; M15 vidage
+    négatif accepté par mz_deflate (3).
+    M8 (MZ_PARTIAL_FLUSH transmis tel quel à tdefl_compress) passe : c'est un mutant équivalent, tdefl ne distingue
+    que TDEFL_FINISH et TDEFL_FULL_FLUSH et traite toute autre valeur non nulle comme TDEFL_SYNC_FLUSH ; la sortie
+    est identique (le contrôle « même sortie que MZ_SYNC_FLUSH » le confirme).
+
+  Durées dans la sandbox (bee/sandbox/sans-docker.sh), machine partagée (Xeon virtualisé, 2 cœurs, gcc 13.3),
+  corpus déjà généré, constructions effacées : bee/tests/lancer.sh de 18,2 à 20,1 s (trois passages) contre 16,8 s
+  pour la base ; api seul : 1,6 s de compilation et 0,4 s d'exécution. --sanitiseurs : 39,3 à 39,9 s contre 34,6 s
+  pour la base (api : 2,8 s de compilation, 0,6 s d'exécution).
+teste:
+  - "bee/tests/lancer.sh dans la sandbox, sources de la base 1c625c3 : differentiel 3233 contrôles, 0 écart, 305 empreintes identiques ; api 192 cas et 106 contrôles, 0 échec, 0 avertissement ; de 18,2 à 20,1 s (trois passages)"
+  - "bee/tests/lancer.sh --sanitiseurs (ASan + UBSan, -fno-sanitize-recover=all) : mêmes résultats, aucune erreur des sanitiseurs ; 39,3 à 39,9 s"
+  - "api (-O2 -g) sous valgrind --leak-check=full : aucune erreur, aucune fuite"
+  - "compilation d'api.c sans avertissement avec gcc 13.3 (-Wall -Wextra, -O2 et sanitiseurs) et clang (-Wall -Wextra)"
+  - "couverture gcov avant/après de miniz.c, miniz_tdef.c et miniz_tinfl.c (chiffres dans « changement »)"
+  - "15 régressions semées dans des copies jetables de miniz.c : 14 attrapées par api, 0 par differentiel ; la 15e est un mutant équivalent (détail dans « changement »)"
+  - "chaque attendu, prévu d'après miniz.h, zlib.h et le code des deux bibliothèques, vérifié à l'exécution contre zlib 1.3 (0 avertissement) ; l'écart E12 a été découvert à l'exécution, puis expliqué"
+  - "durée de la base mesurée dans un worktree jetable d'upstream/master, mêmes conditions"
+non_teste:
+  - "la CI GitHub Actions, en particulier ARM64 : api n'y a pas tourné. Les cas E11 (2^32 octets) supposent un mz_ulong de 64 bits et sont sautés sinon. Comme la PR modifie bee/, la CI lance deux passages ; seul le second (outillage de la PR) exécute api"
+  - "une autre version de zlib que 1.3 : les attendus côté zlib peuvent alors différer (avertissements non bloquants)"
+  - "les appels hors du contrat de l'API (pointeurs ou flux invalides autres que ceux listés dans les cas) ne sont pas testés"
+  - "les 10 branches de miniz.c encore non prises : surtout des échecs d'allocation de l'allocateur par défaut (mz_compress2, mz_uncompress2), des fonctions que l'API n'appelle pas (mz_free, miniz_def_realloc_func) et des sous-conditions combinées"
+  - "le refus d'allocation n'est testé qu'à l'initialisation (première allocation) ; pas d'échec d'allocation en cours de flux"
+  - "le fuzzing : rien n'a changé dans bee/fuzz/, il n'a pas été relancé"
+doutes: >
+  1) api fige le comportement d'erreur actuel de miniz, écarts compris : une optimisation qui rapprocherait un code
+  de celui de zlib (E5, E6, E7, E10, E12…) ferait échouer api. C'est voulu (le changement de comportement devient
+  visible), mais il faudra alors mettre à jour l'attendu et la liste des écarts dans la même PR, avec relecture.
+  2) Les attendus côté zlib sont ceux de zlib 1.3 ; si la CI change de version, des avertissements apparaîtront
+  sans faire échouer le test, et la liste des écarts devra être revue. 3) Sous --sanitiseurs, lancer.sh dépasse
+  déjà 30 s sur cette machine avant ce changement (34,6 s) ; api y ajoute environ 5 s. 4) bee/README.md n'est pas
+  mis à jour (il ne mentionne ni api ni la quatrième étape de lancer.sh) : hors des fichiers de la tâche, à corriger
+  à part. 5) La progression de couverture sur miniz_tdef.c et miniz_tinfl.c reste faible : ce n'est pas l'objet de
+  la tâche, ces fichiers sont surtout exercés par le corpus et le fuzzing.
+taille_reelle: S
