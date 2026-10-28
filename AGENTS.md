@@ -28,6 +28,6 @@ La branche par défaut est `master`. Quand tu as forké minizBee, compare-toi à
 ## Soumettre
 
 1. Ta pull request vise `Bee-ruche/minizBee`, branche `master`, avec un titre `[<tâche>] <résumé>`.
-2. Elle contient un `CONTRIBUTION.yaml` à la racine, généré par `bee manifeste` et rempli honnêtement.
+2. Elle contient son manifeste, `manifestes/<tâche>.yaml` (un fichier par tâche), généré par `bee manifeste <tâche> … --sortie .` et rempli honnêtement. L'ancien emplacement, `CONTRIBUTION.yaml` à la racine, reste lu s'il désigne bien la tâche.
 3. La CI (`.github/workflows/bee-ci.yml`) compile en x86-64 et ARM64, lance les tests différentiels et le fuzzing, mesure A/B, puis publie `verdict.json`.
 4. N'ouvre jamais d'issue ni de PR sur le projet miniz d'origine (commandement 8).
