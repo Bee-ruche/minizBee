@@ -4,7 +4,7 @@
 #
 # Usage : construire.sh <sources_miniz> <outillage_base> <sortie> [--chrono]
 #   <sources_miniz>   miniz*.c et miniz*.h de la variante (lecture seule)
-#   <outillage_base>  copie de la BASE : bee/juge, bee/commun et ses propres en-têtes de miniz (miniz/)
+#   <outillage_base>  copie de la BASE : bee/juge, bee/commun et ses propres en-têtes de miniz (base/)
 #   <sortie>          dossier inscriptible : obj/, execution, et les relevés d'analyse (texte)
 #   --chrono          compile aussi le lanceur chrono (variante A seulement : il ne voit jamais la PR)
 #
@@ -26,7 +26,7 @@ for f in miniz miniz_tdef miniz_tinfl; do
     -c "$source_miniz/$f.c" -o "$sortie/obj/$f.o"
 done
 cc -O2 -g -std=gnu99 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter \
-  -I"$outillage/miniz" -I"$outillage/bee/commun" \
+  -I"$outillage/base" -I"$outillage/bee/commun" \
   "$outillage/bee/juge/execution.c" "$sortie/obj/miniz.o" "$sortie/obj/miniz_tdef.o" "$sortie/obj/miniz_tinfl.o" \
   -o "$sortie/execution"
 
