@@ -1,0 +1,74 @@
+tache: miniz-0018
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "tinfl_decompress, boucle des littéraux : borne de sortie calculée une fois par appel, tests code_len == 0 sortis du chemin chaud ; mêmes statuts, même état, mêmes octets."
+changement: >
+  Deux changements dans la boucle rapide des littéraux de tinfl_decompress (miniz_tinfl.c), rien d'autre.
+  (1) Le test de sortie (pOut_buf_end - pOut_buf_cur) < 2 devient pOut_buf_cur >= pOut_buf_fast_end, avec
+  pOut_buf_fast_end = pOut_buf_next + (*pOut_buf_size - 1) si le tampon fait au moins 2 octets, pOut_buf_next
+  s'il en fait 0 ou 1, et NULL si pOut_buf_next est nul. Elle est calculée avant TINFL_CR_BEGIN, donc valable à
+  chaque ré-entrée de la coroutine. Équivalence exacte : pOut_buf_cur reste dans [pOut_buf_next, pOut_buf_end], et
+  pour une taille >= 2, cur < end - 1 <=> end - cur >= 2 ; pour une taille 0 ou 1, ni l'ancien ni le nouveau test ne
+  prend le chemin rapide ; sortie nulle : NULL >= NULL, chemin lent comme avant. Le choix chemin rapide / chemin lent
+  est donc le même à chaque tour, ce qui compte car les deux chemins ne se comportent pas pareil sur une table
+  incomplète. Le test d'entrée (pIn_buf_end - pIn_buf_cur) < 4 est laissé tel quel : sa version précalculée a été
+  essayée (trois écritures) et donne plus d'instructions (gcc la recalcule à chaque entrée de boucle, ou déplace des
+  variables sur la pile) : -2,2 % à -3,4 % au lieu de -3,76 %.
+  (2) Les deux tests code_len == 0 (états 40 et 54) passent dans la branche rare. Les seules écritures de m_look_up
+  sont 0 (remise à zéro), (code_size << 9) | sym avec 1 <= code_size <= 10 (donc >= 512) et un indice d'arbre
+  négatif ; la descente d'arbre donne code_len >= 11. Donc code_len == 0 <=> entrée de table nulle. La lecture de la
+  table teste maintenant sym2 > 0 au lieu de sym2 >= 0 (même coût) et, dans la branche « sinon », une entrée nulle
+  échoue aussitôt avec le même état (40 ou 54), le même counter (0 pour l'état 40, inchangé pour 54), bit_buf et
+  num_bits inchangés (l'ancien code les décalait de 0) et aucun octet écrit, exactement comme avant. Le chemin lent
+  (TINFL_HUFF_DECODE), qui sur une entrée nulle produit un 0 sans consommer de bit, n'est pas touché. Effet : 2
+  instructions de moins par symbole décodé dans le chemin rapide, 3 par tour pour le test de sortie (registre au lieu
+  de mov/sub/cmp). Le code de compression compilé est identique octet pour octet (sections .text de miniz.o et
+  miniz_tdef.o comparées) ; tinfl_decompress passe de 9429 à 9621 octets de code. La piste « pointeurs locaux vers
+  les tables » (note du 27/10) n'a pas été reprise.
+mesures:
+  machine: "Intel Xeon @ 2,10 GHz virtualisé (Firecracker), 2 cœurs, machine partagée, Linux 6.18.44 x86_64, gcc 13.3.0 (Ubuntu 24.04), dans bee/sandbox/sans-docker.sh (sans réseau, env -i)"
+  commande: "python3 bee/bench/ab.py --base upstream/master --candidate HEAD --repetitions 10 --instructions"
+  repetitions: 10
+  avant:
+    debit_decompression: 422.67
+    debit_compression_n1: 100.40
+    debit_compression_n6: 25.38
+    debit_compression_n9: 14.88
+    ratio_n6: 3.5054
+    memoire_max_ko: 1672
+  apres:
+    debit_decompression: 429.07
+    debit_compression_n1: 98.55
+    debit_compression_n6: 23.99
+    debit_compression_n9: 15.22
+    ratio_n6: 3.5054
+    memoire_max_ko: 1672
+teste:
+  - "Décompte d'instructions (ab.py --instructions, Cachegrind, 131072 premiers octets par fichier) : instructions_decompression 34 164 249 -> 32 880 282 (-3,758 %, identique sur les deux passages à 10 répétitions) ; instructions n1, n6 et n9 strictement identiques"
+  - "ab.py --repetitions 10 --instructions, premier passage (chiffres ci-dessus) : debit_decompression +1,51 % (7 paires sur 10, dans le bruit) ; second passage : +3,85 % (8 sur 10, dans le bruit) ; ab.py --repetitions 20 --cpu 1 : +1,01 % (12 sur 20, dans le bruit). Aucun des trois n'atteint le seuil du test du signe"
+  - "Chronomètre plus long, hors dépôt : programme qui chronomètre seulement mz_uncompress de la sortie niveau 6 de tout le corpus (meilleure de 15 passes, temps mural), compilé comme le banc (-O3 -DNDEBUG, gnu90) contre la base, une copie identique de la base (contrôle A/A) et le candidat, exécutés en ordre tournant sur 120 tours, cœur 1 : candidat contre base +1,15 % (72 paires sur 120, p unilatéral 0,018), contre la copie +0,86 % (p 0,018), contrôle A/A +0,44 % (62 sur 120, p 0,39) ; réplication : +1,66 % (79 sur 120, p 0,0003), contre la copie +2,21 % (83 sur 120, p < 0,0001), contrôle A/A -0,67 % (52 sur 120)"
+  - "bee/tests/lancer.sh : 3233 contrôles, 0 écart, 305 empreintes identiques à la référence"
+  - "bee/tests/lancer.sh --sanitiseurs (ASan + UBSan) : 3233 contrôles, 0 écart"
+  - "bee/ci/tests_origine.sh (CMake + ctest) : 1/1 réussi ; aucun avertissement dans miniz_tinfl.c avec gcc -std=c89/gnu90/c99/c11 -pedantic -Wall -Wextra -Wdeclaration-after-statement, clang -std=c89 -pedantic, g++"
+  - "bee/fuzz/lancer.sh 120 --reference <worktree de upstream/master> (libFuzzer) : fuzz_inflate 59 208 et fuzz_compression 62 841 exécutions, aucun écart ; puis bee/fuzz/lancer.sh 600 --harnais fuzz_inflate --reference <base> : 163 901 exécutions, aucun écart"
+  - "Trace différentielle hors dépôt (comportement sur entrée invalide) : 15 440 cas (flux valides du corpus en zlib et brut aux niveaux 0, 1, 6, 9, mutations et troncatures, blocs dynamiques fabriqués avec un arbre littéraux/longueurs vide ou à un seul symbole, entrées aléatoires), chacun en une fois, en flux avec dictionnaire circulaire de 1 octet à 32 Kio et en flux à sortie linéaire, morceaux d'entrée et de sortie de 1 à 4096 octets ; après chaque appel sont hachés le statut, les octets consommés et produits, les octets écrits et tout l'état scalaire du décompresseur (m_state, m_bit_buf, m_num_bits, m_counter, m_dist…) : base et candidat identiques sur les 15 440 cas ; les états d'échec 40 (2769 cas) et 54 (43 cas) du chemin rapide sont atteints. Trois régressions semées sont attrapées : counter non remis à 0 (1253 cas différents), borne de sortie décalée d'un octet (115), état 54 renuméroté (44)"
+  - "Même trace avec MINIZ_HAS_64BIT_REGISTERS forcé à 0 dans une copie de miniz.h (tampon de bits 32 bits, chemin #if !TINFL_USE_64BIT_BITBUF) : base et candidat identiques sur les 15 440 cas"
+non_teste:
+  - "ARM64 : aucune machine ; ni tests ni mesure (la CI le fera)"
+  - "Tampon de bits 32 bits sur une vraie cible 32 bits : seulement simulé sur x86-64 en forçant MINIZ_HAS_64BIT_REGISTERS à 0, et seulement avec la trace différentielle (pas bee/tests/lancer.sh)"
+  - "Grand-boutiste : non testé (le changement ne lit ni n'écrit rien de plus en mémoire)"
+  - "Autres compilateurs que gcc 13.3 pour le banc : le gain d'instructions dépend de l'allocation de registres de gcc (voir doutes)"
+  - "Juge isolé (bee/juge/juge.py) : pas de Docker ici"
+doutes: >
+  Le gain au chronomètre est petit (environ 1 à 2 %) : les instructions retirées sont des tests bien prédits, hors de
+  la chaîne de dépendances du décodage (lecture de table, décalage de bit_buf). ab.py à 10 ou 20 répétitions ne le
+  montre pas au-delà du bruit sur cette machine ; seule la mesure entrelacée sur 120 tours, avec contrôle A/A, le voit
+  (deux fois, p 0,018 puis 0,0003). La confirmation de R4 au chronomètre reste donc à faire par la CI ou une autre
+  configuration. Le premier passage d'ab.py signale une « dégradation au-delà du bruit » de debit_compression_n1
+  (-1,84 %, 1 paire sur 10) alors que le code de compression compilé est identique octet pour octet, aux mêmes
+  adresses, et que ses instructions sont identiques : c'est du bruit (le second passage donne +2,91 %, le passage à
+  20 répétitions -0,22 %). Le gain d'instructions dépend de l'allocation de registres de gcc 13.3 : précalculer aussi
+  la borne d'entrée le réduisait, un autre compilateur peut donner un autre chiffre.
+taille_reelle: S
