@@ -1,0 +1,69 @@
+tache: miniz-0013
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "tdefl_compress_normal : insertion dans le dictionnaire et les chaînes de hachage sans masque ni test du miroir par octet dans le cas courant, boucle déroulée par deux."
+changement: >
+  miniz_tdef.c, première partie de tdefl_compress_normal (mise à jour de m_dict, m_next et m_hash
+  pour chaque octet entrant), 45 lignes ajoutées et 12 retirées, rien d'autre. Avant, chaque octet
+  masquait dst_pos et ins_pos, testait la copie miroir (dst_pos < 257) et passait par des indices
+  32 bits : environ 21 instructions par octet avec GCC 13 -O3. Maintenant, quand le morceau à
+  insérer ne revient pas au début de la fenêtre et ne touche pas la copie miroir
+  (dst_pos >= TDEFL_MAX_MATCH_LEN - 1 et dst_pos + num_bytes_to_process <= TDEFL_LZ_DICT_SIZE,
+  donc ins_pos & TDEFL_LZ_DICT_SIZE_MASK == dst_pos - 2), une boucle sur des pointeurs fixes
+  pDst = m_dict + dst_pos et pNext = m_next + dst_pos - 2, sans masque ni test, déroulée par deux
+  (l'octet impair éventuel d'abord), fait les mêmes écritures dans le même ordre : m_dict[dst],
+  puis hachage glissant, m_next[ins] = m_hash[h], m_hash[h] = ins, octet après octet ; environ
+  11,5 instructions par octet (23 par paire). Les autres cas (environ 1,4 % des octets dans le
+  profil n1 : tour de fenêtre, 257 premières positions) gardent la boucle d'origine, inchangée. Le hachage est le même (même
+  formule, même masque, variable en size_t pour éviter une extension par octet) ; ni le format, ni
+  l'API, ni la taille des tables ne changent ; tdefl_find_match n'est pas touchée (aucun conflit
+  avec miniz-0014, qui ne modifie que tdefl_find_match). Pistes essayées et écartées, mesurées en
+  instructions n1 (cachegrind, 128 Kio par fichier, programme entier, base 190 667 732) : garder
+  le hachage glissant d'une itération à l'autre au lieu de le recalculer depuis deux octets du
+  dictionnaire, -7,8 % en n1 mais une variable de plus vivante pendant tout le corps de boucle,
+  donc un registre de moins dans tdefl_find_match incorporée (lookahead_pos relu sur la pile
+  dans la troisième sonde) et un n9 chronométré plus lent (B gagne 1 paire sur 10) : abandonnée
+  au profit de la version retenue, qui fait moins d'instructions partout (n1 -8,3 %, n6 -4,4 %,
+  n9 -3,1 %) ; second hachage de chaque paire calculé directement depuis le premier état
+  (chaîne de dépendance raccourcie) : +2,4 % d'instructions et pas de gain chronométré,
+  abandonnée ; boucle non déroulée : -6,2 % seulement.
+mesures:
+  machine: "Intel Xeon @ 2,10 GHz virtualisé (Sapphire Rapids d'après les drapeaux AMX), 2 cœurs, Ubuntu 24.04, gcc 13.3.0 (-O3 -DNDEBUG), valgrind 3.22 ; machine partagée avec d'autres agents (charge moyenne autour de 1 hors de nos mesures)"
+  commande: "bee/sandbox/sans-docker.sh python3 bee/bench/ab.py --base upstream/master --candidate HEAD --repetitions 10 --instructions (base 1c625c3, candidat be1b54b ; premier passage valide, voir teste pour le second)"
+  repetitions: 10
+  avant:
+    debit_compression_n1: 100.3735
+    debit_compression_n6: 25.054
+    debit_compression_n9: 15.2435
+    debit_decompression: 426.376
+    ratio_n6: 3.5054
+    memoire_max_ko: 1768
+  apres:
+    debit_compression_n1: 104.445
+    debit_compression_n6: 24.8875
+    debit_compression_n9: 15.322
+    debit_decompression: 419.3195
+    ratio_n6: 3.5054
+    memoire_max_ko: 1764
+teste:
+  - "Instructions (ab.py --instructions, cachegrind, 128 Kio par fichier, passes mesurées seulement ; identiques à l'instruction près sur les trois passages qui les ont mesurées) : n1 187 597 150 -> 171 725 563 (-8,46 %), n6 357 228 867 -> 341 446 961 (-4,42 %), n9 510 229 776 -> 494 419 139 (-3,10 %), décompression 34 164 249 -> 34 164 249 (identique)"
+  - "Chronomètre, ab.py 10 répétitions entrelacées, commit be1b54b, tous les passages : (1) charge montée à 3 pendant la mesure (autre agent), débits non crédibles (n6 +7,9 %, n9 +8,1 %), écarté ; (2) charge montée à 2,75 et rapport JSON perdu (erreur de ma part), écarté ; (3) départ à charge 1,23, chiffres déclarés ci-dessus : n1 +4,06 % (9 paires sur 10, au-delà du bruit), n6 -0,66 % (5/10), n9 +0,51 % (5/10), décompression -1,65 % (3/10), mémoire +0,23 %, tous dans le bruit, ratio identique ; (4) départ à charge 1,20 : n1 +4,31 % (8/10, une paire sous le seuil de 9, donc dans le bruit), n6 -1,17 % (5/10), n9 +1,76 % (7/10), décompression -2,51 % (2/10), tous dans le bruit, mémoire et ratio identiques"
+  - "A/B dédié au scénario n1 avec les binaires du banc (bee/construction banc, --scenario n1, meilleure de 5 passes, 20 paires alternées) : B gagne 17 paires sur 20 (seuil 16), meilleur débit +5,0 %"
+  - "Décompression : code machine de miniz_tinfl.o et miniz.o identique entre base et candidat (objdump), seul miniz_tdef.o grossit de 304 octets, ce qui décale tinfl_decompress de 0xa280 à 0xa3b0 dans le binaire du banc. A/B dédiés (banc --scenario decompression, meilleure de 10 passes, 20 paires) : premier passage B gagne 4/20 (médianes -1,27 %), second passage 9/20 (+0,55 %) ; contrôle avec la base décalée artificiellement de 304 octets (hors dépôt, tinfl_decompress à la même adresse que le candidat) : base contre base décalée 10/20 (+0,21 %), base décalée contre candidat 13/20 (+0,59 %). Pas de recul reproductible ; R5 juge ce débit sur ses instructions, identiques"
+  - "Temps CPU du fil (outil local hors dépôt, mz_compress2 sur tout le corpus, alternance base/candidat, 40 mesures chacun) mesuré sur la variante intermédiaire à hachage gardé entre itérations : n1 +4,4 % à +8,3 % en médiane selon le passage, n6 +0,8 %, n9 +1,9 % ; la version retenue fait moins d'instructions que cette variante dans les trois scénarios"
+  - "bee/tests/lancer.sh (sandbox) : 3233 contrôles, 0 écart, 305 empreintes identiques à la référence"
+  - "bee/tests/lancer.sh --sanitiseurs (gcc, ASan + UBSan) : 3233 contrôles, 0 écart, 305 empreintes"
+  - "bee/ci/tests_origine.sh (CMake + ctest, -Wall -Wshadow -pedantic) : 1/1 test passé, aucun avertissement dans miniz_tdef.c ; miniz_tdef.c compilé aussi sans avertissement avec gcc -std=gnu90 -pedantic -Wall -Wextra -Wshadow -Wdeclaration-after-statement, clang -std=gnu90 -pedantic -Wall -Wextra -Wshadow, g++ -x c++ -Wall -Wextra -Wshadow et clang -fsanitize=undefined"
+  - "bee/fuzz/lancer.sh 120 --reference <extraction de upstream/master> (libFuzzer) : fuzz_inflate 24 608 entrées, fuzz_compression 49 779 entrées, aucun écart (et un premier passage sur une version intermédiaire : 58 805 et 90 269 entrées, aucun écart)"
+  - "Comparaison hors dépôt base contre candidat, octet pour octet : un programme local (empreinte FNV-1a de tout ce que produit tdefl_compress : octets, statuts, octets consommés et produits à chaque appel) compilé contre chacune des deux sources ; 2000 cas pseudo-aléatoires par configuration (entrées de 0 à 300 000 octets, dont des tailles autour des multiples de 32 Kio ; aléatoire, petit alphabet, copies de segments antérieurs jusqu'à 70 000 octets en arrière, longues séries, zéros ; 12 nombres de sondes de 0 à 4095, GREEDY_PARSING, WRITE_ZLIB_HEADER, RLE_MATCHES, FILTER_MATCHES, FORCE_ALL_STATIC_BLOCKS, FORCE_ALL_RAW_BLOCKS tirés au hasard ; en une fois, octet par octet, ou en flux à tampons d'entrée et de sortie aléatoires avec SYNC_FLUSH et FULL_FLUSH) ; configurations : -O3 -DNDEBUG, -O2 avec assertions, -DTDEFL_LESS_MEMORY=1, -DMINIZ_USE_UNALIGNED_LOADS_AND_STORES=1, ASan + UBSan (666 cas), clang -O2 (1000 cas) : toutes les sorties identiques. Le programme détecte bien deux mutants semés dans la version finale (seuil du miroir à 256, fin de fenêtre à 32769) dans les cinq configurations"
+non_teste:
+  - "ARM64 : aucune machine ; le code n'utilise que des accès octet et 16 bits ordinaires, sans dépendance au boutisme, mais il n'a été ni exécuté ni mesuré sur ARM64"
+  - "Grand-boutiste et 32 bits : non exécutés (aucune dépendance au boutisme ni à la taille de size_t dans le changement)"
+  - "MSVC : non compilé"
+  - "Fuzzing de 600 s comme la CI : seulement 120 s par harnais ici"
+  - "Juge isolé (bee/juge/juge.py) : non lancé ; Docker est présent mais ma consigne limite l'exécution du code à bee/sandbox/sans-docker.sh"
+  - "Chronomètre sur une machine non partagée : toutes les mesures de temps ont été faites sur une VM à 2 cœurs où d'autres agents travaillaient"
+doutes: "Le gain chronométré est bien plus faible que le gain d'instructions (+4 % contre -8,5 % en n1) : la boucle d'insertion reste limitée par la chaîne de dépendance du hachage glissant (shl, xor, and par octet) et par ses trois écritures par octet, que ce changement ne réduit pas ; sur une autre microarchitecture le rapport peut changer. Le chronomètre n'a franchi le seuil du bruit que dans un des deux passages valides d'ab.py (9/10 puis 8/10, médiane +4 % les deux fois) et dans l'A/B dédié de 20 paires (17/20) ; la CI fera foi. Le gain dépend aussi de l'allocation de registres de GCC 13 dans tdefl_compress_normal, où tdefl_find_match est incorporée (la variante à hachage gardé l'a montré) ; une fois miniz-0014 intégrée, le rebasage devra refaire la mesure. Le débit de décompression est ressorti négatif dans les deux passages d'ab.py (-1,65 %, -2,51 %, dans le bruit) avec un code machine identique ; les A/B dédiés et le contrôle par décalage ne reproduisent pas de recul."
+taille_reelle: M
