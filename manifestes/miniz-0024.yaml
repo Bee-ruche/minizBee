@@ -1,0 +1,87 @@
+tache: miniz-0024
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "Tests différentiels : niveau 10 (miniz->zlib, miniz->miniz, empreinte « 10 ») et contrôle « vidages » aux niveaux 1 et 9 (empreintes « 1v », « 9v ») ; 488 empreintes régénérées sur la base."
+changement: |
+  bee/tests/differentiel.c, trois ajouts :
+  (1) Niveau 10 (« caché », 1500 sondes) ajouté à NIVEAUX. À ce niveau, seuls [miniz->zlib], [miniz->miniz] et
+  l'empreinte « 10 » de la sortie de mz_compress2 : zlib n'a pas de niveau 10 (compress2 le refuse), et un
+  « goto suivant » saute les contrôles suivants de la boucle ([zlib->miniz], [flux-1], [flux-4096], [brut], [vidages]).
+  (2) Le contrôle [vidages] passe du niveau 6 seul aux niveaux 1 (analyse gloutonne), 6 et 9 (sondes longues), avec
+  les mêmes paramètres qu'avant (MZ_SYNC_FLUSH tous les 10 007 octets, MZ_FULL_FLUSH tous les 50 021, tampons de
+  4096, décompression par zlib et par mz_inflate en tampons de 1000) et les empreintes « 1v » et « 9v ».
+  (3) Une ligne de commentaire en plus dans l'en-tête écrit par --regenerer-empreintes.
+  Les seules lignes existantes modifiées sont NB_NIVEAUX et NIVEAUX, le bloc [vidages] (le niveau 6 et le nom « 6v »
+  écrits en dur deviennent la variable niveau et nom_vidages) et les commentaires qui décrivent les contrôles. Les
+  contrôles existants sont inchangés : les 305 empreintes d'origine sont identiques après régénération, et les
+  305 lignes du fichier de référence n'ont pas bougé. Diff : differentiel.c +25 -14.
+
+  bee/tests/empreintes-reference.txt : régénéré sur la base (1c625c3 = upstream/master, sources de miniz non
+  modifiées) avec « bee/tests/lancer.sh --regenerer-empreintes » dans la sandbox. Il contient 488 empreintes :
+  305 + 61 « 10 » + 61 « 1v » + 61 « 9v ». Diff : 184 lignes ajoutées (183 empreintes et 1 commentaire), aucune
+  supprimée. Nombre de contrôles : 3843 au lieu de 3233. Sur le corpus, la sortie du niveau 10 diffère de celle
+  du niveau 9 pour 13 fichiers sur 61 (3 409 057 octets contre 3 411 118 au total) ; « 1v » diffère de « 1 » et
+  « 9v » de « 9 » pour 21 fichiers.
+
+  Mutations, faites dans des copies jetables de miniz hors du dépôt (jamais commitées). Chacune a été jugée par
+  l'outillage de cette branche (bee/tests/lancer.sh --source <copie>, dans la sandbox) :
+  - P1, s_tdefl_num_probes[10] de 1500 à 1497 : ÉCHEC, 2 empreintes « 10 » (code/catch_amalgamated.cpp,
+    code/miniz_tinfl.c), aucun autre écart.
+  - P2, s_tdefl_num_probes[10] de 1500 à 768 (le niveau 10 devient le niveau 9) : ÉCHEC, 13 empreintes « 10 ».
+  - P0, s_tdefl_num_probes[10] de 1500 à 1499 : aucun écart. C'est un mutant équivalent : la valeur n'est utilisée
+    que par 1 + (v + 2) / 3 et 1 + ((v >> 2) + 2) / 3 (m_max_probes), qui valent 501 et 126 pour 1499 comme pour 1500,
+    et l'en-tête zlib (FLEVEL 3) ne change pas.
+  - F3, vidage complet sans « d->m_dict_size = 0 » : ÉCHEC, 15 empreintes « 1v », 15 « 6v » et 15 « 9v ». Les
+    allers-retours restent justes : seules les empreintes voient ce mutant.
+  - F4, remise à zéro du vidage complet sautée en analyse gloutonne seulement
+    (« if (flush == TDEFL_FULL_FLUSH && !d->m_greedy_parsing) ») : ÉCHEC, 15 empreintes « 1v », rien d'autre.
+  - F5, remise à zéro sautée pour les sondes longues seulement
+    (« && (d->m_flags & TDEFL_MAX_PROBES_MASK) < 768 ») : ÉCHEC, 15 empreintes « 9v », rien d'autre.
+  - Contre-épreuve : l'ancien differentiel.c de la base, compilé de la même façon contre les mêmes copies, laisse
+    passer P2, F4 et F5 (3233 contrôles, 0 écart). Ces trois mutants ne sont attrapés que grâce aux ajouts.
+  - F1, l'exemple de la tâche (ne plus remettre m_next à zéro au vidage complet) : aucun écart. D'après la lecture
+    du code, c'est un mutant équivalent, qu'aucun test de sortie ne peut attraper. Après un vidage complet, m_next
+    n'est lu qu'à des positions insérées depuis ce vidage. La première lecture de tdefl_find_match se fait à la
+    position courante, et seulement si lookahead_size >= 3, donc après l'insertion de cette position (l. 1190 ou
+    1210, qui écrit m_next). Les lectures suivantes suivent des liens écrits depuis le vidage, puisque m_hash a été
+    remis à zéro. tdefl_init ne remet d'ailleurs pas non plus m_next à zéro.
+  - F2, ne plus remettre m_hash à zéro : aucun écart sur le corpus. Après le vidage, les anciennes têtes de chaîne
+    sont presque toujours écartées par le contrôle de distance (distance > m_dict_size, remis à 0). Le mutant ne
+    change la sortie que dans un cas rare (une tête de plus de 64 Kio dont la position sur 16 bits retombe à une
+    distance permise), que le corpus n'atteint pas.
+  Critères : la mutation de s_tdefl_num_probes[10] fait échouer les empreintes (P1, P2), et une mutation du vidage
+  complet est détectée au niveau 1 ou 9 (F3, F4 et F5 ; F4 et F5 ne sont vus qu'en 1v ou en 9v). L'exemple cité
+  (m_next) ne peut pas l'être, car c'est un mutant équivalent.
+
+  Les numéros de ligne de la tâche datent d'avant l'intégration de miniz-0011 et miniz-0015. Sur 1c625c3 :
+  s_tdefl_num_probes l. 634, tdefl_compress_normal l. 1165-1308, remise à zéro du vidage complet l. 1388-1393,
+  tdefl_create_comp_flags_from_zip_params l. 1527-1545.
+
+  Durée de bee/tests/lancer.sh dans la sandbox, sur une machine partagée (Xeon 2,1 GHz virtualisé, 2 cœurs) :
+  19,0 s avec une construction propre (15 s de tests) et 16,3 à 16,4 s sans recompilation (14 à 15 s de tests).
+  La base prend 16,5 s (12 s de tests). Sous --sanitiseurs : 37,6 s (32 s de tests), contre 29 s de tests pour
+  l'ancien differentiel.c dans les mêmes conditions.
+teste:
+  - "bee/tests/lancer.sh dans la sandbox (bee/sandbox/sans-docker.sh), sources de la base 1c625c3 : 3843 contrôles, 0 écart, 488 empreintes identiques ; trois passages, de 16,3 à 19,0 s"
+  - "bee/tests/lancer.sh --sanitiseurs (ASan + UBSan) : 3843 contrôles, 0 écart, aucune erreur des sanitiseurs ; 37,6 s"
+  - "bee/tests/lancer.sh --regenerer-empreintes sur la base : 488 lignes ; git diff --numstat : 184 ajouts, 0 suppression ; les 305 lignes d'origine sont inchangées"
+  - "compilation de differentiel.c sans avertissement (-Wall -Wextra), en -O2 et sous sanitiseurs"
+  - "8 mutants jugés par l'outillage de la branche (P0, P1, P2, F1 à F5) : résultats détaillés dans « changement »"
+  - "contre-épreuve avec l'ancien differentiel.c de la base sur P2, F4 et F5 : 0 écart, donc ces mutants ne sont détectés que par les ajouts"
+non_teste:
+  - "la CI GitHub Actions : les nouvelles empreintes n'ont pas été vérifiées sur ARM64, et la durée sur la machine de CI n'a pas été mesurée (19 s ici, construction comprise). Comme la PR modifie bee/, la CI lance deux passages : l'outillage de la base, puis celui de la PR"
+  - "le niveau 10 en flux ([flux-1], [flux-4096], [brut]) et avec vidages : hors du périmètre de la tâche, non ajouté"
+  - "tdefl_compress_fast, compilé seulement avec MINIZ_USE_UNALIGNED_LOADS_AND_STORES=1 (désactivé par défaut) : ni les anciens contrôles ni les nouveaux ne l'exercent"
+  - "la reprise de la décompression à partir d'un MZ_FULL_FLUSH seul : le contrôle [vidages] décompresse le flux entier, donc un vidage complet qui garde des références vers les données d'avant le vidage (F3) n'est vu que par les empreintes"
+  - "le fuzzing : rien n'a changé dans bee/fuzz/, il n'a pas été relancé"
+doutes: >
+  1) L'équivalence du mutant F1 (m_next) repose sur une lecture du code, pas sur une preuve formelle ; si elle
+  était fausse, il faudrait une entrée particulière pour la mettre en défaut. 2) Le « goto suivant » saute, au
+  niveau 10, tous les contrôles placés après [miniz->miniz] dans la boucle : c'est voulu (zlib n'a pas de niveau
+  10), mais un contrôle ajouté plus tard à cet endroit sera lui aussi sauté au niveau 10. 3) bee/README.md n'est
+  pas mis à jour (il annonce encore 3233 contrôles, 305 empreintes et des vidages au niveau 6 seulement) : il est
+  hors des fichiers de la tâche, à corriger à part. 4) La durée en CI (deux passages, ARM64 compris) n'est
+  qu'estimée à partir de cette machine.
+taille_reelle: S
