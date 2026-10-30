@@ -5,9 +5,12 @@ Entrées :
   --jobs        résultats des jobs GitHub (toJSON(needs) : {"manifeste": {"result": "success", "outputs": {...}}, ...}).
                 C'est la source de vérité de « ci » : le code de la PR ne peut pas les réécrire.
   --artefacts   dossier où les artefacts « etat-* » ont été téléchargés : fichiers d'état <etape>.txt
-                (« succes » / « echec », écrits par bee/ci/etape.sh), rapport juge.json du juge isolé
-                (bee/juge/juge.py, au format d'ab.py plus une section « juge » ; à défaut ab.json d'ab.py),
-                CONTRIBUTION.yaml de la PR et tache.yaml du registre. Ce sont des DONNÉES : lues, jamais exécutées.
+                (« succes » / « echec », écrits par bee/ci/etape.sh), rapport juge-ancien.json de l'ancien juge
+                isolé (transition), CONTRIBUTION.yaml de la PR et tache.yaml du registre. Ce sont des DONNÉES :
+                lues, jamais exécutées.
+  --juge        dossier de l'artefact « juge » du juge commun (workflow juge.yml du registre) : juge.json (au
+                format d'ab.py plus une section « juge ») et code (0 juste, 1 refusé, 2 environnement) ; défaut
+                <artefacts>/juge. En CI, le code est celui de la sortie « code » du job juge (--jobs), qui prime.
   --depot, --base, --tete   pour compter les lignes modifiées (git diff --numstat).
 
 Sortie (--sortie, défaut verdict.json), avec au minimum :
@@ -20,10 +23,11 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
   instructions      décompte Cachegrind par scénario sur un sous-corpus : {"instructions_n6": {"A", "B", "gain"}, ...}
   degradations      métriques dégradées au-delà du bruit (test du signe ; instructions au-delà du seuil), avec leur gain
   lignes_modifiees  lignes modifiées hors bee/**, tests/**, manifestes/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
-  amorcage          true si les juges venaient de la PR elle-même (base = commit d'amorçage, voir bee/ci/juges.sh)
-  juge              section du juge isolé : version, graine, sorties comparées et constructions_suspectes
-                    (liste vide si l'analyse des objets n'a rien trouvé) ; null si le juge isolé n'a pas tourné
-  etapes, details   pour les relecteurs
+  amorcage          true si les juges ou le greffon venaient de la PR elle-même (bee/ci/juges.sh)
+  juge              section du juge commun : version (3 pour juge-v1), commun (« juge-v1 »), projet, greffon
+                    (SHA-256 de bee/juge/projet.py), graine, sorties comparées et constructions_suspectes
+                    (liste vide si l'analyse des objets n'a rien trouvé) ; null si le juge n'a pas tourné
+  etapes, details   pour les relecteurs (details.juge_ancien : l'ancien juge isolé, s'il a jugé)
 
 Métrique principale, dans l'ordre : la clé « metrique » de la tâche du registre (tache.yaml), sinon une clé
 « metrique » du manifeste, sinon la seule métrique de mesures.avant du manifeste. Faute de quoi, gain = null.
@@ -31,7 +35,7 @@ Métrique principale, dans l'ordre : la clé « metrique » de la tâche du regi
 La CI ne tranche pas R4 et R5 (seuils de gain et d'effets de bord) : elle publie les mesures et les
 dégradations, l'outil du registre applique les règles.
 
-Usage local (simulation) : python3 bee/ci/verdict.py --etats DOSSIER --ab ab.json [--manifeste F] [--tache F]
+Usage local (simulation) : python3 bee/ci/verdict.py --etats DOSSIER --ab juge.json [--juge DOSSIER] [--manifeste F] [--tache F]
 """
 
 import argparse
@@ -39,6 +43,7 @@ import fnmatch
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -52,8 +57,10 @@ ETAPES = [
     ("differentiel_x86_64", "Tests différentiels et empreintes (x86-64)", "compilation-et-tests"),
     ("differentiel_arm64", "Tests différentiels et empreintes (ARM64)", "compilation-et-tests"),
     ("fuzzing", "Fuzzing (x86-64)", "fuzzing"),
-    ("juge_isole", "Juge isolé (vérification de l'extérieur et mesures)", "juge"),
-    ("meta_juge", "Méta-tests du juge isolé", "meta-juge"),
+    ("greffon_juge", "Greffon du juge commun", "greffon"),
+    ("juge_isole", "Juge commun (vérification de l'extérieur et mesures)", "juge"),
+    ("juge_ancien", "Ancien juge isolé de la base (transition)", "juge-ancien"),
+    ("meta_juge", "Méta-tests du greffon contre le juge commun", "meta-juge"),
 ]
 METRIQUES = ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
              "debit_decompression", "ratio_n6", "memoire_max_ko"]
@@ -132,9 +139,10 @@ def lignes_modifiees(depot, base, tete):
 
 
 def section_juge(juge):
-    """Ce que le registre garde du juge isolé. Donnée produite par le job « juge » (code de la base)."""
+    """Ce que le registre garde du juge. Donnée produite par le juge commun (workflow juge.yml, greffon de la base)."""
     if not isinstance(juge, dict):
         return None
+    commun, greffon = juge.get("commun"), juge.get("greffon")
     suspects = juge.get("constructions_suspectes")
     if not isinstance(suspects, list):
         suspects = [{"type": "illisible", "detail": "liste des constructions suspectes absente ou illisible"}]
@@ -145,10 +153,34 @@ def section_juge(juge):
     verification = juge.get("verification") if isinstance(juge.get("verification"), dict) else {}
     return {
         "version": juge.get("version") if isinstance(juge.get("version"), int) else None,
+        "commun": commun if isinstance(commun, str) and re.fullmatch(r"juge-v\d{1,4}", commun) else None,
+        "projet": str(juge.get("projet"))[:40] if juge.get("projet") is not None else None,
+        "greffon": greffon if isinstance(greffon, str) and re.fullmatch(r"[0-9a-f]{64}", greffon) else None,
         "graine": str(juge.get("graine", ""))[:64],
         "sorties_comparees": verification.get("sorties_comparees") if isinstance(verification.get("sorties_comparees"), int) else None,
         "constructions_suspectes": propres,
     }
+
+
+def code_du_juge(jobs, dossier_juge):
+    """Code rendu par le juge commun : la sortie « code » du job juge (workflow juge.yml), que le code de la
+    PR ne peut pas réécrire ; hors CI, le fichier code de l'artefact « juge ». None si inconnu."""
+    if jobs:
+        code = ((jobs.get("juge") or {}).get("outputs") or {}).get("code")
+    else:
+        code = lire_texte(os.path.join(dossier_juge, "code")) if dossier_juge else None
+    return str(code).strip() if code is not None else None
+
+
+def lire_json(chemin):
+    if not chemin or not os.path.exists(chemin):
+        return None
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            donnees = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return donnees if isinstance(donnees, dict) else None
 
 
 def trouver(dossier, nom):
@@ -163,7 +195,8 @@ def main():
     analyseur.add_argument("--jobs", help="toJSON(needs) du workflow : résultats des jobs (source de vérité de « ci »)")
     analyseur.add_argument("--artefacts", help="dossier des artefacts etat-* téléchargés")
     analyseur.add_argument("--etats", help="dossier des fichiers <etape>.txt (simulation locale)")
-    analyseur.add_argument("--ab", help="rapport JSON du juge isolé ou d'ab.py (défaut : juge.json, sinon ab.json, dans --artefacts)")
+    analyseur.add_argument("--juge", help="dossier de l'artefact « juge » du juge commun (défaut : <artefacts>/juge)")
+    analyseur.add_argument("--ab", help="rapport JSON du juge ou d'ab.py (défaut : juge.json de --juge, sinon ab.json dans --artefacts)")
     analyseur.add_argument("--manifeste", help="CONTRIBUTION.yaml de la PR (donnée)")
     analyseur.add_argument("--tache", help="tâche du registre (défaut : tache.yaml trouvé dans --artefacts)")
     analyseur.add_argument("--depot", help="clone du fork, pour compter les lignes modifiées")
@@ -177,7 +210,17 @@ def main():
         with open(args.jobs, encoding="utf-8") as f:
             jobs = json.load(f) or {}
     etats, amorcage = etats_depuis([d for d in (args.etats, args.artefacts) if d])
-    chemin_ab = args.ab or trouver(args.artefacts, "juge.json") or trouver(args.artefacts, "ab.json")
+    dossier_juge = args.juge or (os.path.join(args.artefacts, "juge") if args.artefacts else None)
+    # Étape du juge commun : son job ne devient pas rouge à cause de B, c'est son code qui juge. En CI, rien
+    # d'autre (aucun fichier d'état) ne la rend réussie : sans code, elle est sans résultat.
+    code_juge = code_du_juge(jobs, dossier_juge)
+    if code_juge is None and jobs:
+        etats.pop("juge_isole", None)
+    elif code_juge is not None:
+        etats["juge_isole"] = "succes" if code_juge == "0" and etats.get("juge_isole") != "echec" else "echec"
+    chemin_ab = args.ab or (os.path.join(dossier_juge, "juge.json") if dossier_juge and os.path.isfile(os.path.join(dossier_juge, "juge.json"))
+                            else None) or trouver(args.artefacts, "ab.json")
+    rapport_ancien = lire_json(trouver(args.artefacts, "juge-ancien.json"))
     chemin_manifeste = args.manifeste or trouver(args.artefacts, "CONTRIBUTION.yaml")
     chemin_tache = args.tache or trouver(args.artefacts, "tache.yaml")
 
@@ -213,13 +256,7 @@ def main():
     tache, etat_tache = charger_yaml(chemin_tache)
     metrique, origine = metrique_principale(tache, manifeste)
 
-    rapport = None
-    if chemin_ab and os.path.exists(chemin_ab):
-        try:
-            with open(chemin_ab, encoding="utf-8") as f:
-                rapport = json.load(f)
-        except (OSError, ValueError):
-            rapport = None
+    rapport = lire_json(chemin_ab)
 
     metriques_ab = (rapport or {}).get("metriques", {})
     instructions = (rapport or {}).get("instructions")
@@ -262,6 +299,11 @@ def main():
             "methode": (rapport or {}).get("methode"),
             "machine": (rapport or {}).get("machine"),
             "repetitions": (rapport or {}).get("repetitions"),
+            "code_juge": code_juge,
+            "juge_ancien": ({"juge": section_juge(rapport_ancien.get("juge")),
+                             "instructions": {nom: {"A": v.get("A"), "B": v.get("B")} for nom, v in (rapport_ancien.get("instructions") or {}).items()
+                                              if isinstance(v, dict)}}
+                            if rapport_ancien else None),
         },
     })
     with open(args.sortie, "w", encoding="utf-8") as f:

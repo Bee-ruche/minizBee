@@ -5,12 +5,14 @@
 #   2. compilation et tests d'origine de miniz, x86-64 et ARM64
 #   3. tests différentiels contre zlib et empreintes de déterminisme, x86-64 et ARM64
 #   4. fuzzing libFuzzer, 2 harnais en parallèle pendant 10 minutes, x86-64
-#   5. juge isolé (bee/juge/juge.py) : point de départ de la PR (merge-base avec la base) contre tête de
-#      la PR ; vérification de toutes les sorties par l'hôte (zlib de l'hôte, entrées tirées au hasard),
-#      mesures entrelacées (10 répétitions) et décompte d'instructions Cachegrind, tout en conteneur ;
-#      analyse des objets compilés (constructions suspectes)
-#   6. méta-tests du juge isolé, seulement si la PR modifie bee/juge/
-#   7. verdict.json, publié en artefact « verdict » (lu par le workflow verdicts.yml du registre)
+#   5. juge commun du registre (workflow réutilisable juge.yml, épinglé à son étiquette) avec le greffon de
+#      minizBee (bee/juge/projet.py) lu dans la BASE : point de départ de la PR (merge-base avec la base)
+#      contre tête de la PR ; vérification de toutes les sorties par l'hôte (zlib de l'hôte, entrées tirées
+#      au hasard), mesures entrelacées (10 répétitions) et décompte d'instructions Cachegrind, tout en
+#      conteneur ; analyse des objets compilés (constructions suspectes)
+#   6. ancien juge isolé (bee/juge/juge.py), tant qu'une base en a encore un (transition, miniz-0032)
+#   7. méta-tests du greffon contre le juge commun, seulement si la PR modifie bee/juge/ ou ce workflow
+#   8. verdict.json, publié en artefact « verdict » (lu par le workflow verdicts.yml du registre)
 #
 # Sécurité :
 #   - permissions: contents: read pour tout le workflow ; aucun secret ; checkouts sans identifiants
@@ -27,13 +29,15 @@
 #   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
 #     de la PR ne peut pas réécrire ; les fichiers d'état servent seulement à nommer l'étape en échec.
 #   - le code C de la PR ne s'exécute JAMAIS sur la machine de CI elle-même : compilation, tests,
-#     fuzzing et mesures tournent dans le conteneur du juge (bee/juge/isoler.sh, bee/juge/juge.py :
-#     sans réseau, lecture seule, sans privilège), sur des copies jetables. L'image est construite avant
-#     que le moindre fichier de la PR ne soit monté.
+#     fuzzing et mesures tournent dans le conteneur du juge commun (isoler.sh et juge.py du registre, lus à
+#     l'étiquette JUGE_COMMUN_REF : sans réseau, lecture seule, sans privilège), sur des copies jetables.
+#     L'image est construite avant que le moindre fichier de la PR ne soit monté.
+#   - le greffon (bee/juge/projet.py) est lu dans la BASE, jamais dans la PR : seule la PR qui l'introduit
+#     (bee/ci/juges.sh, « introduction du greffon ») est jugée avec le sien, en amorçage (amorcage: true).
 #   - les étapes 2 à 4 restent des contrôles « de l'intérieur » : un code malveillant peut fausser ses
-#     propres tests (exit(0) au milieu, par exemple) mais pas en sortir. Le juge isolé (étape 5), lui,
+#     propres tests (exit(0) au milieu, par exemple) mais pas en sortir. Le juge commun (étape 5), lui,
 #     vérifie les sorties de l'extérieur, avec des entrées qu'aucun code ne connaît d'avance, et mesure
-#     les temps par le noyau : c'est lui qui fait foi. Modèle de menace : bee/README.md, section « Juge isolé ».
+#     les temps par le noyau : c'est lui qui fait foi. Modèle de menace : bee/README.md, section « Juge commun et greffon ».
 name: bee-ci
 
 on:
@@ -50,6 +54,9 @@ env:
   BASE_SHA: ${{ github.event.pull_request.base.sha }}
   TETE_SHA: ${{ github.event.pull_request.head.sha }}
   REGISTRE: Bee-ruche/registre
+  # Version du juge commun : étiquette du registre. La même que dans le « uses: » du job juge (une
+  # expression n'y est pas permise) ; bee/ci/test_verdict.py vérifie qu'elles sont égales.
+  JUGE_COMMUN_REF: juge-v1
   ETATS: ${{ github.workspace }}/etats
   # Amorçage : la première PR, qui apporte bee/, a pour base le master d'origine, sans juges.
   # Pour CE commit seulement, les juges viennent de la PR elle-même (verdict : amorcage: true).
@@ -59,16 +66,14 @@ env:
   # Variables attendues : base, pr, base_sha, etats.
   BEE_JUGES: |
     mkdir -p "$etats"
-    if [ -f "$base/bee/ci/etape.sh" ] && [ ! -f "$base/bee/juge/juge.py" ] && [ -f "$pr/bee/juge/juge.py" ]; then
-      echo "::warning::INTRODUCTION DU JUGE ISOLÉ : la base $base_sha n'a pas encore bee/juge/ ; les juges viennent de la PR qui l'apporte (verdict.json : amorcage: true ; tâche d'outillage, relue par un gardien)."
-      rm -rf "$base/bee"
-      cp -a "$pr/bee" "$base/bee"
-      mkdir -p "$base/.github/workflows"
-      cp -a "$pr/.github/workflows/bee-ci.yml" "$base/.github/workflows/bee-ci.yml"
+    if [ -f "$base/bee/ci/etape.sh" ] && [ -f "$base/bee/juge/juge.py" ] && [ ! -e "$base/bee/juge/projet.py" ] && [ -f "$pr/bee/juge/projet.py" ]; then
+      echo "::warning::INTRODUCTION DU GREFFON : la base $base_sha a l'ancien juge isolé et pas encore de greffon ; les juges restent ceux de la base (l'ancien juge isolé juge aussi la PR), le juge commun prend le greffon de la PR qui l'apporte (verdict.json : amorcage: true ; tâche d'outillage, relue par un gardien)."
+      echo "pr" > "$etats/greffon.txt"
       echo "oui" > "$etats/amorcage.txt"
       echo "succes" > "$etats/juges.txt"
     elif [ -f "$base/bee/ci/etape.sh" ]; then
-      echo "Juges : bee/ de la base de la PR ($base_sha)."
+      echo "Juges : bee/ de la base de la PR ($base_sha), greffon du juge commun compris."
+      echo "base" > "$etats/greffon.txt"
       echo "succes" > "$etats/juges.txt"
     elif [ "$base_sha" = "$BEE_COMMIT_AMORCAGE" ] && [ -f "$pr/bee/ci/etape.sh" ]; then
       echo "::warning::AMORÇAGE : la base $base_sha (commit d'amorçage épinglé) ne contient pas bee/ ; les juges viennent de la PR elle-même (verdict.json : amorcage: true)."
@@ -76,6 +81,7 @@ env:
       cp -a "$pr/bee" "$base/bee"
       mkdir -p "$base/.github/workflows"
       cp -a "$pr/.github/workflows/bee-ci.yml" "$base/.github/workflows/bee-ci.yml"
+      echo "pr" > "$etats/greffon.txt"
       echo "oui" > "$etats/amorcage.txt"
       echo "succes" > "$etats/juges.txt"
     else
@@ -84,11 +90,14 @@ env:
       exit 1
     fi
 
-  # Juge isolé : celui de la base (bee/juge/), après l'étape « Juges ».
-  BEE_JUGE_ISOLE: |
-    juge="$GITHUB_WORKSPACE/base/bee/juge"
-    echo "JUGE=$juge" >> "$GITHUB_ENV"
-    echo "IMAGE=$(python3 "$juge/juge.py" --image-seulement --outillage "$GITHUB_WORKSPACE/base")" >> "$GITHUB_ENV"
+  # Conteneur du juge commun (juge-commun/ : le registre à JUGE_COMMUN_REF), après l'étape « Juges » :
+  # isoler.sh du registre et l'image commune avec les paquets du greffon (de la base ; de la PR en amorçage).
+  BEE_IMAGE: |
+    greffon=base
+    if [ "$(cat "$ETATS/greffon.txt")" = "pr" ]; then greffon=pr; fi
+    image="$(python3 juge-commun/outils/juge/juge.py --outillage "$greffon" --image-seulement)"
+    echo "ISOLER=$GITHUB_WORKSPACE/juge-commun/outils/juge/isoler.sh" >> "$GITHUB_ENV"
+    echo "IMAGE=$image" >> "$GITHUB_ENV"
   # Copie de travail jetable pour une étape conteneurisée : la base et la PR, fraîches.
   BEE_TRAVAIL: |
     travail="$RUNNER_TEMP/travail-$1"
@@ -142,7 +151,7 @@ jobs:
         run: |
           python3 base/bee/bench/test_ab.py
           python3 base/bee/ci/test_verdict.py
-          if [ -f base/bee/bench/test_profil.py ]; then python3 base/bee/bench/test_profil.py; fi
+          python3 base/bee/bench/test_profil.py
       - name: Manifeste, tâche, R1 et commandement 3
         id: manifeste
         env:
@@ -167,6 +176,61 @@ jobs:
         with:
           name: etat-manifeste
           path: donnees/
+          if-no-files-found: warn
+
+  # Le commit que le juge commun extrait comme base : son bee/juge/projet.py est le greffon et ses sources
+  # sont A. Le point de départ de la PR (merge-base) si son bee/ est celui de la base ; sinon la base
+  # elle-même. Jamais la PR, sauf pour la PR qui introduit le greffon (bee/ci/juges.sh), qui ne touche pas
+  # miniz : ses sources sont alors exactement celles du point de départ.
+  greffon:
+    name: Greffon du juge commun
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      base_juge: ${{ steps.greffon.outputs.base_juge }}
+    steps:
+      - name: Base de la PR (juges)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          persist-credentials: false
+      - name: Tête de la PR (historique complet, qui contient la base et le point de départ)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TETE_SHA }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+        run: |
+          export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
+          eval "$BEE_JUGES"
+      - name: Commit du greffon et de A pour le juge commun
+        id: greffon
+        run: |
+          echo "echec" > "$ETATS/greffon_juge.txt"
+          depart="$(git -C pr merge-base "$BASE_SHA" "$TETE_SHA")"
+          if [ "$(cat "$ETATS/greffon.txt")" = "pr" ]; then
+            if ! git -C pr diff --quiet "$depart" "$TETE_SHA" -- 'miniz*'; then
+              echo "::error::Introduction du greffon : la PR qui apporte bee/juge/projet.py ne doit pas modifier miniz (le juge commun prend ses sources comme A)." >&2
+              exit 1
+            fi
+            base_juge="$TETE_SHA"
+          elif [ "$(git -C pr rev-parse "$depart:bee")" = "$(git -C pr rev-parse "$BASE_SHA:bee")" ]; then
+            base_juge="$depart"
+          else
+            echo "::warning::bee/ a changé sur la base depuis le point de départ de la PR ($depart) : le juge commun prend la base elle-même ($BASE_SHA) comme A ; rebasez la PR pour un gain qui ne mesure qu'elle."
+            base_juge="$BASE_SHA"
+          fi
+          echo "Juge commun : greffon et A lus à $base_juge (base $BASE_SHA, point de départ $depart, tête $TETE_SHA)."
+          echo "base_juge=$base_juge" >> "$GITHUB_OUTPUT"
+          echo "succes" > "$ETATS/greffon_juge.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: etat-greffon
+          path: etats/
           if-no-files-found: warn
 
   compilation-et-tests:
@@ -202,12 +266,19 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Image du conteneur du juge (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
-        run: eval "$BEE_JUGE_ISOLE"
+      - name: Juge commun (registre, à son étiquette)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.REGISTRE }}
+          ref: ${{ env.JUGE_COMMUN_REF }}
+          path: juge-commun
+          persist-credentials: false
+      - name: Image du conteneur du juge commun (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
+        run: eval "$BEE_IMAGE"
       - name: Compilation et tests d'origine de miniz (conteneur sans réseau)
         run: |
           travail="$(bash -c "$BEE_TRAVAIL" -- compilation)"
-          base/bee/ci/etape.sh "$ETATS" compilation_${{ matrix.arch }} "$JUGE/isoler.sh" "$IMAGE" "$travail" -- \
+          base/bee/ci/etape.sh "$ETATS" compilation_${{ matrix.arch }} "$ISOLER" "$IMAGE" "$travail" -- \
             /travail/base/bee/ci/tests_origine.sh /travail/pr /travail/cmake
       - name: Tests différentiels et empreintes (conteneur sans réseau)
         if: always()
@@ -215,7 +286,7 @@ jobs:
           SORTIE_COMPRESSEE: ${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
         run: |
           travail="$(bash -c "$BEE_TRAVAIL" -- differentiel)"
-          base/bee/ci/etape.sh "$ETATS" differentiel_${{ matrix.arch }} "$JUGE/isoler.sh" "$IMAGE" "$travail" -- \
+          base/bee/ci/etape.sh "$ETATS" differentiel_${{ matrix.arch }} "$ISOLER" "$IMAGE" "$travail" -- \
             env SORTIE_COMPRESSEE="$SORTIE_COMPRESSEE" BASE_SHA="$BASE_SHA" TETE_SHA="$TETE_SHA" \
             /travail/base/bee/ci/differentiel.sh /travail/pr
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -249,8 +320,15 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Image du conteneur du juge (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
-        run: eval "$BEE_JUGE_ISOLE"
+      - name: Juge commun (registre, à son étiquette)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.REGISTRE }}
+          ref: ${{ env.JUGE_COMMUN_REF }}
+          path: juge-commun
+          persist-credentials: false
+      - name: Image du conteneur du juge commun (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
+        run: eval "$BEE_IMAGE"
       # Les entrées fautives, les journaux de libFuzzer et les traces ne quittent JAMAIS la machine de
       # CI : journaux et artefacts d'un dépôt public sont publics (docs/securite.md du registre).
       # lancer.sh est en mode discret sous GitHub Actions (empreintes seulement) et rejoue chaque
@@ -258,7 +336,7 @@ jobs:
       - name: Fuzzing différentiel, 2 harnais en parallèle, 600 s chacun (conteneur sans réseau)
         run: |
           travail="$(bash -c "$BEE_TRAVAIL" -- fuzzing)"
-          base/bee/ci/etape.sh "$ETATS" fuzzing "$JUGE/isoler.sh" "$IMAGE" "$travail" -- \
+          base/bee/ci/etape.sh "$ETATS" fuzzing "$ISOLER" "$IMAGE" "$travail" -- \
             env CLANG=clang-18 BEE_FUZZ_SORTIES=/travail/sorties-fuzz BEE_FUZZ_DISCRET=1 GITHUB_ACTIONS=true \
             /travail/base/bee/fuzz/lancer.sh 600 --source /travail/pr --reference /travail/base
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -268,8 +346,24 @@ jobs:
           path: etats/
           if-no-files-found: warn
 
+  # Juge commun du registre, à son étiquette : il juge la tête contre A avec le greffon de needs.greffon
+  # (la base), et publie l'artefact « juge » (juge.json, code). Le job ne devient jamais rouge à cause de
+  # B : c'est verdict.py qui lit le code (0 juste, 1 refusé, 2 environnement).
   juge:
-    name: Juge isolé (x86-64)
+    name: Juge commun
+    needs: [manifeste, greffon]
+    if: always() && needs.greffon.result == 'success' && needs.greffon.outputs.base_juge != ''
+    uses: Bee-ruche/registre/.github/workflows/juge.yml@juge-v1
+    with:
+      base_sha: ${{ needs.greffon.outputs.base_juge }}
+      tete_sha: ${{ github.event.pull_request.head.sha }}
+      options: sortie_compressee=${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
+
+  # Transition : tant que la base a encore l'ancien juge isolé (bee/juge/juge.py, version 2), il juge aussi
+  # la PR, comme avant. C'est le cas de la seule PR qui introduit le greffon (miniz-0032) ; ensuite la base
+  # n'en a plus et ce job ne fait rien.
+  juge-ancien:
+    name: Ancien juge isolé de la base (transition)
     needs: manifeste
     if: always()
     runs-on: ubuntu-24.04
@@ -293,21 +387,26 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Image du conteneur du juge (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
-        run: eval "$BEE_JUGE_ISOLE"
-      - name: Juge isolé — A = point de départ de la PR, B = tête ; vérification, 10 répétitions, instructions
+      - name: Ancien juge isolé de la base, s'il y est encore — A = point de départ de la PR, B = tête
         env:
           SORTIE_COMPRESSEE: ${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
         run: |
+          mkdir -p conserver
+          if [ ! -f base/bee/juge/juge.py ]; then
+            echo "La base n'a plus d'ancien juge isolé (bee/juge/juge.py) : le juge commun juge seul."
+            echo "succes" > "$ETATS/juge_ancien.txt"
+            exit 0
+          fi
+          python3 base/bee/juge/juge.py --image-seulement --outillage base
           depart="$(git -C pr merge-base "$BASE_SHA" "$TETE_SHA")"
           echo "A = point de départ de la PR $depart (base $BASE_SHA), B = tête $TETE_SHA"
           git -C pr worktree add --detach "$RUNNER_TEMP/source-a" "$depart"
           git -C pr worktree add --detach "$RUNNER_TEMP/source-b" "$TETE_SHA"
-          base/bee/ci/etape.sh "$ETATS" juge_isole \
-            python3 "$JUGE/juge.py" --outillage base \
+          base/bee/ci/etape.sh "$ETATS" juge_ancien \
+            python3 base/bee/juge/juge.py --outillage base \
               --source-a "$RUNNER_TEMP/source-a" --source-b "$RUNNER_TEMP/source-b" \
               --sortie-compressee "$SORTIE_COMPRESSEE" --repetitions 10 \
-              --depot-diff pr --base "$depart" --tete "$TETE_SHA" --json "$GITHUB_WORKSPACE/conserver/juge.json"
+              --depot-diff pr --base "$depart" --tete "$TETE_SHA" --json "$GITHUB_WORKSPACE/conserver/juge-ancien.json"
       - name: Conserver l'état
         if: always()
         run: |
@@ -316,12 +415,12 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: etat-juge
+          name: etat-juge-ancien
           path: conserver/
           if-no-files-found: warn
 
   meta-juge:
-    name: Méta-tests du juge isolé
+    name: Méta-tests du greffon (juge commun)
     needs: manifeste
     if: always()
     runs-on: ubuntu-24.04
@@ -334,7 +433,7 @@ jobs:
           path: base
           fetch-depth: 0
           persist-credentials: false
-      - name: Tête de la PR (historique complet, pour le diff)
+      - name: Tête de la PR (historique complet, pour le diff et le corpus)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
@@ -345,16 +444,25 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      # Le juge d'une PR qui modifie bee/juge/ est celui de la PR : il doit prouver qu'il attrape des
-      # variantes malveillantes de miniz (bee/juge/test_juge.py), compilées et lancées en conteneur.
-      - name: Méta-tests (seulement si la PR modifie bee/juge/)
+      - name: Juge commun (registre, à son étiquette)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.REGISTRE }}
+          ref: ${{ env.JUGE_COMMUN_REF }}
+          path: juge-commun
+          persist-credentials: false
+      # Une PR qui modifie bee/juge/ (greffon, harnais) ou la version du juge commun doit prouver que le juge
+      # commun, avec SON greffon, attrape des variantes malveillantes de miniz (bee/juge/test_juge.py),
+      # compilées et lancées en conteneur.
+      - name: Méta-tests (seulement si la PR modifie bee/juge/ ou ce workflow)
         run: |
-          if git -C pr diff --quiet "$BASE_SHA...$TETE_SHA" -- bee/juge; then
-            echo "bee/juge/ inchangé par la PR : pas de méta-tests."
+          if git -C pr diff --quiet "$BASE_SHA...$TETE_SHA" -- bee/juge .github/workflows/bee-ci.yml; then
+            echo "bee/juge/ et bee-ci.yml inchangés par la PR : pas de méta-tests."
             mkdir -p "$ETATS" && echo "succes" > "$ETATS/meta_juge.txt"
             exit 0
           fi
-          base/bee/ci/etape.sh "$ETATS" meta_juge env BEE_JUGE_INTEGRATION=1 python3 pr/bee/juge/test_juge.py
+          base/bee/ci/etape.sh "$ETATS" meta_juge env BEE_JUGE_INTEGRATION=1 PYTHONDONTWRITEBYTECODE=1 \
+            BEE_JUGE_COMMUN="$GITHUB_WORKSPACE/juge-commun/outils/juge" python3 pr/bee/juge/test_juge.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -364,7 +472,7 @@ jobs:
 
   verdict:
     name: Verdict
-    needs: [manifeste, compilation-et-tests, fuzzing, juge, meta-juge]
+    needs: [manifeste, greffon, compilation-et-tests, fuzzing, juge, juge-ancien, meta-juge]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -396,12 +504,24 @@ jobs:
         with:
           pattern: etat-*
           path: artefacts
+      - name: Rapport du juge commun (artefact « juge » ; absent si le juge n'a pas tourné)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: juge
+          path: artefacts/juge
       - name: Assembler verdict.json
         env:
           RESULTATS_JOBS: ${{ toJSON(needs) }}
         run: |
           printf '%s' "$RESULTATS_JOBS" > resultats-jobs.json
-          python3 base/bee/ci/verdict.py --artefacts artefacts --etats "$ETATS" --jobs resultats-jobs.json \
+          verdict=base/bee/ci/verdict.py
+          if [ "$(cat "$ETATS/greffon.txt")" = "pr" ]; then
+            # Même règle que pour le greffon : seule la PR qui l'introduit apporte l'assembleur qui le connaît.
+            echo "::warning::La base n'a pas encore de greffon : l'assembleur du verdict de la PR est utilisé (amorçage ; tâche d'outillage, relecture d'un gardien exigée par le registre)."
+            verdict=pr/bee/ci/verdict.py
+          fi
+          python3 "$verdict" --artefacts artefacts --juge artefacts/juge --etats "$ETATS" --jobs resultats-jobs.json \
             --depot pr --base "$BASE_SHA" --tete "$TETE_SHA" --sortie verdict.json
           cat verdict.json
       - name: Verdict de repli (base sans juges, verdict.py indisponible)
