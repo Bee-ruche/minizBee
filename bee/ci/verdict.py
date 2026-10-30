@@ -24,6 +24,9 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
   degradations      métriques dégradées au-delà du bruit (test du signe ; instructions au-delà du seuil), avec leur gain
   lignes_modifiees  lignes modifiées hors bee/**, tests/**, manifestes/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
   amorcage          true si les juges ou le greffon venaient de la PR elle-même (bee/ci/juges.sh)
+  base_juge         le commit A réellement extrait par le juge commun (son greffon et ses sources), la règle qui
+                    l'a choisi (point_de_depart, introduction, ou un refus) et le point de départ de la PR,
+                    d'après les sorties du job greffon ; null hors CI
   juge              section du juge commun : version (3 pour juge-v1), commun (« juge-v1 »), projet, greffon
                     (SHA-256 de bee/juge/projet.py), graine, sorties comparées et constructions_suspectes
                     (liste vide si l'analyse des objets n'a rien trouvé) ; null si le juge n'a pas tourné
@@ -172,6 +175,25 @@ def code_du_juge(jobs, dossier_juge):
     return str(code).strip() if code is not None else None
 
 
+REGLES_BASE_JUGE = {"point_de_depart", "introduction", "refus_bee_modifie", "refus_introduction_miniz"}
+SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def base_juge(jobs, base):
+    """Le commit A du juge commun, tel que le job greffon l'a choisi (sorties du job, que le code de la PR ne
+    peut pas réécrire). Le registre peut ainsi vérifier que A est bien le point de départ de la PR."""
+    if not jobs:
+        return None
+    sorties = (jobs.get("greffon") or {}).get("outputs") or {}
+    commit, regle, depart = sorties.get("base_juge"), sorties.get("regle"), sorties.get("depart")
+    return {
+        "commit": commit if isinstance(commit, str) and SHA.fullmatch(commit) else None,
+        "regle": regle if regle in REGLES_BASE_JUGE else None,
+        "depart": depart if isinstance(depart, str) and SHA.fullmatch(depart) else None,
+        "base": base,
+    }
+
+
 def lire_json(chemin):
     if not chemin or not os.path.exists(chemin):
         return None
@@ -221,6 +243,11 @@ def main():
     chemin_ab = args.ab or (os.path.join(dossier_juge, "juge.json") if dossier_juge and os.path.isfile(os.path.join(dossier_juge, "juge.json"))
                             else None) or trouver(args.artefacts, "ab.json")
     rapport_ancien = lire_json(trouver(args.artefacts, "juge-ancien.json"))
+    # Le juge commun n'a jugé que si A est connu et choisi par une règle qui l'accepte : sinon, l'étape du
+    # greffon est en échec, quoi que disent les fichiers d'état (jamais un verdict vert sans A vérifiable).
+    a_juge = base_juge(jobs, args.base)
+    if a_juge is not None and (a_juge["regle"] not in ("point_de_depart", "introduction") or a_juge["commit"] is None):
+        etats["greffon_juge"] = "echec"
     chemin_manifeste = args.manifeste or trouver(args.artefacts, "CONTRIBUTION.yaml")
     chemin_tache = args.tache or trouver(args.artefacts, "tache.yaml")
 
@@ -285,6 +312,7 @@ def main():
         "degradations": degradations,
         "lignes_modifiees": lignes_modifiees(args.depot, args.base, args.tete),
         "amorcage": amorcage,
+        "base_juge": a_juge,
         "juge": section_juge((rapport or {}).get("juge")),
         "etapes": resultat_etapes,
         "details": {

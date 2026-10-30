@@ -5,7 +5,7 @@
 #   2. compilation et tests d'origine de miniz, x86-64 et ARM64
 #   3. tests différentiels contre zlib et empreintes de déterminisme, x86-64 et ARM64
 #   4. fuzzing libFuzzer, 2 harnais en parallèle pendant 10 minutes, x86-64
-#   5. juge commun du registre (workflow réutilisable juge.yml, épinglé à son étiquette) avec le greffon de
+#   5. juge commun du registre (workflow réutilisable juge.yml de juge-v1, épinglé par SHA) avec le greffon de
 #      minizBee (bee/juge/projet.py) lu dans la BASE : point de départ de la PR (merge-base avec la base)
 #      contre tête de la PR ; vérification de toutes les sorties par l'hôte (zlib de l'hôte, entrées tirées
 #      au hasard), mesures entrelacées (10 répétitions) et décompte d'instructions Cachegrind, tout en
@@ -29,9 +29,10 @@
 #   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
 #     de la PR ne peut pas réécrire ; les fichiers d'état servent seulement à nommer l'étape en échec.
 #   - le code C de la PR ne s'exécute JAMAIS sur la machine de CI elle-même : compilation, tests,
-#     fuzzing et mesures tournent dans le conteneur du juge commun (isoler.sh et juge.py du registre, lus à
-#     l'étiquette JUGE_COMMUN_REF : sans réseau, lecture seule, sans privilège), sur des copies jetables.
-#     L'image est construite avant que le moindre fichier de la PR ne soit monté.
+#     fuzzing et mesures tournent dans le conteneur du juge commun (isoler.sh et juge.py du registre, lus au
+#     commit JUGE_COMMUN_SHA : sans réseau, lecture seule, sans privilège), sur des copies jetables.
+#     L'image est construite avant que le moindre fichier de la PR ne soit monté. Sur l'hôte, le greffon fait
+#     aussi un git fetch d'un SHA fixe pour le corpus (bee/juge/projet.py), après l'extraction de la PR.
 #   - le greffon (bee/juge/projet.py) est lu dans la BASE, jamais dans la PR : seule la PR qui l'introduit
 #     (bee/ci/juges.sh, « introduction du greffon ») est jugée avec le sien, en amorçage (amorcage: true).
 #   - les étapes 2 à 4 restent des contrôles « de l'intérieur » : un code malveillant peut fausser ses
@@ -54,9 +55,11 @@ env:
   BASE_SHA: ${{ github.event.pull_request.base.sha }}
   TETE_SHA: ${{ github.event.pull_request.head.sha }}
   REGISTRE: Bee-ruche/registre
-  # Version du juge commun : étiquette du registre. La même que dans le « uses: » du job juge (une
-  # expression n'y est pas permise) ; bee/ci/test_verdict.py vérifie qu'elles sont égales.
-  JUGE_COMMUN_REF: juge-v1
+  # Version du juge commun : le commit que désignait l'étiquette juge-v1 du registre le 30/10/2026 (vérifié
+  # par l'API GitHub). Épinglé par SHA, pas par l'étiquette : une étiquette se déplace, et une branche du
+  # même nom la masquerait (revue adverse de miniz-0032). Le même SHA que dans le « uses: » du job juge (une
+  # expression n'y est pas permise) ; bee/ci/test_verdict.py vérifie qu'ils sont égaux.
+  JUGE_COMMUN_SHA: "821647d8fcb27840908b98f6778862bfb228aef2"  # juge-v1
   ETATS: ${{ github.workspace }}/etats
   # Amorçage : la première PR, qui apporte bee/, a pour base le master d'origine, sans juges.
   # Pour CE commit seulement, les juges viennent de la PR elle-même (verdict : amorcage: true).
@@ -90,7 +93,7 @@ env:
       exit 1
     fi
 
-  # Conteneur du juge commun (juge-commun/ : le registre à JUGE_COMMUN_REF), après l'étape « Juges » :
+  # Conteneur du juge commun (juge-commun/ : le registre au commit JUGE_COMMUN_SHA), après l'étape « Juges » :
   # isoler.sh du registre et l'image commune avec les paquets du greffon (de la base ; de la PR en amorçage).
   BEE_IMAGE: |
     greffon=base
@@ -179,15 +182,20 @@ jobs:
           if-no-files-found: warn
 
   # Le commit que le juge commun extrait comme base : son bee/juge/projet.py est le greffon et ses sources
-  # sont A. Le point de départ de la PR (merge-base) si son bee/ est celui de la base ; sinon la base
-  # elle-même. Jamais la PR, sauf pour la PR qui introduit le greffon (bee/ci/juges.sh), qui ne touche pas
-  # miniz : ses sources sont alors exactement celles du point de départ.
+  # sont A. Toujours le point de départ de la PR (merge-base), dont le bee/ doit être celui de la base :
+  # sinon la CI est rouge (« rebasez »), car comparer la base à une tête qui n'a pas ses changements
+  # attribuerait à la PR ce que la base a reçu depuis (revue adverse de miniz-0032 : +19 % fabriqué, faux
+  # refus d'une PR non rebasée). Jamais la PR, sauf pour la PR qui introduit le greffon (bee/ci/juges.sh),
+  # qui ne touche pas miniz : ses sources sont alors exactement celles du point de départ. Le commit retenu
+  # et la règle qui l'a choisi sont publiés dans verdict.json (base_juge).
   greffon:
     name: Greffon du juge commun
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       base_juge: ${{ steps.greffon.outputs.base_juge }}
+      regle: ${{ steps.greffon.outputs.regle }}
+      depart: ${{ steps.greffon.outputs.depart }}
     steps:
       - name: Base de la PR (juges)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -211,20 +219,27 @@ jobs:
         run: |
           echo "echec" > "$ETATS/greffon_juge.txt"
           depart="$(git -C pr merge-base "$BASE_SHA" "$TETE_SHA")"
+          echo "depart=$depart" >> "$GITHUB_OUTPUT"
+          if [ "$(git -C pr rev-parse --verify -q "$depart:bee")" != "$(git -C pr rev-parse --verify -q "$BASE_SHA:bee")" ]; then
+            echo "regle=refus_bee_modifie" >> "$GITHUB_OUTPUT"
+            echo "::error::bee/ a changé sur master depuis le point de départ de cette PR ($depart) : rebasez-la sur master ($BASE_SHA). Le juge commun ne compare jamais la base à une tête qui n'a pas ses changements." >&2
+            exit 1
+          fi
           if [ "$(cat "$ETATS/greffon.txt")" = "pr" ]; then
             if ! git -C pr diff --quiet "$depart" "$TETE_SHA" -- 'miniz*'; then
+              echo "regle=refus_introduction_miniz" >> "$GITHUB_OUTPUT"
               echo "::error::Introduction du greffon : la PR qui apporte bee/juge/projet.py ne doit pas modifier miniz (le juge commun prend ses sources comme A)." >&2
               exit 1
             fi
             base_juge="$TETE_SHA"
-          elif [ "$(git -C pr rev-parse "$depart:bee")" = "$(git -C pr rev-parse "$BASE_SHA:bee")" ]; then
-            base_juge="$depart"
+            regle=introduction
           else
-            echo "::warning::bee/ a changé sur la base depuis le point de départ de la PR ($depart) : le juge commun prend la base elle-même ($BASE_SHA) comme A ; rebasez la PR pour un gain qui ne mesure qu'elle."
-            base_juge="$BASE_SHA"
+            base_juge="$depart"
+            regle=point_de_depart
           fi
-          echo "Juge commun : greffon et A lus à $base_juge (base $BASE_SHA, point de départ $depart, tête $TETE_SHA)."
+          echo "Juge commun : greffon et A lus à $base_juge, règle $regle (base $BASE_SHA, point de départ $depart, tête $TETE_SHA)."
           echo "base_juge=$base_juge" >> "$GITHUB_OUTPUT"
+          echo "regle=$regle" >> "$GITHUB_OUTPUT"
           echo "succes" > "$ETATS/greffon_juge.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
@@ -266,14 +281,14 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Juge commun (registre, à son étiquette)
+      - name: Juge commun (registre, au commit épinglé de juge-v1)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.REGISTRE }}
-          ref: ${{ env.JUGE_COMMUN_REF }}
+          ref: ${{ env.JUGE_COMMUN_SHA }}
           path: juge-commun
           persist-credentials: false
-      - name: Image du conteneur du juge commun (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
+      - name: Image du conteneur du juge commun (réseau pour docker build, avant d'exécuter quoi que ce soit de la PR)
         run: eval "$BEE_IMAGE"
       - name: Compilation et tests d'origine de miniz (conteneur sans réseau)
         run: |
@@ -320,14 +335,14 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Juge commun (registre, à son étiquette)
+      - name: Juge commun (registre, au commit épinglé de juge-v1)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.REGISTRE }}
-          ref: ${{ env.JUGE_COMMUN_REF }}
+          ref: ${{ env.JUGE_COMMUN_SHA }}
           path: juge-commun
           persist-credentials: false
-      - name: Image du conteneur du juge commun (seule étape avec réseau, avant d'exécuter quoi que ce soit de la PR)
+      - name: Image du conteneur du juge commun (réseau pour docker build, avant d'exécuter quoi que ce soit de la PR)
         run: eval "$BEE_IMAGE"
       # Les entrées fautives, les journaux de libFuzzer et les traces ne quittent JAMAIS la machine de
       # CI : journaux et artefacts d'un dépôt public sont publics (docs/securite.md du registre).
@@ -346,14 +361,17 @@ jobs:
           path: etats/
           if-no-files-found: warn
 
-  # Juge commun du registre, à son étiquette : il juge la tête contre A avec le greffon de needs.greffon
-  # (la base), et publie l'artefact « juge » (juge.json, code). Le job ne devient jamais rouge à cause de
-  # B : c'est verdict.py qui lit le code (0 juste, 1 refusé, 2 environnement).
+  # Juge commun du registre, juge.yml de juge-v1 épinglé par SHA : il juge la tête contre A avec le greffon
+  # de needs.greffon (la base), et publie l'artefact « juge » (juge.json, code). Le job ne devient jamais
+  # rouge à cause de B : c'est verdict.py qui lit le code (0 juste, 1 refusé, 2 environnement). Limite : à
+  # ce commit, juge.yml extrait lui-même le code du juge commun à l'étiquette juge-v1 (JUGE_COMMUN_REF du
+  # registre) et la base sans historique ; ces deux points se corrigent dans le registre. Réseau sur l'hôte :
+  # outre l'image, le greffon fait un git fetch d'un SHA fixe (2948eeb, corpus) après l'extraction de la PR.
   juge:
     name: Juge commun
     needs: [manifeste, greffon]
     if: always() && needs.greffon.result == 'success' && needs.greffon.outputs.base_juge != ''
-    uses: Bee-ruche/registre/.github/workflows/juge.yml@juge-v1
+    uses: Bee-ruche/registre/.github/workflows/juge.yml@821647d8fcb27840908b98f6778862bfb228aef2 # juge-v1
     with:
       base_sha: ${{ needs.greffon.outputs.base_juge }}
       tete_sha: ${{ github.event.pull_request.head.sha }}
@@ -444,11 +462,11 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Juge commun (registre, à son étiquette)
+      - name: Juge commun (registre, au commit épinglé de juge-v1)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.REGISTRE }}
-          ref: ${{ env.JUGE_COMMUN_REF }}
+          ref: ${{ env.JUGE_COMMUN_SHA }}
           path: juge-commun
           persist-credentials: false
       # Une PR qui modifie bee/juge/ (greffon, harnais) ou la version du juge commun doit prouver que le juge

@@ -19,7 +19,9 @@ COMMIT_AMORCAGE = "2948eebafc5b9f1c69bebed80333e403a09bd62d"
 # juge_isole n'a pas de fichier d'état : verdict.py la tire du code du juge commun (sortie du job juge).
 ETAPES = ["juges", "manifeste_et_taille", "compilation_x86_64", "compilation_arm64", "differentiel_x86_64",
           "differentiel_arm64", "fuzzing", "greffon_juge", "juge_ancien", "meta_juge"]
-JOBS_OK = {"manifeste": {"result": "success"}, "greffon": {"result": "success"},
+DEPART = "d" * 40
+GREFFON_OK = {"result": "success", "outputs": {"base_juge": DEPART, "regle": "point_de_depart", "depart": DEPART}}
+JOBS_OK = {"manifeste": {"result": "success"}, "greffon": GREFFON_OK,
            "compilation-et-tests": {"result": "success"}, "fuzzing": {"result": "success"},
            "juge": {"result": "success", "outputs": {"code": "0"}}, "juge-ancien": {"result": "success"},
            "meta-juge": {"result": "success"}}
@@ -169,6 +171,23 @@ class Verdict(unittest.TestCase):
         etats = dict({e: "succes" for e in ETAPES}, juge_ancien="echec")
         v = self.executer(etats, dict(JOBS_OK, **{"juge-ancien": {"result": "failure"}}), rapport_ab())
         self.assertEqual(v["etape_en_echec"], "Ancien juge isolé de la base (transition)")
+
+    def test_base_juge_publiee(self):
+        """verdict.json publie le commit A du juge commun et la règle qui l'a choisi (revue adverse de miniz-0032)."""
+        v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, rapport_ab())
+        self.assertEqual(v["ci"], "verte")
+        self.assertEqual(v["base_juge"], {"commit": DEPART, "regle": "point_de_depart", "depart": DEPART, "base": None})
+        self.assertIsNone(self.executer({e: "succes" for e in ETAPES}, None, rapport_ab())["base_juge"])
+
+    def test_jamais_vert_sans_a_verifiable(self):
+        """Règle de refus, règle inconnue ou commit illisible : rouge, même si tous les jobs et états disent succès."""
+        for sorties in ({"base_juge": DEPART, "regle": "refus_bee_modifie", "depart": DEPART},
+                        {"base_juge": DEPART, "regle": "base", "depart": DEPART},
+                        {"base_juge": "HEAD", "regle": "point_de_depart", "depart": DEPART}, {}):
+            with self.subTest(sorties=sorties):
+                v = self.executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, greffon={"result": "success", "outputs": sorties}), rapport_ab())
+                self.assertEqual(v["ci"], "rouge")
+                self.assertEqual(v["etape_en_echec"], "Greffon du juge commun")
 
     def test_sans_juge_isole(self):
         v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, rapport_ab(), "metrique: debit_compression_n6\n")
@@ -359,13 +378,14 @@ class Juges(unittest.TestCase):
             return yaml.safe_load(f)
 
     def test_juge_commun_epingle(self):
-        """Le job juge appelle juge.yml du registre à l'étiquette JUGE_COMMUN_REF, et chaque extraction du juge
-        commun (isoler.sh, image, méta-tests) se fait à cette même étiquette."""
+        """Le job juge appelle juge.yml du registre au commit JUGE_COMMUN_SHA (jamais une étiquette ni une branche,
+        qui se déplacent), et chaque extraction du juge commun (isoler.sh, image, méta-tests) se fait à ce commit."""
         workflow = self.charger_workflow()
-        ref = workflow["env"]["JUGE_COMMUN_REF"]
-        self.assertRegex(ref, r"^juge-v[0-9]+$")
+        sha = workflow["env"]["JUGE_COMMUN_SHA"]
+        self.assertRegex(sha, r"^[0-9a-f]{40}$")
+        self.assertNotIn("JUGE_COMMUN_REF", workflow["env"])
         juge = workflow["jobs"]["juge"]
-        self.assertEqual(juge["uses"], f"Bee-ruche/registre/.github/workflows/juge.yml@{ref}")
+        self.assertEqual(juge["uses"], f"Bee-ruche/registre/.github/workflows/juge.yml@{sha}")
         # Greffon lu dans la base : le commit vient du job greffon, jamais de la tête de la PR directement.
         self.assertEqual(juge["with"]["base_sha"], "${{ needs.greffon.outputs.base_juge }}")
         self.assertIn("greffon", juge["needs"])
@@ -373,7 +393,7 @@ class Juges(unittest.TestCase):
                        if e.get("with", {}).get("path") == "juge-commun"]
         self.assertEqual(len(extractions), 3)  # compilation et tests, fuzzing, méta-tests
         for e in extractions:
-            self.assertEqual((e["with"]["repository"], e["with"]["ref"]), ("${{ env.REGISTRE }}", "${{ env.JUGE_COMMUN_REF }}"))
+            self.assertEqual((e["with"]["repository"], e["with"]["ref"]), ("${{ env.REGISTRE }}", "${{ env.JUGE_COMMUN_SHA }}"))
         self.assertEqual(workflow["env"]["REGISTRE"], "Bee-ruche/registre")
         verdict = workflow["jobs"]["verdict"]
         self.assertEqual(set(verdict["needs"]), set(workflow["jobs"]) - {"verdict"})
@@ -446,9 +466,9 @@ class Greffon(unittest.TestCase):
         env = dict(os.environ, ETATS=etats, BASE_SHA=base, TETE_SHA=tete, GITHUB_OUTPUT=sortie)
         r = subprocess.run(["bash", "-e", "-c", self.script], cwd=self.d, capture_output=True, text=True, env=env)
         with open(sortie) as f:
-            valeurs = dict(l.split("=", 1) for l in f.read().split())
+            self.sorties = dict(l.split("=", 1) for l in f.read().split())
         with open(os.path.join(etats, "greffon_juge.txt")) as f:
-            return r.returncode, valeurs.get("base_juge"), f.read().strip(), r.stdout + r.stderr
+            return r.returncode, self.sorties.get("base_juge"), f.read().strip(), r.stdout + r.stderr
 
     def test_point_de_depart_si_bee_inchange(self):
         self.git("checkout", "-q", "-b", "pr")
@@ -458,17 +478,31 @@ class Greffon(unittest.TestCase):
         self.ecrire("miniz_tdef.c", "int z;\n")  # la base avance, sans toucher bee/
         base = self.commit("base")
         self.assertEqual(self.lancer(base, tete, "base")[:3], (0, self.depart, "succes"))
+        self.assertEqual((self.sorties["regle"], self.sorties["depart"]), ("point_de_depart", self.depart))
 
-    def test_base_si_bee_a_change(self):
+    def test_rouge_si_bee_a_change_sur_la_base(self):
+        """Revue adverse de miniz-0032 (B1) : comparer la base (avec une « correction » coûteuse de miniz et un
+        changement de bee/) à une tête qui n'a ni l'un ni l'autre fabriquait un gain. CI rouge : rebasez."""
         self.git("checkout", "-q", "-b", "pr")
-        self.ecrire("miniz.c", "int y;\n")
+        self.ecrire("miniz.c", "int y; /* commentaire de la PR */\n")
         tete = self.commit("pr")
         self.git("checkout", "-q", "master")
-        self.ecrire("bee/juge/projet.py", "# greffon corrigé\n")
-        base = self.commit("base")
-        code, base_juge, etat, sortie = self.lancer(base, tete, "base")
-        self.assertEqual((code, base_juge, etat), (0, base, "succes"))
-        self.assertIn("::warning::", sortie)
+        self.ecrire("miniz_tinfl.c", "int lent;\n")
+        self.commit("M : correction coûteuse sur master")
+        self.ecrire("bee/README.md", "note\n")
+        base = self.commit("K : outillage sur master")
+        for cote in ("base", "pr"):
+            with self.subTest(cote=cote):
+                code, base_juge, etat, sortie = self.lancer(base, tete, cote)
+                self.assertEqual((code, base_juge, etat), (1, None, "echec"))
+                self.assertEqual(self.sorties["regle"], "refus_bee_modifie")
+                self.assertIn("::error::bee/ a changé sur master", sortie)
+                self.assertIn("rebasez-la sur master", sortie)
+        # Rebasée sur la base, la même PR passe, avec A = la base (son point de départ).
+        self.git("checkout", "-q", "pr")
+        self.git("rebase", "-q", base)
+        tete = self.git("rev-parse", "HEAD")
+        self.assertEqual(self.lancer(base, tete, "base")[:3], (0, base, "succes"))
 
     def test_jamais_la_tete_hors_introduction(self):
         self.git("checkout", "-q", "-b", "pr")
@@ -481,10 +515,12 @@ class Greffon(unittest.TestCase):
         self.ecrire("bee/juge/projet.py", "# nouveau greffon\n")
         tete = self.commit("pr")
         self.assertEqual(self.lancer(self.depart, tete, "pr")[:3], (0, tete, "succes"))
+        self.assertEqual(self.sorties["regle"], "introduction")
         self.ecrire("miniz_tinfl.c", "int w;\n")  # l'introduction ne doit pas toucher miniz
         tete = self.commit("pr + miniz")
         code, base_juge, etat, sortie = self.lancer(self.depart, tete, "pr")
         self.assertEqual((code, base_juge, etat), (1, None, "echec"))
+        self.assertEqual(self.sorties["regle"], "refus_introduction_miniz")
         self.assertIn("::error::", sortie)
 
 
