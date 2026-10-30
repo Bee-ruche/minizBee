@@ -1,0 +1,75 @@
+tache: miniz-0032
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5), sous-agent lancé par l'agent principal du projet Bee"
+  client: bee 0.1.0
+resume: "minizBee passe au juge commun du registre (juge.yml@juge-v1) : greffon lu dans la base, mêmes résultats que le juge v2 à graine égale, ancien juge retiré du fork."
+changement: >
+  bee/juge/ ne garde que ce qui est propre à miniz : projet.py (le greffon, repris de la branche essai/juge-commun),
+  construire.sh (harnais compilé avec les en-têtes de la base, /outillage/base ; un objet par .c dans obj/ ; ni chrono
+  ni relevés, faits par le juge commun), execution.c (inchangé, octet pour octet) et test_juge.py. Dockerfile, chrono.c,
+  analyse.py, juge.py et isoler.sh quittent le fork : la CI les prend dans le registre, au commit de l'étiquette juge-v1
+  (821647d8fcb27840908b98f6778862bfb228aef2, vérifié par l'API GitHub), épinglé par SHA. Le
+  greffon va chercher le commit 2948eeb (git fetch --depth=1 sur l'hôte) quand la base est extraite sans historique,
+  ce que fait juge.yml (fetch-depth 1) : sans cela, bee/corpus/generer.py ne trouverait pas miniz_tdef.c et
+  miniz_tinfl.c d'origine et le juge commun s'arrêterait (code 2). CI (bee-ci.yml) : le job juge appelle
+  Bee-ruche/registre/.github/workflows/juge.yml@821647d8… (juge-v1, par SHA) avec l'option sortie_compressee de la
+  tâche ; un job greffon donne au juge commun le commit dont il lit le greffon et A : toujours l'unique point de
+  départ de la PR, jamais la PR ; CI rouge (« rebasez-la sur master ») si bee/ ou miniz* (tout ce que le juge lit
+  dans A) a changé sur master depuis ce point de départ, ou si git merge-base --all rend plusieurs commits ; le commit
+  retenu et la règle qui l'a choisi sont publiés dans verdict.json (base_juge), et verdict.py rend rouge un verdict
+  dont A n'est pas accepté (point_de_depart exige A = le point de départ, introduction exige l'amorçage, SHA
+  lisibles) ou un code 0 sans section juge ou sans sortie comparée. Deux revues adverses : le repli « A = la base »
+  fabriquait +19 % d'instructions pour une PR qui ne changeait qu'un commentaire et un faux refus pour la PR #13 non
+  rebasée ; une PR qui recopiait (squash, cherry-pick) une optimisation de master en gardant un vieux point de départ
+  s'en attribuait le gain ; un historique croisé donnait un point de départ arbitraire. bee-ci ne juge plus que les PR
+  vers master (on: pull_request: branches: [master]). Les jobs qui exécutent du code de la PR sur la machine de CI
+  (meta-juge, et outillage-pr qui lance bee/ci/test_verdict.py de la PR quand elle modifie bee/ci/ ou ce workflow) sont
+  à part, en lecture seule, sans artefact ni sortie ; verdict.py tire leur étape de leur seul résultat, et lit la tâche
+  et le rapport de l'ancien juge dans l'artefact de leur job uniquement ; compilation, tests et fuzzing tournent dans le conteneur du juge commun
+  (isoler.sh du registre, image commune avec les PAQUETS du greffon) ; méta-tests du greffon si la PR modifie bee/juge/
+  ou bee-ci.yml ; verdict.py tire l'étape juge_isole du code du juge commun (sortie du job juge, jamais un fichier
+  d'état), lit l'artefact « juge » et reporte juge.version, juge.commun, juge.projet et juge.greffon. Amorçage : la base
+  de CETTE PR a encore l'ancien juge et pas de greffon ; bee/ci/juges.sh (et sa copie dans le workflow) a une règle
+  « introduction du greffon » qui garde les juges de la base, fait juger la PR par l'ancien juge de la base (job
+  juge-ancien, transition) ET par le juge commun avec le greffon de la PR (à condition qu'elle ne touche pas miniz),
+  et prend l'assembleur du verdict de la PR (amorcage: true). L'ancienne règle « introduction du juge isolé » est
+  retirée : après cette PR, une PR qui apporterait un bee/juge/juge.py ne se jugerait plus elle-même. Retirés aussi :
+  le CONTRIBUTION.yaml de miniz-0016 laissé à la racine de master, et le garde « if [ -f base/bee/bench/test_profil.py ] ».
+  bee/README.md : modèle de menace mis à jour (registre / fork, où le greffon est lu, nouvelles attaques couvertes).
+  Comparaison à graine égale (graine 00320000b5e0c0de0032b5e0c0de2026, --repetitions 2 --chauffe 1, A = master
+  9977da4, Docker local) : contre B = master et contre B = la PR honnête miniz-0017, juge v2 et juge commun comparent
+  chacun 2 988 sorties, sans construction suspecte, et comptent les mêmes instructions de A et de B dans les quatre
+  scénarios (n1 171 444 706 / 171 444 706 ; n6 335 520 529 / 335 520 529 ; n9 483 768 304 / 483 768 304 ; décompression
+  30 481 065 / 29 184 416 avec miniz-0017, 30 481 065 / 30 481 065 avec master) ; ratio_n6 identique (3,505421).
+teste:
+  - "Comparaison à graine égale juge v2 / juge commun (Docker local, image du juge commun identique en paquets à celle du juge v2, gcc 13.3, valgrind 3.22) : mêmes sorties comparées (2 988) et mêmes décomptes d'instructions A et B sur les quatre scénarios, pour B = master et B = miniz-0017 (chiffres dans « changement »)"
+  - "bee/juge/test_juge.py, tests unitaires (Python 3.13, juge commun à juge-v1) : 12 réussis (contrat du greffon, options, objets attendus, entrées et flux, entrées identiques au juge v2 à graine égale, règle de justesse sur des sorties écrites à la main)"
+  - "les 7 méta-tests de minizBee contre le juge commun (BEE_JUGE_INTEGRATION=1, Docker local, juge-v1, 2 répétitions ; 560 s avec les tests unitaires) : honnête acceptée sans suspect, instructions de A et B identiques ; sortie anticipée refusée (sortie absente) ; table précalculée refusée (première entrée aléatoire) ; faux chronos signalés (symbole_interdit clock_gettime) et vus plus lents ; requête Valgrind signalée (préambule) ; faux résumé signalé (appel_externe) et sans effet sur le décompte ; travail déplacé sans gain d'instructions"
+  - "empreinte des entrées du juge v2 pour une graine fixée : identique sous Python 3.11, 3.12 et 3.13, calculée avec une zlib factice ; avec la vraie zlib, elle différait entre ma machine et GitHub Actions (première exécution de la CI : seul échec, corrigé), les flux zlib de l'hôte dépendant de la version de zlib"
+  - "CI GitHub, première exécution (PR #16, run 41075923604) : juge.yml@juge-v1 appelé depuis le fork avec le greffon de la PR (introduction), 914 sorties de B justes, 10 répétitions, instructions de A et B identiques (n1 171 446 148, n6 335 498 159, n9 483 708 662, décompression 31 601 737), corpus reconstruit malgré l'extraction sans historique ; ancien juge isolé de la base réussi ; compilation, tests d'origine et différentiels (x86-64 et ARM64) et fuzzing 10 min dans le conteneur du juge commun (isoler.sh du registre, image bee-juge-commun:975cee12b1736972), réussis"
+  - "bee/ci/test_verdict.py : 44 tests réussis en local ; classe Greffon lancée 20 fois de suite : 20 sur 20 (avant correction, le test du cherry-pick échouait 11 fois sur 12 : un cherry-pick dans la même seconde recréait le même SHA ; corrigé par cherry-pick -x et des dates de commit croissantes). Tests (étape juge_isole tirée du code du juge commun, refus et environnement, champs du juge validés, ancien juge dans les détails, base_juge publiée, jamais vert sans règle qui accepte A, règle d'introduction du greffon, greffon de la PR jamais pris hors introduction, ancienne règle du juge isolé sans effet, workflow épinglé par SHA, test_profil.py sans garde, choix du commit du greffon exécuté sur de petits dépôts git, dont le scénario de la revue adverse : master reçoit une correction coûteuse de miniz et un changement de bee/, la PR ne change qu'un commentaire, CI rouge « rebasez », puis verte une fois rebasée ; et ceux de la seconde revue : optimisation de master recopiée par squash ou par cherry-pick, historique croisé à deux points de départ, PR sans ancêtre commun, master avancé sur miniz seul, tous rouges ; master avancé hors de bee/ et miniz, vert avec A = le point de départ ; verdict rouge si A n'est pas le point de départ, si introduction hors amorçage, si code 0 sans jugement ; jobs exécutant la PR jugés par leur seul résultat et isolés ; données lues dans l'artefact de leur job ; greffon dans ce que compare la règle « rebasez » ; déclenchement pour les seules PR vers master). Le job outillage-pr de cette PR lance celui-ci en CI"
+  - "script de rejeu de la seconde revue adverse (scenarios/rejouer.py) sur le workflow et le verdict.py corrigés : copie par squash et par cherry-pick refusées (refus_rebase), criss-cross refusé (refus_point_de_depart), les trois verdicts incohérents rouges"
+  - "verdict.py simulé sur les rapports réels de la comparaison (juge commun et ancien juge) : ci verte, juge.commun juge-v1, juge.version 3, details.juge_ancien rempli"
+non_teste:
+  - "le chemin d'après fusion (greffon lu dans la base, merge-base, isoler.sh et image du registre avec le greffon de la base) n'est exercé qu'en CI sur cette PR avec le greffon de la PR (introduction) ; la logique de choix du commit est testée localement sur de petits dépôts git"
+  - "ARM64 et libFuzzer : seulement en CI"
+  - "le scénario de la revue adverse sur GitHub Actions lui-même (job greffon rouge) : seulement sur de petits dépôts git, avec le script du job extrait du workflow"
+doutes: >
+  1) Le greffon fait un git fetch sur l'hôte quand la base est extraite sans historique : dépendance au réseau de GitHub
+  pendant le jugement ; la vraie correction est dans juge.yml du registre (extraction complète de la base), tâche
+  d'outillage du registre. 2) Pendant l'introduction (cette PR seulement), le greffon de la PR est du Python exécuté sur
+  l'hôte (image, jugement) et l'assembleur du verdict est celui de la PR : c'est l'amorçage, relu par un gardien. 3) Le
+  harnais (inchangé) dimensionne ses tampons de compression avec mz_compressBound et mz_deflateBound, du code jugé ;
+  il passe leur taille à miniz et borne ses copies, mais la règle du juge commun (« borne connue du format, au
+  minimum ») n'y est pas appliquée telle quelle : la changer changerait les décomptes d'instructions. 4) Le job
+  juge-ancien reste dans le workflow après la fusion, sans effet ; à retirer dans une tâche suivante. 5) Le prix de la
+  règle du point de départ : une PR doit être rebasée sur master après chaque fusion qui touche miniz ou bee/, sinon
+  sa CI est rouge ; après cette fusion, les PR #13 (miniz-0018) et #15 (miniz-0017) devront être rebasées. 6) juge.yml, même épinglé par SHA, extrait lui-même le code
+  du juge commun à l'étiquette juge-v1 (son JUGE_COMMUN_REF), qui peut se déplacer et qu'une branche du même nom
+  masquerait : à épingler par SHA dans le registre, avec des étiquettes juge-v* protégées. 7) verdicts.yml du registre
+  prend la dernière exécution de bee-ci.yml pour un SHA sans vérifier la PR ni la base (revue adverse, S1) :
+  base_juge et details.base sont maintenant dans verdict.json, mais c'est au registre de les vérifier. 8) Non traités
+  ici, à suivre dans une tâche : les annotations « :: » qu'une sortie de binaire pourrait injecter dans le journal
+  (M-4) et le SHA d'un fork du registre (M-5).
+taille_reelle: L
