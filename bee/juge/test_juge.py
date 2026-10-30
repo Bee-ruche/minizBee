@@ -55,8 +55,39 @@ _spec.loader.exec_module(greffon)
 # Empreinte des entrées que le juge isolé de miniz-0031 (juge v2, bee/juge/juge.py jusqu'à miniz-0032) tirait
 # de la graine 00320000b5e0c0de0032b5e0c0de2026 sur le petit corpus de TestIdentiqueAuJugeV2 : vérification
 # (aléatoires et flux zlib), une répétition perturbée, puis les entrées du décompte d'instructions (préfixe de
-# 1000 octets). Calculée avec le juge v2 sous Python 3.11, 3.12 et 3.13 (identique).
-EMPREINTE_JUGE_V2 = "f950bc133e75a87d23256981e7452c8d9389a3d28f8d35584a671e18ac520a2f"
+# 1000 octets), avec ZlibFactice à la place de la zlib de l'hôte dans les deux juges. Calculée avec le juge v2
+# sous Python 3.11, 3.12 et 3.13 (identique).
+EMPREINTE_JUGE_V2 = "1fd4df9a7777b1f5cfacdb01da69e36d94329ff08a20eac0d57652e9b9335073"
+
+
+class ZlibFactice:
+    """zlib déterministe et portable, pour l'empreinte seulement. Les flux de la vraie zlib changent avec sa
+    version (la CI de miniz-0032 l'a montré), et la longueur d'un flux décide des tirages suivants
+    (randrange) : avec elle, l'empreinte ne vaudrait que sur une machine. Avec celle-ci, elle ne dépend que
+    de la graine et de l'ordre des tirages, ce qui est exactement ce qu'on veut comparer au juge v2."""
+    Z_DEFAULT_STRATEGY, Z_FILTERED, Z_HUFFMAN_ONLY, Z_RLE, Z_FIXED = 0, 1, 2, 3, 4
+    DEFLATED = 8
+    Z_NO_FLUSH, Z_SYNC_FLUSH, Z_FULL_FLUSH, Z_FINISH = 0, 2, 3, 4
+    error = zlib.error
+
+    @staticmethod
+    def octets(etiquette, parametres, donnees):
+        h = hashlib.sha256(repr((etiquette, parametres)).encode() + donnees).digest()
+        return h[:4 + len(donnees) % 29]
+
+    def compress(self, donnees, niveau=-1):
+        return b"\x78" + self.octets("c", niveau, donnees)
+
+    def compressobj(self, *parametres):
+        octets = self.octets
+
+        class Flux:
+            def compress(self, donnees):
+                return octets("o", parametres, donnees)
+
+            def flush(self, mode=4):
+                return octets("f", (parametres, mode), b"")
+        return Flux()
 
 
 # ------------------------------------------------------------------ tests unitaires
@@ -121,12 +152,18 @@ class TestEntrees(unittest.TestCase):
 class TestIdentiqueAuJugeV2(unittest.TestCase):
     """À graine égale, le greffon tire exactement les entrées du juge v2 (miniz-0031), dans le même ordre."""
 
+    CORPUS = [("k000", b"abc" * 30000), ("k001", bytes(range(256)) * 400), ("k002", b""), ("k003", b"le juge commun " * 9000)]
+
     def test_memes_entrees(self):
-        corpus = [("k000", b"abc" * 30000), ("k001", bytes(range(256)) * 400), ("k002", b""), ("k003", b"le juge commun " * 9000)]
         projet = greffon.Projet({})
         rng = random.Random(int.from_bytes(bytes.fromhex("00320000b5e0c0de0032b5e0c0de2026"), "big"))
         h = hashlib.sha256()
-        verification = projet.verification(rng, corpus)
+        vraie_zlib, greffon.zlib = greffon.zlib, ZlibFactice()
+        try:
+            verification = projet.verification(rng, self.CORPUS)
+            etapes = (projet.repetition(rng, self.CORPUS), projet.instructions(rng, self.CORPUS, 1000))
+        finally:
+            greffon.zlib = vraie_zlib
         for e in verification:
             if e.cote == "f":
                 self.assertEqual((e.taille, e.attendu), (len(e.donnees), e.donnees))
@@ -135,14 +172,23 @@ class TestIdentiqueAuJugeV2(unittest.TestCase):
             if e.cote == "z":
                 h.update(e.nom.encode() + len(e.donnees).to_bytes(8, "little") + e.donnees + e.taille.to_bytes(8, "little")
                          + (b"-" if e.attendu is None else hashlib.sha256(e.attendu).digest()))
-        for etape in (projet.repetition(rng, corpus), projet.instructions(rng, corpus, 1000)):
+        for etape in etapes:
             fichiers = [e for e in etape if e.cote == "f"]
             flux = [e for e in etape if e.cote == "z"]
             self.assertEqual([e.nom for e in fichiers], [e.nom for e in flux])
             for f, z in zip(fichiers, flux):
-                self.assertEqual((z.attendu, zlib.decompress(z.donnees), z.taille), (f.donnees, f.donnees, len(f.donnees)))
-                h.update(f.nom.encode() + f.donnees)
+                self.assertEqual((z.attendu, z.taille), (f.donnees, len(f.donnees)))
+                h.update(f.nom.encode() + f.donnees + z.donnees)
         self.assertEqual(h.hexdigest(), EMPREINTE_JUGE_V2)
+
+    def test_flux_des_mesures(self):
+        """Avec la vraie zlib, les flux des mesures redonnent les fichiers perturbés qu'ils accompagnent."""
+        projet = greffon.Projet({})
+        for etape in (projet.repetition(random.Random(7), self.CORPUS), projet.instructions(random.Random(7), self.CORPUS, 1000)):
+            fichiers = {e.nom: e.donnees for e in etape if e.cote == "f"}
+            for e in etape:
+                if e.cote == "z":
+                    self.assertEqual(zlib.decompress(e.donnees), fichiers[e.nom])
 
 
 class TestVerification(unittest.TestCase):
