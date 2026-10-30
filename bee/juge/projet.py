@@ -148,7 +148,10 @@ def historique_du_corpus(outillage):
     Le workflow juge.yml du registre extrait la base sans historique (fetch-depth 1) : les sources figées
     que bee/corpus/generer.py lit par identifiant d'objet (miniz_tdef.c et miniz_tinfl.c d'origine, entre
     autres) n'y sont pas. Ce seul commit est alors demandé au dépôt de la copie (git fetch, sur l'hôte, sans
-    rien exécuter de la PR) ; generer.py vérifie ensuite la somme SHA-256 de chaque source et du corpus."""
+    rien exécuter de la PR) ; generer.py vérifie ensuite la somme SHA-256 de chaque source et du corpus.
+    C'est un accès réseau de l'hôte APRÈS l'extraction de la PR (le juge commun appelle corpus() après la
+    compilation) : la sûreté tient (SHA fixe, sommes vérifiées), la disponibilité dépend de GitHub. À retirer
+    quand juge.yml extraira la base avec son historique (ruche-0024, dans le registre)."""
     git = ["git", "-C", outillage]
     if subprocess.run(git + ["cat-file", "-e", COMMIT_CORPUS + "^{commit}"], capture_output=True).returncode == 0:
         return
