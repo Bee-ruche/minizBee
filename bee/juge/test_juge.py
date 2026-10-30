@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Tests du juge isolé (bee/juge/).
+"""Tests du greffon de minizBee pour le juge commun Bee (bee/juge/projet.py, construire.sh, execution.c).
 
   python3 bee/juge/test_juge.py                     tests unitaires (sans Docker)
   BEE_JUGE_INTEGRATION=1 python3 bee/juge/test_juge.py
-                                                    + méta-tests : le juge contre des variantes de miniz
-                                                      honnête et MALVEILLANTES (Docker requis, quelques minutes)
+                                                    + méta-tests : le juge commun, avec CE greffon, contre des
+                                                      variantes de miniz honnête et MALVEILLANTES (Docker requis)
+  BEE_JUGE_COMMUN=<registre>/outils/juge            le juge commun, à l'étiquette épinglée par
+                                                    .github/workflows/bee-ci.yml (juge-v1) ; par défaut,
+                                                    ../registre/outils/juge à côté de ce dépôt
+  BEE_JUGE_RESEAU=host                              réseau de « docker build » (machines sans pont Docker)
 
-Les variantes malveillantes sont écrites ici, comme des transformations du texte de miniz, et ne sont
-compilées et exécutées que DANS le conteneur du juge. Chacune vise une façon de tromper l'ancien juge
-(qui exécutait le code de la PR dans le processus qui le jugeait) :
+Le greffon et le harnais testés sont ceux de CE dépôt (la PR, quand la CI lance ces tests) ; le juge
+commun est celui du registre. Les variantes malveillantes sont écrites ici, comme des transformations du
+texte de miniz.c, et ne sont compilées et exécutées que DANS le conteneur du juge. Chacune vise une façon
+de tromper un juge qui exécuterait le code de la PR dans son propre processus :
   sortie_anticipee   le programme s'arrête « avec succès » au milieu des tests
   faux_chronos       le code remplace clock_gettime pour annoncer des temps flatteurs, et il est plus lent
   table_precalculee  le compresseur ne marche que sur les entrées qu'il connaît d'avance (le corpus)
@@ -17,10 +22,14 @@ compilées et exécutées que DANS le conteneur du juge. Chacune vise une façon
   travail_deplace    le code fait son initialisation dans mz_compressBound, appelée par le harnais avant les
                      compressions (revue adverse du 27/10 : +1,7 à +27 % d'instructions « gagnées » tant que
                      seule une zone du harnais était comptée)
+  honnete            miniz tel quel : accepté, rien de suspect, décomptes de A et B identiques
 """
 
+import hashlib
+import importlib.util
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -30,156 +39,178 @@ import zlib
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 RACINE = os.path.dirname(os.path.dirname(ICI))
-sys.path.insert(0, ICI)
-import analyse  # noqa: E402
-import juge  # noqa: E402
+JUGE_COMMUN = os.path.abspath(os.environ.get("BEE_JUGE_COMMUN") or os.path.join(os.path.dirname(RACINE), "registre", "outils", "juge"))
+if not os.path.isfile(os.path.join(JUGE_COMMUN, "juge.py")):
+    sys.exit(f"juge commun introuvable dans {JUGE_COMMUN} : BEE_JUGE_COMMUN=<registre>/outils/juge "
+             "(à l'étiquette épinglée par .github/workflows/bee-ci.yml)")
+sys.path.insert(0, JUGE_COMMUN)
+import juge as juge_commun  # noqa: E402
+import lecture  # noqa: E402
+from entrees import Entree  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("greffon_minizbee", os.path.join(ICI, "projet.py"))
+greffon = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(greffon)
+
+# Empreinte des entrées que le juge isolé de miniz-0031 (juge v2, bee/juge/juge.py jusqu'à miniz-0032) tirait
+# de la graine 00320000b5e0c0de0032b5e0c0de2026 sur le petit corpus de TestIdentiqueAuJugeV2 : vérification
+# (aléatoires et flux zlib), une répétition perturbée, puis les entrées du décompte d'instructions (préfixe de
+# 1000 octets). Calculée avec le juge v2 sous Python 3.11, 3.12 et 3.13 (identique).
+EMPREINTE_JUGE_V2 = "f950bc133e75a87d23256981e7452c8d9389a3d28f8d35584a671e18ac520a2f"
 
 
 # ------------------------------------------------------------------ tests unitaires
 
-NM_A = """/s/obj/miniz.o: mz_compress2 T 0000000000000100 0000000000000080
-/s/obj/miniz.o: memcpy U
-/s/obj/miniz.o: tdefl_compress U
-/s/obj/miniz_tdef.o: tdefl_compress T 0000000000000000 0000000000001000
-/s/obj/miniz_tdef.o: .LC0 r 0
-"""
-SECTIONS_A = """
-/s/obj/miniz.o:     file format elf64-x86-64
+class TestContrat(unittest.TestCase):
+    def test_greffon_charge_par_le_juge_commun(self):
+        projet, empreinte = juge_commun.charger_greffon(RACINE, {})
+        with open(os.path.join(ICI, "projet.py"), "rb") as f:
+            self.assertEqual(empreinte, hashlib.sha256(f.read()).hexdigest())
+        self.assertEqual(projet.NOM, "miniz")
+        self.assertEqual(projet.SCENARIOS, {"n1": "f", "n6": "f", "n9": "f", "decompression": "z", "memoire": "f"})
+        self.assertEqual(projet.INSTRUCTIONS, ("n1", "n6", "n9", "decompression"))
+        self.assertEqual([m for m, _, _ in projet.METRIQUES],
+                         ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
+                          "debit_decompression", "ratio_n6", "memoire_max_ko"])
+        self.assertEqual(projet.VERIFICATION, {"sortie_compressee": "identique"})
 
-Sections:
-Idx Name          Size      VMA               LMA               File off  Algn
-  0 .text         00001000  0000000000000000  0000000000000000  00000040  2**4
-  1 .rodata       00000100  0000000000000000  0000000000000000  00001040  2**5
-"""
-DESASSEMBLAGE_A = """0000000000000000 <mz_compress2>:
-   0:\tendbr64
-   4:\tpush   %rbp
-   5:\tmov    %rsp,%rbp
-"""
+    def test_options(self):
+        projet, _ = juge_commun.charger_greffon(RACINE, {"sortie_compressee": "peut_changer"})
+        self.assertFalse(projet.identique)
+        for options in ({"sortie_compressee": "parfois"}, {"inconnue": "1"}):
+            with self.assertRaises(lecture.Erreur, msg=str(options)):
+                juge_commun.charger_greffon(RACINE, options)
 
-
-def releves(nm=NM_A, sections=SECTIONS_A, desassemblage=DESASSEMBLAGE_A):
-    return {"symboles": nm, "sections": sections, "desassemblage": desassemblage}
-
-
-class TestAnalyse(unittest.TestCase):
-    def test_base_contre_elle_meme(self):
-        self.assertEqual(analyse.analyser(releves(), releves()), [])
-
-    def test_appel_externe_hors_liste(self):
-        b = releves(nm=NM_A + "/s/obj/miniz.o: execve U\n/s/obj/miniz.o: malloc U\n")
-        details = [s["detail"] for s in analyse.analyser(releves(), b)]
-        self.assertEqual(len(details), 1)
-        self.assertIn("execve", details[0])
-
-    def test_symbole_qui_remplace_la_libc(self):
-        b = releves(nm=NM_A + "/s/obj/miniz.o: clock_gettime T 0000000000000300 0000000000000010\n"
-                             "/s/obj/miniz.o: mz_nouvelle_fonction T 0000000000000400 0000000000000010\n")
-        suspects = analyse.analyser(releves(), b)
-        self.assertEqual([s["type"] for s in suspects], ["symbole_defini"])
-        self.assertIn("clock_gettime", suspects[0]["detail"])
-
-    def test_fonction_indirecte(self):
-        b = releves(nm=NM_A + "/s/obj/miniz.o: mz_choisir i 0000000000000300 0000000000000010\n")
-        self.assertEqual([s["type"] for s in analyse.analyser(releves(), b)], ["symbole"])
-
-    def test_constructeur(self):
-        b = releves(sections=SECTIONS_A + "  2 .init_array   00000008  0000000000000000  0000000000000000  00001140  2**3\n")
-        suspects = analyse.analyser(releves(), b)
-        self.assertEqual([s["type"] for s in suspects], ["section"])
-
-    def test_sections_ordinaires_permises(self):
-        b = releves(sections=SECTIONS_A + "  2 .rodata.cst32 00000020  0000000000000000  0000000000000000  00001140  2**5\n"
-                                          "  3 .text.unlikely 00000020  0000000000000000  0000000000000000  00001160  2**4\n")
-        self.assertEqual(analyse.analyser(releves(), b), [])
-
-    def test_instructions_suspectes(self):
-        b = releves(desassemblage=DESASSEMBLAGE_A + "   9:\tsyscall\n   b:\trdtsc\n  10:\trol    $0x3,%rdi\n"
-                                                  "  14:\trol    $0xd,%rdi\n  18:\trol    $0x3d,%rdi\n  1c:\trol    $0x33,%rdi\n")
-        types = sorted(s["detail"].split(" ")[0] for s in analyse.analyser(releves(), b))
-        self.assertEqual(types, ["preambule_valgrind", "rdtsc", "syscall"])
-
-    def test_instruction_deja_dans_la_base(self):
-        a = releves(desassemblage=DESASSEMBLAGE_A + "   9:\tcpuid\n")
-        b = releves(desassemblage=DESASSEMBLAGE_A + "   9:\tcpuid\n")
-        self.assertEqual(analyse.analyser(a, b), [])
-
-    def test_source(self):
-        diff = "+++ b/miniz.c\n+    __asm__ volatile(\"\");\n+#include <unistd.h>\n+    x = getenv(\"A\");\n-    asm retiré\n+    int ordinaire = 1;\n"
-        types = [s["detail"] for s in analyse.analyser(releves(), releves(), diff)]
-        self.assertEqual(len(types), 3)
-
-
-class TestLectureSure(unittest.TestCase):
-    def setUp(self):
-        self.racine = tempfile.mkdtemp()
-        os.makedirs(os.path.join(self.racine, "c"))
-
-    def tearDown(self):
-        shutil.rmtree(self.racine)
-
-    def test_fichier_ordinaire(self):
-        with open(os.path.join(self.racine, "c", "x"), "wb") as f:
-            f.write(b"abc")
-        self.assertEqual(juge.lire_sortie(self.racine, "c/x"), b"abc")
-        self.assertIsNone(juge.lire_sortie(self.racine, "c/absent"))
-
-    def test_lien_symbolique_refuse(self):
-        os.symlink("/etc/hostname", os.path.join(self.racine, "c", "x"))
-        with self.assertRaises(juge.Refus):
-            juge.lire_sortie(self.racine, "c/x")
-
-    def test_dossier_lien_refuse(self):
-        os.symlink("/etc", os.path.join(self.racine, "d"))
-        with self.assertRaises(juge.Refus):
-            juge.lire_sortie(self.racine, "d/hostname")
-
-    def test_tube_refuse(self):
-        os.mkfifo(os.path.join(self.racine, "c", "x"))
-        with self.assertRaises(juge.Refus):
-            juge.lire_sortie(self.racine, "c/x")
-
-    def test_trop_gros(self):
-        with open(os.path.join(self.racine, "c", "x"), "wb") as f:
-            f.write(b"0" * 100)
-        with self.assertRaises(juge.Refus):
-            juge.lire_sortie(self.racine, "c/x", maximum=10)
-
-    def test_statut(self):
-        with open(os.path.join(self.racine, "c", "s"), "wb") as f:
-            f.write(b"-3 12\n")
-        self.assertEqual(juge.statut(self.racine, "c/s"), (-3, 12))
-        with open(os.path.join(self.racine, "c", "s"), "wb") as f:
-            f.write(b"0 12 ; rm -rf /\n")
-        with self.assertRaises(juge.Refus):
-            juge.statut(self.racine, "c/s")
+    def test_sources_et_objets(self):
+        """Seuls miniz.c, miniz_tdef.c et miniz_tinfl.c sont compilés : un objet chacun, miniz_zip.c n'est pas copié."""
+        projet, _ = juge_commun.charger_greffon(RACINE, {})
+        destination = tempfile.mkdtemp()
+        try:
+            juge_commun.copier_sources(RACINE, destination, projet.SOURCES, projet.SOURCES_REQUISES)
+            self.assertEqual(juge_commun.objets_attendus(destination), ({"miniz.o", "miniz_tdef.o", "miniz_tinfl.o"}, []))
+            self.assertIn("miniz.h", os.listdir(destination))
+            self.assertNotIn("miniz_zip.c", os.listdir(destination))
+        finally:
+            shutil.rmtree(destination)
 
 
 class TestEntrees(unittest.TestCase):
     def test_graine_reproductible_et_imprevisible(self):
-        import random
         corpus = [("k000", b"abc" * 1000)]
-        a = juge.entrees_aleatoires(random.Random(1), corpus)
-        b = juge.entrees_aleatoires(random.Random(1), corpus)
-        c = juge.entrees_aleatoires(random.Random(2), corpus)
+        a = greffon.entrees_aleatoires(random.Random(1), corpus)
+        b = greffon.entrees_aleatoires(random.Random(1), corpus)
+        c = greffon.entrees_aleatoires(random.Random(2), corpus)
         self.assertEqual(a, b)
         self.assertNotEqual([d for _, d in a], [d for _, d in c])
         self.assertIn(b"", [d for _, d in a])
 
     def test_flux_valides(self):
-        import random
-        rng = random.Random(3)
         originaux = [("x", b""), ("y", b"bonjour " * 5000), ("z", bytes(range(256)) * 50)]
-        for nom, z, taille, original in juge.flux_zlib(rng, originaux):
+        for nom, z, taille, original in greffon.flux_zlib(random.Random(3), originaux):
             if original is not None:
-                self.assertEqual(juge.decompresser_zlib(z), original, nom)
+                self.assertEqual(greffon.decompresser_zlib(z), original, nom)
                 self.assertEqual(taille, len(original))
 
     def test_decompresser_zlib_refuse_les_flux_incomplets(self):
         z = zlib.compress(b"x" * 1000)
-        self.assertEqual(juge.decompresser_zlib(z), b"x" * 1000)
-        self.assertIsNone(juge.decompresser_zlib(z[:-1]))
-        self.assertIsNone(juge.decompresser_zlib(z + b"\x00"))
+        self.assertEqual(greffon.decompresser_zlib(z), b"x" * 1000)
+        self.assertIsNone(greffon.decompresser_zlib(z[:-1]))
+        self.assertIsNone(greffon.decompresser_zlib(z + b"\x00"))
+
+
+class TestIdentiqueAuJugeV2(unittest.TestCase):
+    """À graine égale, le greffon tire exactement les entrées du juge v2 (miniz-0031), dans le même ordre."""
+
+    def test_memes_entrees(self):
+        corpus = [("k000", b"abc" * 30000), ("k001", bytes(range(256)) * 400), ("k002", b""), ("k003", b"le juge commun " * 9000)]
+        projet = greffon.Projet({})
+        rng = random.Random(int.from_bytes(bytes.fromhex("00320000b5e0c0de0032b5e0c0de2026"), "big"))
+        h = hashlib.sha256()
+        verification = projet.verification(rng, corpus)
+        for e in verification:
+            if e.cote == "f":
+                self.assertEqual((e.taille, e.attendu), (len(e.donnees), e.donnees))
+                h.update(e.nom.encode() + len(e.donnees).to_bytes(8, "little") + e.donnees)
+        for e in verification:
+            if e.cote == "z":
+                h.update(e.nom.encode() + len(e.donnees).to_bytes(8, "little") + e.donnees + e.taille.to_bytes(8, "little")
+                         + (b"-" if e.attendu is None else hashlib.sha256(e.attendu).digest()))
+        for etape in (projet.repetition(rng, corpus), projet.instructions(rng, corpus, 1000)):
+            fichiers = [e for e in etape if e.cote == "f"]
+            flux = [e for e in etape if e.cote == "z"]
+            self.assertEqual([e.nom for e in fichiers], [e.nom for e in flux])
+            for f, z in zip(fichiers, flux):
+                self.assertEqual((z.attendu, zlib.decompress(z.donnees), z.taille), (f.donnees, f.donnees, len(f.donnees)))
+                h.update(f.nom.encode() + f.donnees)
+        self.assertEqual(h.hexdigest(), EMPREINTE_JUGE_V2)
+
+
+class TestVerification(unittest.TestCase):
+    """La règle de justesse, sur des sorties écrites à la main (sans Docker)."""
+
+    DONNEES = b"le greffon ne croit que la base et la zlib de l'hote " * 300
+
+    def setUp(self):
+        self.travail = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.travail)
+
+    def sorties(self, nom, modifier=None):
+        """Sorties d'une variante pour une entrée f « k000 » et un flux z « z000 » (valide)."""
+        racines = {c: os.path.join(self.travail, nom, c) for c in "fz"}
+        fichiers = {}
+        for niveau in greffon.NIVEAUX_UNIQUE:
+            fichiers[("f", f"c/k000.{niveau}")] = zlib.compress(self.DONNEES, min(niveau, 9))
+        for niveau in greffon.NIVEAUX_FLUX:
+            fichiers[("f", f"s/k000.{niveau}")] = zlib.compress(self.DONNEES, niveau)
+        n = len(self.DONNEES)
+        fichiers.update({("z", "e/z000"): f"0 {n}\n".encode(), ("z", "d/z000"): self.DONNEES,
+                         ("z", "es/z000"): f"1 {n}\n".encode(), ("z", "ds/z000"): self.DONNEES})
+        if modifier:
+            modifier(fichiers)
+        for (cote, relatif), octets in fichiers.items():
+            chemin = os.path.join(racines[cote], relatif)
+            os.makedirs(os.path.dirname(chemin), exist_ok=True)
+            with open(chemin, "wb") as f:
+                f.write(octets)
+        return lecture.Sorties(racines)
+
+    def entrees(self):
+        return [Entree("f", "k000", self.DONNEES, len(self.DONNEES), self.DONNEES),
+                Entree("z", "z000", zlib.compress(self.DONNEES), len(self.DONNEES), self.DONNEES)]
+
+    def test_identique_accepte(self):
+        b = self.sorties("B")
+        self.assertEqual(greffon.Projet({}).verifier(self.sorties("A"), b, self.entrees()), 12)
+        juge_commun.exiger_couverture(b, self.entrees(), "essai")
+
+    def test_sortie_compressee_differente(self):
+        autre = lambda f: f.__setitem__(("f", "c/k000.9"), zlib.compress(self.DONNEES, 0))  # noqa: E731 (juste, mais autre)
+        with self.assertRaises(lecture.Refus):
+            greffon.Projet({}).verifier(self.sorties("A"), self.sorties("B", autre), self.entrees())
+        # Si la tâche le permet, une autre sortie compressée qui redonne l'original est acceptée ; pas une fausse.
+        peut_changer = greffon.Projet({"sortie_compressee": "peut_changer"})
+        self.assertEqual(peut_changer.verifier(self.sorties("A2"), self.sorties("B2", autre), self.entrees()), 12)
+        fausse = lambda f: f.__setitem__(("f", "c/k000.9"), zlib.compress(self.DONNEES[:-1], 9))  # noqa: E731
+        with self.assertRaises(lecture.Refus):
+            peut_changer.verifier(self.sorties("A3"), self.sorties("B3", fausse), self.entrees())
+
+    def test_decompression_differente_ou_absente(self):
+        b = self.sorties("B", lambda f: f.__setitem__(("z", "ds/z000"), self.DONNEES[:-1] + b"?"))
+        with self.assertRaises(lecture.Refus):
+            greffon.Projet({}).verifier(self.sorties("A"), b, self.entrees())
+        b = self.sorties("B2", lambda f: f.pop(("z", "e/z000")))
+        with self.assertRaises(lecture.Refus):
+            greffon.Projet({}).verifier(self.sorties("A2"), b, self.entrees())
+        b = self.sorties("B3", lambda f: f.__setitem__(("z", "e/z000"), b"-3 0\n"))
+        with self.assertRaises(lecture.Refus):
+            greffon.Projet({}).verifier(self.sorties("A3"), b, self.entrees())
+
+    def test_base_fausse_est_une_erreur(self):
+        a = self.sorties("A", lambda f: f.__setitem__(("f", "c/k000.6"), zlib.compress(b"autre chose", 6)))
+        with self.assertRaises(lecture.Erreur):
+            greffon.Projet({}).verifier(a, self.sorties("B"), self.entrees())
 
 
 # ------------------------------------------------------------------ méta-tests (Docker)
@@ -287,12 +318,12 @@ def travail_deplace(texte, corpus):
 @unittest.skipUnless(os.environ.get("BEE_JUGE_INTEGRATION") == "1" and shutil.which("docker"),
                      "méta-tests : BEE_JUGE_INTEGRATION=1 et Docker requis")
 class TestJugeContreVariantes(unittest.TestCase):
-    """Le juge complet, en conteneur, contre la base et des variantes malveillantes."""
+    """Le juge commun complet, en conteneur, avec ce greffon, contre la base et des variantes malveillantes."""
 
     @classmethod
     def setUpClass(cls):
         cls.travail = tempfile.mkdtemp(prefix="bee-meta-")
-        cls.corpus = juge.charger_corpus(RACINE)
+        cls.corpus = greffon.Projet({}).corpus(RACINE)
 
     @classmethod
     def tearDownClass(cls):
@@ -302,15 +333,15 @@ class TestJugeContreVariantes(unittest.TestCase):
         source_b = os.path.join(self.travail, nom)
         os.makedirs(source_b)
         for fichier in os.listdir(RACINE):
-            if juge.MOTIF_SOURCE.fullmatch(fichier):
+            if fichier.startswith("miniz") and fichier.endswith((".c", ".h")):
                 shutil.copyfile(os.path.join(RACINE, fichier), os.path.join(source_b, fichier))
         if transformation:
             with open(os.path.join(source_b, "miniz.c"), encoding="utf-8") as f:
                 texte = f.read()
             with open(os.path.join(source_b, "miniz.c"), "w", encoding="utf-8") as f:
                 f.write(transformation(texte, self.corpus))
-        commande = [sys.executable, os.path.join(ICI, "juge.py"), "--source-a", RACINE, "--source-b", source_b,
-                    "--outillage", RACINE, "--repetitions", "2", "--chauffe", "0"]
+        commande = [sys.executable, os.path.join(JUGE_COMMUN, "juge.py"), "--outillage", RACINE, "--source-a", RACINE,
+                    "--source-b", source_b, "--repetitions", "2", "--chauffe", "0"]
         if sans_instructions:
             commande.append("--sans-instructions")
         if os.environ.get("BEE_JUGE_RESEAU"):
@@ -323,10 +354,18 @@ class TestJugeContreVariantes(unittest.TestCase):
     def types_suspects(self, rapport):
         return {s["type"] for s in rapport["juge"]["constructions_suspectes"]}
 
+    def details(self, rapport):
+        return " ".join(s["detail"] for s in rapport["juge"]["constructions_suspectes"])
+
     def test_honnete(self):
         code, rapport, _ = self.juger("honnete")
         self.assertEqual(code, 0)
         self.assertEqual(rapport["juge"]["constructions_suspectes"], [])
+        self.assertEqual(rapport["juge"]["projet"], "miniz")
+        self.assertEqual(rapport["juge"]["commun"], f"juge-v{juge_commun.VERSION_COMMUNE}")
+        self.assertEqual(rapport["juge"]["greffon"], juge_commun.charger_greffon(RACINE, {})[1])
+        self.assertGreater(rapport["juge"]["verification"]["sorties_comparees"], 900)
+        self.assertEqual(set(rapport["instructions"]), {"instructions_n1", "instructions_n6", "instructions_n9", "instructions_decompression"})
         for m in rapport["instructions"].values():
             self.assertEqual(m["A"], m["B"])
 
@@ -338,7 +377,8 @@ class TestJugeContreVariantes(unittest.TestCase):
     def test_faux_chronos(self):
         code, rapport, _ = self.juger("faux_chronos", faux_chronos, sans_instructions=True)
         self.assertEqual(code, 0)
-        self.assertIn("symbole_defini", self.types_suspects(rapport))
+        self.assertIn("symbole_interdit", self.types_suspects(rapport))
+        self.assertIn("clock_gettime", self.details(rapport))
         # Le temps est mesuré par le noyau, pas par clock_gettime : B est vu plus lent, pas plus rapide.
         n6 = rapport["metriques"]["debit_compression_n6"]
         self.assertLess(n6["B"]["mediane"], n6["A"]["mediane"])
@@ -352,7 +392,7 @@ class TestJugeContreVariantes(unittest.TestCase):
         code, rapport, _ = self.juger("requete_valgrind", requete_valgrind)
         self.assertEqual(code, 0)
         self.assertIn("instruction", self.types_suspects(rapport))
-        self.assertIn("preambule_valgrind", " ".join(s["detail"] for s in rapport["juge"]["constructions_suspectes"]))
+        self.assertIn("preambule_valgrind", self.details(rapport))
 
     def test_travail_deplace(self):
         code, rapport, _ = self.juger("travail_deplace", travail_deplace)
