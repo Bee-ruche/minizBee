@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests différentiels Bee pour miniz : corpus, compilation, miniz contre zlib, flux, déterminisme.
+# Tests différentiels Bee pour miniz : corpus, compilation, miniz contre zlib, flux, déterminisme,
+# puis cas limites de l'API compatible zlib (codes de retour de miniz comparés à ceux de zlib, api.c).
 #
 # Usage (depuis n'importe où) :
 #   bee/tests/lancer.sh                         tout, y compris le contrôle des empreintes
@@ -18,15 +19,17 @@ RACINE="$(dirname "$BEE")"
 SOURCE="$RACINE"
 CONSTR="${BEE_CONSTR:-$BEE/construction/tests}"
 ARGS=()
+ARGS_API=()
 OPT_TESTS="-O2 -g"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --sans-empreintes|--regenerer-empreintes|--rapide|--verbeux) ARGS+=("$1") ;;
+    --sans-empreintes|--regenerer-empreintes|--rapide) ARGS+=("$1") ;;
+    --verbeux) ARGS+=("$1"); ARGS_API+=("$1") ;;
     --source) SOURCE="$(cd "$2" && pwd)"; shift ;;
     --sanitiseurs) OPT_TESTS="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all"
                    CONSTR="${CONSTR}-sanitiseurs" ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "option inconnue : $1 (voir --help)" >&2; exit 2 ;;
   esac
   shift
@@ -36,13 +39,18 @@ for f in miniz.c miniz_tdef.c miniz_tinfl.c miniz.h; do
   [ -f "$SOURCE/$f" ] || { echo "erreur : $SOURCE/$f introuvable (--source doit désigner une copie de miniz)" >&2; exit 2; }
 done
 
-echo "== 1/3 Corpus de référence"
+echo "== 1/4 Corpus de référence"
 python3 "$BEE/corpus/generer.py" || { echo "ÉCHEC : corpus non conforme à bee/corpus/SHA256SUMS" >&2; exit 1; }
 
-echo "== 2/3 Compilation (sources : $SOURCE)"
-make --no-print-directory -s -C "$BEE" SOURCE="$SOURCE" CONSTR="$CONSTR" OPT_TESTS="$OPT_TESTS" differentiel \
-  || { echo "ÉCHEC : la compilation des tests différentiels a échoué" >&2; exit 1; }
+echo "== 2/4 Compilation (sources : $SOURCE)"
+make --no-print-directory -s -C "$BEE" SOURCE="$SOURCE" CONSTR="$CONSTR" OPT_TESTS="$OPT_TESTS" differentiel api \
+  || { echo "ÉCHEC : la compilation des tests a échoué" >&2; exit 1; }
 
-echo "== 3/3 Tests différentiels et empreintes"
+echo "== 3/4 Tests différentiels et empreintes"
 cd "$RACINE"
-"$CONSTR/differentiel" --corpus "$BEE/corpus/donnees" --empreintes "$ICI/empreintes-reference.txt" ${ARGS[@]+"${ARGS[@]}"}
+statut=0
+"$CONSTR/differentiel" --corpus "$BEE/corpus/donnees" --empreintes "$ICI/empreintes-reference.txt" ${ARGS[@]+"${ARGS[@]}"} || statut=$?
+
+echo "== 4/4 Cas limites de l'API compatible zlib (miniz contre zlib)"
+"$CONSTR/api" ${ARGS_API[@]+"${ARGS_API[@]}"} || { s=$?; [ "$statut" -ne 0 ] || statut=$s; }
+exit "$statut"

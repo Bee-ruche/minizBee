@@ -26,11 +26,25 @@ RACINE = os.path.dirname(BEE)
 SOURCES = ["miniz_tdef.c", "miniz_tinfl.c", "miniz.c"]
 DEBUT_FONCTION = re.compile(r"^\s*(?:static\s+)?(?:MZ_FORCEINLINE\s+)?(?:MINIZ_EXPORT\s+)?"
                             r"(?:const\s+)?[A-Za-z_][A-Za-z0-9_ \*]*?\b([a-z_][a-z0-9_]*)\s*\([^;]*$")
+# Commentaires de bloc et de ligne (prolongés par « \ » en fin de ligne), chaînes et caractères littéraux.
+# Une seule expression balayée de gauche à droite : le premier qui commence l'emporte, donc un « /* »
+# dans une chaîne ou un « " » dans un commentaire ne sont pas pris pour ce qu'ils ne sont pas.
+NEUTRES = re.compile(r"/\*.*?\*/|//(?:\\\n|[^\n])*|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'", re.S)
+
+
+def sans_commentaires(texte):
+    """Le texte, commentaires, chaînes et caractères littéraux remplacés par des espaces (sauts de ligne gardés).
+
+    Les numéros de ligne ne changent pas ; une parenthèse ou une accolade dans un commentaire ou une
+    chaîne ne peut plus passer pour un en-tête de fonction ni fausser le compte des accolades."""
+    return NEUTRES.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), texte)
 
 
 def plages_de_fonctions(chemin):
-    """(début, fin, nom) des définitions de fonctions, repérées par leur ligne d'en-tête et leurs accolades."""
-    lignes = open(chemin, encoding="utf-8", errors="replace").read().split("\n")
+    """(début, fin, nom) des définitions de fonctions, repérées par leur ligne d'en-tête et leurs accolades,
+    hors commentaires et chaînes."""
+    with open(chemin, encoding="utf-8", errors="replace") as f:
+        lignes = sans_commentaires(f.read()).split("\n")
     plages, i = [], 0
     while i < len(lignes):
         m = DEBUT_FONCTION.match(lignes[i])

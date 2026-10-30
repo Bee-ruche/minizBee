@@ -584,6 +584,39 @@ extern "C"
                         }
                     }
 #endif /* MINIZ_USE_UNALIGNED_LOADS_AND_STORES */
+                    /* Source entirely before the destination in memory (no overlap) and match of 4 bytes or more:
+                       copy with 4- or 8-byte moves through a local variable (memcpy, no pointer casts), never
+                       writing past the end of the match; the last move may overlap the previous one and rewrites
+                       the same bytes. Overlapping matches keep the byte-by-byte loop below: wide loads of bytes
+                       stored just before would stall on store-to-load forwarding. */
+                    if ((counter >= 4) && ((pOut_buf_cur - pSrc) >= (ptrdiff_t)counter))
+                    {
+                        mz_uint8 *const pOut_match_end = pOut_buf_cur + counter;
+                        if (counter <= 8)
+                        {
+                            mz_uint32 w;
+                            memcpy(&w, pSrc, 4);
+                            memcpy(pOut_buf_cur, &w, 4);
+                            memcpy(&w, pSrc + counter - 4, 4);
+                            memcpy(pOut_match_end - 4, &w, 4);
+                        }
+                        else
+                        {
+                            mz_uint64 v;
+                            do
+                            {
+                                memcpy(&v, pSrc, 8);
+                                memcpy(pOut_buf_cur, &v, 8);
+                                pSrc += 8;
+                                pOut_buf_cur += 8;
+                            } while ((pOut_match_end - pOut_buf_cur) >= 8);
+                            memcpy(&v, pSrc + ((pOut_match_end - pOut_buf_cur) - 8), 8);
+                            memcpy(pOut_match_end - 8, &v, 8);
+                        }
+                        pOut_buf_cur = pOut_match_end;
+                        counter %= 3; /* same leftover value as the byte-by-byte loop */
+                        continue;
+                    }
                     while (counter > 2)
                     {
                         pOut_buf_cur[0] = pSrc[0];

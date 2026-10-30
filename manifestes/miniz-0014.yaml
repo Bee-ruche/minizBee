@@ -1,0 +1,70 @@
+tache: miniz-0014
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "tdefl_find_match (variante octet par octet) : chaque sonde compare les deux octets de fin de correspondance en une lecture 16 bits par memcpy, depuis un pointeur précalculé."
+changement: >
+  miniz_tdef.c, variante octet par octet de tdefl_find_match (celle compilée par défaut, puisque
+  MINIZ_USE_UNALIGNED_LOADS_AND_STORES vaut 0 partout) : 11 lignes ajoutées, 5 retirées, dont 4 de
+  commentaire. Avant, chaque TDEFL_PROBE comparait m_dict[probe_pos + match_len] à c0 puis
+  m_dict[probe_pos + match_len - 1] à c1 : GCC 13 -O3 calculait probe_pos + match_len en 32 bits à
+  chaque sonde (lea + mov, non repliable dans l'adressage), relisait c1 sur la pile et faisait un
+  second test sur le chemin « c0 égal ». Maintenant un pointeur pTail = m_dict + match_len - 1 est
+  calculé une fois (et recalculé quand match_len grandit), et chaque sonde lit les deux octets
+  pTail[probe_pos] et pTail[probe_pos + 1] en un mot de 16 bits par memcpy, comparé à c01 lu de
+  la même façon à la position courante. Correction : ce sont exactement les octets que lisait
+  l'ancienne version (c0 et c1 en tête, puis les deux mêmes octets à chaque sonde ; l'ancienne
+  lisait déjà toujours probe_pos + match_len, et probe_pos + match_len - 1 >= probe_pos car
+  match_len >= 2 à l'entrée, TDEFL_MIN_MATCH_LEN - 1 ou m_saved_match_len), donc pas de nouvelle
+  lecture hors de m_dict (indice maximal 32767 + 257 = 33024 < 33025). L'égalité de deux mots lus
+  de la même façon équivaut à l'égalité des deux octets, quel que soit le boutisme ; aucune lecture
+  non alignée par transtypage, aucun alias strict violé. Mêmes correspondances choisies : sortie
+  compressée identique (305 empreintes, et 15 900 sorties comparées octet pour octet à la base, voir
+  teste). Le nombre de sondes, le hachage, les chaînes et la variante 16 bits
+  (MINIZ_USE_UNALIGNED_LOADS_AND_STORES=1, qui compare déjà c01 sur 16 bits) ne sont pas touchés ; miniz-0010 n'est pas
+  intégrée, rien à reporter sur elle. Pistes essayées et écartées, mesurées une par une
+  (instructions n9, base 510 229 776) : pointeur précalculé seul avec les deux comparaisons
+  d'octets, +4,8 % puis -0,1 % selon l'écriture (GCC duplique probe_pos dans deux registres) ;
+  pointeur local vers m_next, -2,0 % seulement (moins bien que la version retenue, -2,67 %) ;
+  probe_pos ou next_probe_pos en size_t, test de distance réordonné, dist recalculé après la
+  boucle, lookahead_pos tronqué une fois : code identique ou plus lent. La sonde ratée coûte
+  toujours 13 instructions (GCC garde une copie inutile de probe_pos) ; le gain vient du chemin
+  « c0 égal, c1 différent », d'une branche en moins et de c1 qui n'est plus relu sur la pile.
+mesures:
+  machine: "Intel Xeon @ 2,10 GHz virtualisé, 2 cœurs, 7 Go, Ubuntu 24.04.5, gcc 13.3.0 (-O3 -DNDEBUG), valgrind 3.22 ; machine partagée avec d'autres agents"
+  commande: "bee/sandbox/sans-docker.sh python3 bee/bench/ab.py --base upstream/master --candidate HEAD --repetitions 10 --instructions (mesuré avec base 1f429fa et candidat 6b368d8, avant rebasage sur 1c625c3 qui ne change que la CI et AGENTS.md : sources de miniz identiques)"
+  repetitions: 10
+  avant:
+    debit_compression_n9: 15.594
+    debit_compression_n1: 102.943
+    debit_compression_n6: 25.6595
+    debit_decompression: 440.925
+    ratio_n6: 3.5054
+    memoire_max_ko: 1672
+  apres:
+    debit_compression_n9: 16.211
+    debit_compression_n1: 106.145
+    debit_compression_n6: 27.7205
+    debit_decompression: 430.5725
+    ratio_n6: 3.5054
+    memoire_max_ko: 1674
+teste:
+  - "Instructions (cachegrind, ab.py --instructions, 128 Kio par fichier, reproductible à l'instruction près, identique sur les deux passages qui l'ont mesuré) : n9 510 229 776 -> 496 610 996 (-2,67 %), n6 357 228 867 -> 348 576 042 (-2,42 %), n1 187 597 150 -> 184 879 639 (-1,45 %), décompression 34 164 249 -> 34 164 249 (identique)"
+  - "Chronomètre, ab.py 10 répétitions entrelacées, trois passages : (1) machine chargée par d'autres agents (charge moyenne > 3 sur 2 cœurs), amplitudes non crédibles : n9 +19,1 %, n6 +13,6 %, n1 +26,7 %, tous au-delà du bruit, décompression +5,8 % dans le bruit ; (2) machine plus calme, chiffres déclarés ci-dessus : n9 +3,96 % (9 paires sur 10, au-delà du bruit), n6 +8,03 % (9/10), n1 +3,11 % (9/10), décompression -2,35 % (3/10, dans le bruit), mémoire -0,12 % (dans le bruit), ratio identique ; (3) sans --instructions : n9 +7,35 % (9/10), n6 +6,27 % (10/10), n1 +4,22 % (10/10), décompression -1,13 % (3/10, dans le bruit), mémoire et ratio identiques"
+  - "Décompression : code machine de miniz_tinfl.o et miniz.o identique entre base et candidat (objdump), seul miniz_tdef.o rétrécit de 192 octets ; A/B dédié au scénario décompression, 20 paires entrelacées (banc --scenario decompression) : +1,96 % pour le candidat (12 paires sur 20), donc pas de recul"
+  - "bee/tests/lancer.sh (sandbox) : 3233 contrôles, 0 écart, 305 empreintes identiques à la référence"
+  - "bee/tests/lancer.sh --sanitiseurs (gcc, ASan + UBSan) : 3233 contrôles, 0 écart, 305 empreintes ; la variante modifiée est bien celle compilée (MINIZ_USE_UNALIGNED_LOADS_AND_STORES vaut 0 sur toutes les cibles dans miniz.h)"
+  - "Tests différentiels compilés avec -DTDEFL_FIND_MATCH_64BIT=0 (repli octet par octet de la comparaison de correspondance, celui des cibles grand-boutistes ou sans GCC) : 3233 contrôles, 0 écart, 305 empreintes"
+  - "bee/ci/tests_origine.sh (CMake + ctest, -Wall -Wshadow -pedantic -std=gnu90) : 1/1 test passé, aucun avertissement dans miniz_tdef.c ; compilation sans avertissement avec gcc -std=gnu90 -pedantic -Wdeclaration-after-statement -Wextra, g++ -x c++ (mode C++ forcé), clang -std=gnu90 et clang -fsanitize=undefined"
+  - "bee/fuzz/lancer.sh 120 --reference <worktree upstream/master> (libFuzzer) : fuzz_inflate 38 567 entrées, fuzz_compression 33 477 entrées, aucun écart"
+  - "Comparaison hors dépôt base contre candidat, octet pour octet (empreinte FNV de chaque sortie) : 4 graines x 60 entrées aléatoires de 0 à 193 Ko (alphabets réduits, copies de segments antérieurs à distance jusqu'à 40 000, mutations ; au-delà de la fenêtre de 32 Kio et du repli des positions 16 bits à 64 Kio), chacune en mz_compress2 niveaux 0 à 10, tdefl_compress_mem_to_heap avec 12 nombres de sondes (1 à 4095) x 4 options (aucune, GREEDY_PARSING, FILTER_MATCHES, ZLIB_HEADER + GREEDY), et une compression en flux par tdefl_compress à morceaux d'entrée et de sortie aléatoires : 14 400 sorties identiques ; plus 1 500 sorties du candidat compilé avec ASan + UBSan, identiques à la base, sans erreur"
+non_teste:
+  - "ARM64 : aucune machine ; le code est portable (memcpy de 2 octets, comparaison de deux mots lus de la même façon), mais ni exécuté ni mesuré sur ARM64"
+  - "Cibles à accès non aligné lent (ARMv5, MIPS, etc.) : le memcpy de 2 octets peut y devenir deux lectures d'octet et un assemblage ; non mesuré, sortie identique par construction"
+  - "Grand-boutiste : non exécuté ; l'égalité de deux mots lus par memcpy ne dépend pas du boutisme"
+  - "Autres compilateurs que gcc 13 (clang, MSVC) : compilé avec clang sans avertissement, mais ni testé ni mesuré"
+  - "Fuzzing de 600 s comme la CI : seulement 120 s par harnais ici"
+  - "Juge isolé (bee/juge/juge.py) : non lancé, pas de Docker ici"
+doutes: "Le gain d'instructions sur n9 (-2,67 %) est proche du seuil de 2 % de R4 et dépend de l'allocation de registres de GCC 13 dans tdefl_compress_normal, où tdefl_find_match est inliné : un autre compilateur ou une autre version peut donner moins (ou plus). Le chronomètre varie fortement sur cette machine partagée (n9 de +3,96 % à +7,35 % sur les deux passages calmes) ; la CI fera foi. Le débit de décompression ressort à -2,35 % et -1,13 % dans deux passages (dans le bruit) alors que son code machine est identique : effet d'alignement du binaire ou bruit, l'A/B dédié de 20 paires donne +1,96 %."
+taille_reelle: S
