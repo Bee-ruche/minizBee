@@ -142,6 +142,7 @@ jobs:
         run: |
           python3 base/bee/bench/test_ab.py
           python3 base/bee/ci/test_verdict.py
+          if [ -f base/bee/bench/test_profil.py ]; then python3 base/bee/bench/test_profil.py; fi
       - name: Manifeste, tâche, R1 et commandement 3
         id: manifeste
         env:
