@@ -18,13 +18,13 @@ WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(ICI)), ".github", "workf
 COMMIT_AMORCAGE = "2948eebafc5b9f1c69bebed80333e403a09bd62d"
 # juge_isole n'a pas de fichier d'état : verdict.py la tire du code du juge commun (sortie du job juge).
 ETAPES = ["juges", "manifeste_et_taille", "compilation_x86_64", "compilation_arm64", "differentiel_x86_64",
-          "differentiel_arm64", "fuzzing", "greffon_juge", "juge_ancien", "meta_juge"]
+          "differentiel_arm64", "fuzzing", "greffon_juge", "juge_ancien", "meta_juge", "outillage_pr"]
 DEPART = "d" * 40
 GREFFON_OK = {"result": "success", "outputs": {"base_juge": DEPART, "regle": "point_de_depart", "depart": DEPART}}
 JOBS_OK = {"manifeste": {"result": "success"}, "greffon": GREFFON_OK,
            "compilation-et-tests": {"result": "success"}, "fuzzing": {"result": "success"},
            "juge": {"result": "success", "outputs": {"code": "0"}}, "juge-ancien": {"result": "success"},
-           "meta-juge": {"result": "success"}}
+           "meta-juge": {"result": "success"}, "outillage-pr": {"result": "success"}}
 
 
 def rapport_ab(gain_n6=0.03, signe_n6=True, degradation_n1=False):
@@ -42,7 +42,7 @@ def rapport_ab(gain_n6=0.03, signe_n6=True, degradation_n1=False):
 
 
 class Verdict(unittest.TestCase):
-    def executer(self, etats, jobs=None, ab=None, tache=None, nom_rapport="ab.json", code=None, ancien=None):
+    def executer(self, etats, jobs=None, ab=None, tache=None, nom_rapport="juge.json", code=None, ancien=None):
         with tempfile.TemporaryDirectory() as d:
             artefacts = os.path.join(d, "artefacts")
             os.makedirs(os.path.join(artefacts, "x", "etats"))
@@ -65,10 +65,12 @@ class Verdict(unittest.TestCase):
                 with open(os.path.join(artefacts, "juge", "code"), "w") as f:
                     f.write(code + "\n")
             if ancien is not None:
-                with open(os.path.join(artefacts, "x", "juge-ancien.json"), "w") as f:
+                os.makedirs(os.path.join(artefacts, "etat-juge-ancien"), exist_ok=True)
+                with open(os.path.join(artefacts, "etat-juge-ancien", "juge-ancien.json"), "w") as f:
                     json.dump(ancien, f)
             if tache is not None:
-                with open(os.path.join(artefacts, "x", "tache.yaml"), "w") as f:
+                os.makedirs(os.path.join(artefacts, "etat-manifeste"), exist_ok=True)
+                with open(os.path.join(artefacts, "etat-manifeste", "tache.yaml"), "w") as f:
                     f.write(tache)
             subprocess.run(commande, check=True, capture_output=True)
             with open(os.path.join(d, "verdict.json")) as f:
@@ -173,6 +175,43 @@ class Verdict(unittest.TestCase):
         etats = dict({e: "succes" for e in ETAPES}, juge_ancien="echec")
         v = self.executer(etats, dict(JOBS_OK, **{"juge-ancien": {"result": "failure"}}), rapport_ab())
         self.assertEqual(v["etape_en_echec"], "Ancien juge isolé de la base (transition)")
+
+    def test_jobs_qui_executent_la_pr_jugent_par_leur_resultat(self):
+        """meta-juge et outillage-pr exécutent du code de la PR : un fichier d'état « succes » ne compte pas,
+        seul le résultat du job compte."""
+        for job, libelle in (("meta-juge", "Méta-tests du greffon contre le juge commun"),
+                             ("outillage-pr", "Tests de l'outillage de CI de la PR")):
+            with self.subTest(job=job):
+                v = self.executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, **{job: {"result": "failure"}}), rapport_ab())
+                self.assertEqual((v["ci"], v["etape_en_echec"]), ("rouge", libelle))
+        etats = {e: "succes" for e in ETAPES if e not in ("meta_juge", "outillage_pr")}
+        v = self.executer(etats, JOBS_OK, rapport_ab())
+        self.assertEqual(v["ci"], "verte")  # sans fichier d'état : le résultat du job suffit
+
+    def test_donnees_lues_dans_leur_artefact(self):
+        """La tâche (métrique) et le rapport de l'ancien juge ne sont lus que dans l'artefact de leur job."""
+        with tempfile.TemporaryDirectory() as d:
+            artefacts = os.path.join(d, "artefacts")
+            fichiers = (("x/etats", None, None), ("etat-aaa", "tache.yaml", "metrique: ratio_n6\n"),
+                        ("etat-aaa", "juge-ancien.json", json.dumps({"juge": {"version": 99}})),
+                        ("etat-manifeste", "tache.yaml", "metrique: debit_compression_n6\n"),
+                        ("juge", "juge.json", json.dumps(rapport_ab())))
+            for dossier, nom, contenu in fichiers:
+                os.makedirs(os.path.join(artefacts, dossier), exist_ok=True)
+                if nom:
+                    with open(os.path.join(artefacts, dossier, nom), "w") as f:
+                        f.write(contenu)
+            for e in ETAPES:
+                with open(os.path.join(artefacts, "x", "etats", e + ".txt"), "w") as f:
+                    f.write("succes\n")
+            with open(os.path.join(d, "jobs.json"), "w") as f:
+                json.dump(JOBS_OK, f)
+            subprocess.run([sys.executable, VERDICT, "--artefacts", artefacts, "--jobs", os.path.join(d, "jobs.json"),
+                            "--sortie", os.path.join(d, "v.json")], check=True, capture_output=True)
+            with open(os.path.join(d, "v.json")) as f:
+                v = json.load(f)
+        self.assertEqual(v["metrique"], "debit_compression_n6")
+        self.assertIsNone(v["details"]["juge_ancien"])
 
     def test_base_juge_publiee(self):
         """verdict.json publie le commit A du juge commun et la règle qui l'a choisi (revue adverse de miniz-0032)."""
@@ -391,6 +430,9 @@ class Juges(unittest.TestCase):
         for nom, job in workflow["jobs"].items():
             if "uses" in job:  # workflow réutilisable (juge commun) : il extrait lui-même ce qu'il juge
                 continue
+            if not any("base" in str(e.get("with", {}).get("path", "")) or "base/" in e.get("run", "") for e in job["steps"]):
+                self.assertEqual(nom, "outillage-pr")  # le seul job sans la base : il ne lance que les tests de la PR
+                continue
             etapes = [e.get("name", "") for e in job["steps"]]
             self.assertTrue(any(n.startswith("Juges") for n in etapes), f"job {nom} sans étape Juges")
             # Aucune étape n'utilise base/bee avant l'étape Juges.
@@ -423,6 +465,53 @@ class Juges(unittest.TestCase):
         self.assertEqual(workflow["env"]["REGISTRE"], "Bee-ruche/registre")
         verdict = workflow["jobs"]["verdict"]
         self.assertEqual(set(verdict["needs"]), set(workflow["jobs"]) - {"verdict"})
+
+    def test_jobs_qui_executent_la_pr_isoles(self):
+        """meta-juge et outillage-pr exécutent du code de la PR sur la machine de CI : lecture seule, aucun
+        identifiant conservé, ni artefact ni sortie ; leur résultat est un « needs » du verdict."""
+        workflow = self.charger_workflow()
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        for nom in ("meta-juge", "outillage-pr"):
+            job = workflow["jobs"][nom]
+            self.assertEqual(job.get("permissions"), {"contents": "read"}, nom)
+            self.assertNotIn("outputs", job, nom)
+            self.assertIn(nom, workflow["jobs"]["verdict"]["needs"])
+            for e in job["steps"]:
+                self.assertNotIn("upload-artifact", e.get("uses", ""), nom)
+                self.assertNotIn("secrets.", json.dumps(e), nom)
+                if "actions/checkout" in e.get("uses", ""):
+                    self.assertIs(e["with"]["persist-credentials"], False, nom)
+        etape = workflow["jobs"]["outillage-pr"]["steps"][-1]["run"]
+        self.assertIn("-- bee/ci .github/workflows/bee-ci.yml", etape)
+        self.assertIn("python3 pr/bee/ci/test_verdict.py", etape)
+
+    def test_declenche_seulement_pour_les_pr_vers_master(self):
+        workflow = self.charger_workflow()
+        declencheurs = workflow.get("on", workflow.get(True))  # PyYAML lit la clé « on » comme True
+        self.assertEqual(declencheurs, {"pull_request": {"branches": ["master"]}})
+
+    def test_greffon_dans_ce_que_la_regle_rebasez_compare(self):
+        """La règle « rebasez » du job greffon compare bee/ et miniz* entre le point de départ et la base : tout
+        ce que le greffon lit dans A doit y être (SOURCES et EN_TETES_BASE dans miniz*, OUTILLAGE, CONSTRUIRE
+        et le corpus dans bee/), sinon elle ne suit plus."""
+        import ast
+        import fnmatch
+        with open(os.path.join(os.path.dirname(ICI), "juge", "projet.py"), encoding="utf-8") as f:
+            arbre = ast.parse(f.read())
+        classe = next(n for n in arbre.body if isinstance(n, ast.ClassDef) and n.name == "Projet")
+        valeurs = {c.targets[0].id: ast.literal_eval(c.value) for c in classe.body
+                   if isinstance(c, ast.Assign) and isinstance(c.targets[0], ast.Name) and c.targets[0].id in
+                   ("SOURCES", "SOURCES_REQUISES", "EN_TETES_BASE", "OUTILLAGE", "CONSTRUIRE")}
+        self.assertEqual(len(valeurs), 5)
+        for cle in ("SOURCES", "SOURCES_REQUISES", "EN_TETES_BASE"):
+            for motif in valeurs[cle]:
+                self.assertTrue(fnmatch.fnmatchcase(motif, "miniz*") and "/" not in motif, (cle, motif))
+        for chemin in list(valeurs["OUTILLAGE"]) + [valeurs["CONSTRUIRE"]]:
+            self.assertTrue(chemin.startswith("bee/") and ".." not in chemin, chemin)
+        chaines = {n.value for n in ast.walk(classe) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+        self.assertTrue({"bee/corpus/generer.py", "bee/corpus/donnees"} <= chaines)
+        etape = next(e for e in self.charger_workflow()["jobs"]["greffon"]["steps"] if e.get("id") == "greffon")
+        self.assertIn("git -C pr diff --quiet \"$depart\" \"$BASE_SHA\" -- bee 'miniz*'", etape["run"])
 
     def test_tests_unitaires_sans_garde(self):
         """Revue adverse de miniz-0033 : un test de l'outillage ne se saute jamais sans bruit (if [ -f … ])."""
@@ -469,7 +558,12 @@ class Greffon(unittest.TestCase):
         shutil.rmtree(self.d)
 
     def git(self, *args):
-        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        # Dates strictement croissantes, une seconde par appel : deux commits de même contenu faits dans la même
+        # seconde auraient le même SHA (un cherry-pick sur C0 recréait exactement C1 : test instable, N-1).
+        self.horloge = getattr(self, "horloge", 1_700_000_000) + 1
+        date = f"{self.horloge} +0000"
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
+                   GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
         return subprocess.run(["git", "-C", self.pr] + list(args), capture_output=True, text=True, check=True, env=env).stdout.strip()
 
     def ecrire(self, chemin, texte):
@@ -532,9 +626,10 @@ class Greffon(unittest.TestCase):
             self.git("merge", "-q", "--squash", "master")
             self.git("commit", "-q", "-m", "squash de master")
         else:
-            self.git("cherry-pick", c1)
+            self.git("cherry-pick", "-x", c1)
         self.ecrire("miniz_tinfl.c", "lent\nligne de la PR\n")
         tete = self.commit("PR")
+        self.assertNotIn(c1, self.git("rev-list", tete).split())  # la copie n'a pas l'ascendance de C1
         self.assertEqual(self.git("merge-base", c1, tete), c0)
         code, base_juge, etat, sortie = self.lancer(c1, tete, "base")
         self.assertEqual((code, base_juge, etat, self.sorties["regle"]), (1, None, "echec", "refus_rebase"))

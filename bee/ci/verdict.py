@@ -6,8 +6,9 @@ Entrées :
                 C'est la source de vérité de « ci » : le code de la PR ne peut pas les réécrire.
   --artefacts   dossier où les artefacts « etat-* » ont été téléchargés : fichiers d'état <etape>.txt
                 (« succes » / « echec », écrits par bee/ci/etape.sh), rapport juge-ancien.json de l'ancien juge
-                isolé (transition), CONTRIBUTION.yaml de la PR et tache.yaml du registre. Ce sont des DONNÉES :
-                lues, jamais exécutées.
+                isolé (artefact etat-juge-ancien, transition), CONTRIBUTION.yaml de la PR et tache.yaml du registre
+                (artefact etat-manifeste). Ce sont des DONNÉES : lues, jamais exécutées. Les jobs qui exécutent du
+                code de la PR (meta-juge, outillage-pr) n'ont pas d'artefact : leur étape vient de leur résultat.
   --juge        dossier de l'artefact « juge » du juge commun (workflow juge.yml du registre) : juge.json (au
                 format d'ab.py plus une section « juge ») et code (0 juste, 1 refusé, 2 environnement) ; défaut
                 <artefacts>/juge. En CI, le code est celui de la sortie « code » du job juge (--jobs), qui prime.
@@ -64,7 +65,12 @@ ETAPES = [
     ("juge_isole", "Juge commun (vérification de l'extérieur et mesures)", "juge"),
     ("juge_ancien", "Ancien juge isolé de la base (transition)", "juge-ancien"),
     ("meta_juge", "Méta-tests du greffon contre le juge commun", "meta-juge"),
+    ("outillage_pr", "Tests de l'outillage de CI de la PR", "outillage-pr"),
 ]
+# Étapes dont le job exécute du code de la PR sur la machine de CI (méta-tests du greffon, tests de bee/ci/ de la
+# PR) : en CI, leur état vient du seul résultat du job. Ces jobs ne publient ni artefact ni sortie : rien de ce
+# que le code de la PR a pu écrire n'est lu ici.
+ETAPES_RESULTAT_SEUL = {"meta_juge", "outillage_pr"}
 METRIQUES = ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
              "debit_decompression", "ratio_n6", "memoire_max_ko"]
 # Repris de projets/miniz.yaml (chemins_hors_decompte) dans le registre Bee.
@@ -220,6 +226,11 @@ def lire_json(chemin):
     return donnees if isinstance(donnees, dict) else None
 
 
+def trouver_dans(artefacts, artefact, nom):
+    """Fichier d'un artefact précis (etat-manifeste, etat-juge-ancien…) : jamais celui d'un autre job."""
+    return trouver(os.path.join(artefacts, artefact), nom) if artefacts else None
+
+
 def trouver(dossier, nom):
     if not dossier:
         return None
@@ -256,20 +267,20 @@ def main():
     elif code_juge is not None:
         etats["juge_isole"] = "succes" if code_juge == "0" and etats.get("juge_isole") != "echec" else "echec"
     chemin_ab = args.ab or (os.path.join(dossier_juge, "juge.json") if dossier_juge and os.path.isfile(os.path.join(dossier_juge, "juge.json"))
-                            else None) or trouver(args.artefacts, "ab.json")
+                            else None) or (None if jobs else trouver(args.artefacts, "ab.json"))
     rapport = lire_json(chemin_ab)
     # Un code 0 sans section juge, ou sans aucune sortie comparée, n'est pas un jugement : rouge.
     section = section_juge((rapport or {}).get("juge"))
     if code_juge == "0" and not (section and isinstance(section["sorties_comparees"], int) and section["sorties_comparees"] > 0):
         etats["juge_isole"] = "echec"
-    rapport_ancien = lire_json(trouver(args.artefacts, "juge-ancien.json"))
+    rapport_ancien = lire_json(trouver_dans(args.artefacts, "etat-juge-ancien", "juge-ancien.json"))
     # Le juge commun n'a jugé que si A est connu et choisi par une règle qui l'accepte : sinon, l'étape du
     # greffon est en échec, quoi que disent les fichiers d'état (jamais un verdict vert sans A vérifiable).
     a_juge = base_juge(jobs, args.base)
     if not base_juge_acceptee(a_juge, amorcage):
         etats["greffon_juge"] = "echec"
-    chemin_manifeste = args.manifeste or trouver(args.artefacts, "CONTRIBUTION.yaml")
-    chemin_tache = args.tache or trouver(args.artefacts, "tache.yaml")
+    chemin_manifeste = args.manifeste or trouver_dans(args.artefacts, "etat-manifeste", "CONTRIBUTION.yaml")
+    chemin_tache = args.tache or trouver_dans(args.artefacts, "etat-manifeste", "tache.yaml")
 
     # Étape par étape : réussie seulement si son fichier d'état dit « succes » ET (en CI) si son job a réussi.
     resultat_etapes = {}
@@ -279,6 +290,9 @@ def main():
             resultat_etapes[etape] = "echec" if etat == "echec" else ("succes" if etat == "succes" or not jobs else "absent")
             continue
         resultat_job = (jobs.get(job) or {}).get("result") if jobs else None
+        if jobs and etape in ETAPES_RESULTAT_SEUL:
+            resultat_etapes[etape] = {"success": "succes", "failure": "echec"}.get(resultat_job, "absent")
+            continue
         if jobs and resultat_job != "success":
             # Job en échec : l'étape garde son propre état ; une étape « succes » d'un job en échec reste
             # suspecte (autre étape du même job en échec, ou job interrompu après coup).
