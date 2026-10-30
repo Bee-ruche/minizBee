@@ -9,7 +9,8 @@
 # Introduction du greffon : si la base a encore l'ancien juge isolé (bee/juge/juge.py) et pas de greffon,
 #   et que la PR apporte bee/juge/projet.py, les juges restent ceux de la base (l'ancien juge isolé juge la
 #   PR) et le juge commun prend le greffon de la PR (<ETATS>/greffon.txt : « pr »), comme à l'amorçage.
-#   Une seule PR est dans ce cas, la tâche miniz-0032 ; ensuite la base a toujours un greffon.
+#   Ce cas ne se présente que pour une PR vers master tant que miniz-0032 n'y est pas fusionnée (bee-ci ne
+#   juge que les PR vers master) ; ensuite master a toujours un greffon et la règle ne peut plus s'appliquer.
 # Amorçage : si et seulement si <base_sha> vaut exactement BEE_COMMIT_AMORCAGE (master d'origine du
 #   fork, avant tout outillage Bee), bee/ de la PR est copié dans la base. Les juges viennent alors
 #   de la PR elle-même, le greffon aussi.

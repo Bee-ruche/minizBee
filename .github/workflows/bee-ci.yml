@@ -29,8 +29,10 @@
 #   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
 #     de la PR ne peut pas réécrire ; les fichiers d'état servent seulement à nommer l'étape en échec.
 #   - le code C de la PR ne s'exécute JAMAIS sur la machine de CI elle-même : compilation, tests,
-#     fuzzing et mesures tournent dans le conteneur du juge commun (isoler.sh et juge.py du registre, lus au
-#     commit JUGE_COMMUN_SHA : sans réseau, lecture seule, sans privilège), sur des copies jetables.
+#     fuzzing et mesures tournent dans le conteneur du juge commun (sans réseau, lecture seule, sans
+#     privilège), sur des copies jetables. isoler.sh et l'image viennent du registre au commit JUGE_COMMUN_SHA ;
+#     juge.yml est appelé à ce commit, mais il extrait encore lui-même juge.py à l'étiquette juge-v1 (voir le
+#     job juge), tant que ruche-0024 n'est pas faite dans le registre.
 #     L'image est construite avant que le moindre fichier de la PR ne soit monté. Sur l'hôte, le greffon fait
 #     aussi un git fetch d'un SHA fixe pour le corpus (bee/juge/projet.py), après l'extraction de la PR.
 #   - le greffon (bee/juge/projet.py) est lu dans la BASE, jamais dans la PR : seule la PR qui l'introduit
@@ -43,6 +45,9 @@ name: bee-ci
 
 on:
   pull_request:
+    # Seules les PR vers master sont jugées : une PR vers une vieille branche serait jugée par les juges de
+    # cette branche, puis pourrait être rebasculée vers master sans nouvelle exécution (revue adverse).
+    branches: [master]
 
 permissions:
   contents: read
@@ -182,12 +187,14 @@ jobs:
           if-no-files-found: warn
 
   # Le commit que le juge commun extrait comme base : son bee/juge/projet.py est le greffon et ses sources
-  # sont A. Toujours le point de départ de la PR (merge-base), dont le bee/ doit être celui de la base :
-  # sinon la CI est rouge (« rebasez »), car comparer la base à une tête qui n'a pas ses changements
-  # attribuerait à la PR ce que la base a reçu depuis (revue adverse de miniz-0032 : +19 % fabriqué, faux
-  # refus d'une PR non rebasée). Jamais la PR, sauf pour la PR qui introduit le greffon (bee/ci/juges.sh),
-  # qui ne touche pas miniz : ses sources sont alors exactement celles du point de départ. Le commit retenu
-  # et la règle qui l'a choisi sont publiés dans verdict.json (base_juge).
+  # sont A. Toujours LE point de départ de la PR (un seul merge-base), dont bee/ et miniz* doivent être ceux
+  # de la base : tout ce que le juge lit dans A. Sinon la CI est rouge (« rebasez »), car A ne serait pas ce
+  # que la PR change dans master : comparer la base à une tête qui n'a pas ses changements, ou un point de
+  # départ à une tête qui a recopié (squash, cherry-pick) ce que master a reçu depuis, attribuerait à la PR
+  # le travail d'un autre (revues adverses de miniz-0032 : +19 % fabriqué, faux refus d'une PR non rebasée,
+  # gain d'une optimisation recopiée, criss-cross). Jamais la PR, sauf pour la PR qui introduit le greffon
+  # (bee/ci/juges.sh), qui ne touche pas miniz : ses sources sont alors exactement celles du point de départ.
+  # Le commit retenu et la règle qui l'a choisi sont publiés dans verdict.json (base_juge).
   greffon:
     name: Greffon du juge commun
     runs-on: ubuntu-24.04
@@ -218,11 +225,17 @@ jobs:
         id: greffon
         run: |
           echo "echec" > "$ETATS/greffon_juge.txt"
-          depart="$(git -C pr merge-base "$BASE_SHA" "$TETE_SHA")"
+          departs="$(git -C pr merge-base --all "$BASE_SHA" "$TETE_SHA" || true)"
+          if [ "$(printf '%s\n' "$departs" | grep -c .)" -ne 1 ]; then
+            echo "regle=refus_point_de_depart" >> "$GITHUB_OUTPUT"
+            echo "::error::Cette PR n'a pas un seul point de départ sur master (merge-base --all : $(printf '%s ' $departs)) : rebasez-la sur master ($BASE_SHA)." >&2
+            exit 1
+          fi
+          depart="$departs"
           echo "depart=$depart" >> "$GITHUB_OUTPUT"
-          if [ "$(git -C pr rev-parse --verify -q "$depart:bee")" != "$(git -C pr rev-parse --verify -q "$BASE_SHA:bee")" ]; then
-            echo "regle=refus_bee_modifie" >> "$GITHUB_OUTPUT"
-            echo "::error::bee/ a changé sur master depuis le point de départ de cette PR ($depart) : rebasez-la sur master ($BASE_SHA). Le juge commun ne compare jamais la base à une tête qui n'a pas ses changements." >&2
+          if ! git -C pr diff --quiet "$depart" "$BASE_SHA" -- bee 'miniz*'; then
+            echo "regle=refus_rebase" >> "$GITHUB_OUTPUT"
+            echo "::error::bee/ ou miniz a changé sur master depuis le point de départ de cette PR ($depart) : rebasez-la sur master ($BASE_SHA). Le juge commun ne mesure une PR que contre ce qu'elle change dans master." >&2
             exit 1
           fi
           if [ "$(cat "$ETATS/greffon.txt")" = "pr" ]; then
@@ -378,8 +391,8 @@ jobs:
       options: sortie_compressee=${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
 
   # Transition : tant que la base a encore l'ancien juge isolé (bee/juge/juge.py, version 2), il juge aussi
-  # la PR, comme avant. C'est le cas de la seule PR qui introduit le greffon (miniz-0032) ; ensuite la base
-  # n'en a plus et ce job ne fait rien.
+  # la PR, comme avant. C'est le cas de toute PR vers master tant que miniz-0032 n'y est pas fusionnée ;
+  # ensuite master n'en a plus et ce job ne fait rien.
   juge-ancien:
     name: Ancien juge isolé de la base (transition)
     needs: manifeste

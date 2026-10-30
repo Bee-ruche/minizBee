@@ -36,7 +36,9 @@ def rapport_ab(gain_n6=0.03, signe_n6=True, degradation_n1=False):
     if degradation_n1:
         metriques["debit_compression_n1"].update({"gain": -0.04, "degradation_au_dela_du_bruit": True})
     return {"metriques": metriques, "mesures": {"A": {"debit_compression_n6": 22.5}, "B": {"debit_compression_n6": 23.2}},
-            "instructions": {"instructions_n6": {"A": 100, "B": 97, "gain": 0.03, "au_dela_du_bruit": True}}}
+            "instructions": {"instructions_n6": {"A": 100, "B": 97, "gain": 0.03, "au_dela_du_bruit": True}},
+            "juge": {"version": 3, "commun": "juge-v1", "projet": "miniz", "greffon": "c0" * 32, "graine": "ab" * 16,
+                     "verification": {"sorties_comparees": 914}, "constructions_suspectes": []}}
 
 
 class Verdict(unittest.TestCase):
@@ -180,18 +182,42 @@ class Verdict(unittest.TestCase):
         self.assertIsNone(self.executer({e: "succes" for e in ETAPES}, None, rapport_ab())["base_juge"])
 
     def test_jamais_vert_sans_a_verifiable(self):
-        """Règle de refus, règle inconnue ou commit illisible : rouge, même si tous les jobs et états disent succès."""
-        for sorties in ({"base_juge": DEPART, "regle": "refus_bee_modifie", "depart": DEPART},
+        """Règle de refus, règle inconnue, commit ou point de départ illisible, point_de_depart dont A n'est pas le
+        point de départ, introduction hors amorçage : rouge, même si tous les jobs et états disent succès
+        (secondes revues adverses de miniz-0032, M-1)."""
+        autre = "e" * 40
+        for sorties in ({"base_juge": DEPART, "regle": "refus_rebase", "depart": DEPART},
+                        {"base_juge": DEPART, "regle": "refus_point_de_depart", "depart": DEPART},
                         {"base_juge": DEPART, "regle": "base", "depart": DEPART},
-                        {"base_juge": "HEAD", "regle": "point_de_depart", "depart": DEPART}, {}):
+                        {"base_juge": "HEAD", "regle": "point_de_depart", "depart": DEPART},
+                        {"base_juge": autre, "regle": "point_de_depart", "depart": DEPART},
+                        {"base_juge": autre, "regle": "point_de_depart"},
+                        {"base_juge": DEPART, "regle": "point_de_depart", "depart": "HEAD"},
+                        {"base_juge": autre, "regle": "introduction", "depart": DEPART}, {}):
             with self.subTest(sorties=sorties):
                 v = self.executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, greffon={"result": "success", "outputs": sorties}), rapport_ab())
                 self.assertEqual(v["ci"], "rouge")
                 self.assertEqual(v["etape_en_echec"], "Greffon du juge commun")
 
-    def test_sans_juge_isole(self):
-        v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, rapport_ab(), "metrique: debit_compression_n6\n")
-        self.assertIsNone(v["juge"])
+    def test_introduction_seulement_en_amorcage(self):
+        autre = "e" * 40
+        jobs = dict(JOBS_OK, greffon={"result": "success", "outputs": {"base_juge": autre, "regle": "introduction", "depart": DEPART}})
+        v = self.executer(dict({e: "succes" for e in ETAPES}, amorcage="oui"), jobs, rapport_ab())
+        self.assertEqual((v["ci"], v["amorcage"]), ("verte", True))
+
+    def test_code_0_sans_jugement_rouge(self):
+        """M-2 : un code 0 sans section juge, ou sans aucune sortie comparée, n'est pas un jugement."""
+        sans_section = rapport_ab()
+        del sans_section["juge"]
+        zero = rapport_ab()
+        zero["juge"]["verification"]["sorties_comparees"] = 0
+        for rapport in (sans_section, zero):
+            with self.subTest(juge=rapport.get("juge")):
+                v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, rapport, "metrique: debit_compression_n6\n")
+                self.assertEqual(v["ci"], "rouge")
+                self.assertEqual(v["etape_en_echec"], "Juge commun (vérification de l'extérieur et mesures)")
+        v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, None)
+        self.assertEqual((v["ci"], v["juge"]), ("rouge", None))
 
     def test_sans_metrique_designee_gain_null(self):
         v = self.executer({e: "succes" for e in ETAPES}, JOBS_OK, rapport_ab(), "type: test\nmetrique: null\n")
@@ -470,15 +496,84 @@ class Greffon(unittest.TestCase):
         with open(os.path.join(etats, "greffon_juge.txt")) as f:
             return r.returncode, self.sorties.get("base_juge"), f.read().strip(), r.stdout + r.stderr
 
-    def test_point_de_depart_si_bee_inchange(self):
+    def test_point_de_depart_si_ni_bee_ni_miniz_n_ont_change(self):
         self.git("checkout", "-q", "-b", "pr")
         self.ecrire("miniz.c", "int y;\n")
         tete = self.commit("pr")
         self.git("checkout", "-q", "master")
-        self.ecrire("miniz_tdef.c", "int z;\n")  # la base avance, sans toucher bee/
+        self.ecrire("readme.md", "doc\n")  # la base avance sans rien de ce que le juge lit dans A
         base = self.commit("base")
         self.assertEqual(self.lancer(base, tete, "base")[:3], (0, self.depart, "succes"))
         self.assertEqual((self.sorties["regle"], self.sorties["depart"]), ("point_de_depart", self.depart))
+
+    def test_rouge_si_miniz_a_change_sur_la_base(self):
+        self.git("checkout", "-q", "-b", "pr")
+        self.ecrire("miniz.c", "int y;\n")
+        tete = self.commit("pr")
+        self.git("checkout", "-q", "master")
+        self.ecrire("miniz_tdef.c", "int z;\n")
+        base = self.commit("base")
+        code, base_juge, etat, sortie = self.lancer(base, tete, "base")
+        self.assertEqual((code, base_juge, etat, self.sorties["regle"]), (1, None, "echec", "refus_rebase"))
+        self.assertIn("rebasez-la sur master", sortie)
+
+    def scenario_copie(self, mode):
+        """Seconde revue adverse (B-1 a) : master passe de C0 à C1 (optimisation O1 d'un autre, bee/ inchangé) ;
+        la PR part de C0, récupère O1 sans ascendance (squash ou cherry-pick) et ajoute une ligne. Avec A = C0,
+        le gain d'O1 était attribué à la PR."""
+        self.ecrire("miniz_tinfl.c", "lent\n")
+        c0 = self.commit("C0")
+        self.git("checkout", "-q", "-b", "pr")
+        self.git("checkout", "-q", "master")
+        self.ecrire("miniz.c", "rapide\n")
+        c1 = self.commit("C1 : optimisation O1, fusionnée")
+        self.git("checkout", "-q", "pr")
+        if mode == "squash":
+            self.git("merge", "-q", "--squash", "master")
+            self.git("commit", "-q", "-m", "squash de master")
+        else:
+            self.git("cherry-pick", c1)
+        self.ecrire("miniz_tinfl.c", "lent\nligne de la PR\n")
+        tete = self.commit("PR")
+        self.assertEqual(self.git("merge-base", c1, tete), c0)
+        code, base_juge, etat, sortie = self.lancer(c1, tete, "base")
+        self.assertEqual((code, base_juge, etat, self.sorties["regle"]), (1, None, "echec", "refus_rebase"))
+        self.assertIn("rebasez-la sur master", sortie)
+
+    def test_rouge_si_optimisation_de_master_recopiee_par_squash(self):
+        self.scenario_copie("squash")
+
+    def test_rouge_si_optimisation_de_master_recopiee_par_cherry_pick(self):
+        self.scenario_copie("cherry-pick")
+
+    def test_rouge_si_plusieurs_points_de_depart(self):
+        """Seconde revue adverse (B-1 b) : historique croisé, merge-base --all rend deux commits ; l'étape en
+        retenait un arbitrairement."""
+        self.git("checkout", "-q", "-b", "x")
+        self.ecrire("miniz_tdef.c", "O1\n")
+        x1 = self.commit("X1")
+        self.git("checkout", "-q", "master")
+        self.ecrire("miniz.c", "O0\n")
+        c0p = self.commit("C0'")
+        self.git("merge", "-q", "--no-ff", "--no-edit", "x")
+        m = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-b", "pr", c0p)
+        self.git("merge", "-q", "--no-ff", "--no-edit", x1)
+        self.ecrire("miniz.c", "O0\nligne de la PR\n")
+        tete = self.commit("PR")
+        self.assertEqual(len(self.git("merge-base", "--all", m, tete).split()), 2)
+        for cote in ("base", "pr"):
+            with self.subTest(cote=cote):
+                code, base_juge, etat, sortie = self.lancer(m, tete, cote)
+                self.assertEqual((code, base_juge, etat, self.sorties["regle"]), (1, None, "echec", "refus_point_de_depart"))
+                self.assertIn("pas un seul point de départ", sortie)
+
+    def test_rouge_sans_point_de_depart(self):
+        self.git("checkout", "-q", "--orphan", "pr")
+        self.ecrire("miniz.c", "autre histoire\n")
+        tete = self.commit("PR sans ancêtre commun")
+        code, base_juge, etat, _ = self.lancer(self.depart, tete, "base")
+        self.assertEqual((code, base_juge, etat, self.sorties["regle"]), (1, None, "echec", "refus_point_de_depart"))
 
     def test_rouge_si_bee_a_change_sur_la_base(self):
         """Revue adverse de miniz-0032 (B1) : comparer la base (avec une « correction » coûteuse de miniz et un
@@ -495,8 +590,8 @@ class Greffon(unittest.TestCase):
             with self.subTest(cote=cote):
                 code, base_juge, etat, sortie = self.lancer(base, tete, cote)
                 self.assertEqual((code, base_juge, etat), (1, None, "echec"))
-                self.assertEqual(self.sorties["regle"], "refus_bee_modifie")
-                self.assertIn("::error::bee/ a changé sur master", sortie)
+                self.assertEqual(self.sorties["regle"], "refus_rebase")
+                self.assertIn("::error::bee/ ou miniz a changé sur master", sortie)
                 self.assertIn("rebasez-la sur master", sortie)
         # Rebasée sur la base, la même PR passe, avec A = la base (son point de départ).
         self.git("checkout", "-q", "pr")
