@@ -689,6 +689,29 @@ extern "C"
             {
                 i = 0;
 #if MINIZ_LITTLE_ENDIAN && MINIZ_HAS_64BIT_REGISTERS
+                /* Groupes de 160 octets, 20 tours de 8 octets (tâche miniz-0039). Par voie de 16 bits, e somme les octets pairs, z
+                   les mots décalés de 8 bits, pe et pz somment e et z avant chaque tour. Ensuite o = z - ((e >> 8) & ~0xFF) somme
+                   les octets impairs (de même po) ; x = e + o. Sur 160 octets : s2 += 160 * s1 + 8 * (somme de pe et po) +
+                   [8,6,4,2].e + [7,5,3,1].o, et [8,6,4,2].e + [7,5,3,1].o = H(e) + H(x) + 2 * [3,2,1,0].x (H : somme des voies).
+                   Bornes par voie : e, o <= 20 * 255, pe, po <= 190 * 255 = 48450, x <= 10200, 3x0 + 2x1 + x2 <= 61200 : aucune
+                   retenue entre voies ; q, en voies de 32 bits, <= 4 * 48450. Mêmes entiers que la boucle octet par octet. */
+                for (; i + 159 < block_len; i += 160)
+                {
+                    mz_uint64 e = 0, z = 0, pe = 0, pz = 0, w0, w1, q, x;
+                    int k;
+                    for (k = 0; k < 10; ++k, ptr += 16)
+                    {
+                        memcpy(&w0, ptr, sizeof(w0));
+                        memcpy(&w1, ptr + 8, sizeof(w1));
+                        pe += e, pz += z, e += w0 & 0x00FF00FF00FF00FFULL, z += w0 >> 8;
+                        pe += e, pz += z, e += w1 & 0x00FF00FF00FF00FFULL, z += w1 >> 8;
+                    }
+                    z -= (e >> 8) & ~(mz_uint64)0xFF, pz -= (pe >> 8) & ~(mz_uint64)0xFF;
+                    q = (pe & 0x0000FFFF0000FFFFULL) + ((pe >> 16) & 0x0000FFFF0000FFFFULL) + (pz & 0x0000FFFF0000FFFFULL) + ((pz >> 16) & 0x0000FFFF0000FFFFULL);
+                    x = e + z;
+                    s2 += 160 * s1 + (((mz_uint32)q + (mz_uint32)(q >> 32)) << 3) + (mz_uint32)((e * 0x0001000100010001ULL) >> 48) + (mz_uint32)((x * 0x0001000100010001ULL) >> 48) + 2 * (mz_uint32)((x * 0x0003000200010000ULL) >> 48);
+                    s1 += (mz_uint32)((x * 0x0001000100010001ULL) >> 48);
+                }
                 /* Adler-32 par blocs de 16 octets (tâche miniz-0016). Deux mots de 64 bits lus par memcpy ; dans chacun, les octets
                    pairs (e) et impairs (o) sont isolés dans des voies de 16 bits. Un produit par une constante donne en voie 3 la
                    somme des 4 voies (s1) ou leur somme pondérée (s2) : au plus 2 * 255 * 36 = 18360 par voie, donc aucune retenue entre
