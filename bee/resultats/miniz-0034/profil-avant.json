@@ -1,0 +1,442 @@
+{
+  "n1": {
+    "total_ir": 169368921,
+    "fonctions": [
+      {
+        "fonction": "tdefl_compress_normal",
+        "ir": 85804319,
+        "part": 0.5066119480090447
+      },
+      {
+        "fonction": "tdefl_find_match (l. 862)",
+        "ir": 31421890,
+        "part": 0.18552335230381495
+      },
+      {
+        "fonction": "tdefl_compress_lz_codes (l. 482)",
+        "ir": 18174744,
+        "part": 0.10730861301289155
+      },
+      {
+        "fonction": "hors miniz (libc : memset, memcpy…)",
+        "ir": 9072012,
+        "part": 0.05356361690466222
+      },
+      {
+        "fonction": "mz_adler32",
+        "ir": 7510775,
+        "part": 0.04434565064035568
+      },
+      {
+        "fonction": "tdefl_record_match",
+        "ir": 6696870,
+        "part": 0.039540134993243534
+      },
+      {
+        "fonction": "tdefl_record_literal",
+        "ir": 4541271,
+        "part": 0.026812894438879964
+      },
+      {
+        "fonction": "tdefl_flush_block",
+        "ir": 3482845,
+        "part": 0.02056366055493735
+      },
+      {
+        "fonction": "tdefl_optimize_huffman_table",
+        "ir": 1180111,
+        "part": 0.006967695094426444
+      },
+      {
+        "fonction": "tdefl_start_dynamic_block",
+        "ir": 547985,
+        "part": 0.003235451916234384
+      },
+      {
+        "fonction": "tdefl_radix_sort_syms",
+        "ir": 489887,
+        "part": 0.002892425582613235
+      },
+      {
+        "fonction": "tdefl_calculate_minimum_redundancy",
+        "ir": 400092,
+        "part": 0.002362251572707368
+      },
+      {
+        "fonction": "tdefl_huffman_enforce_max_code_size",
+        "ir": 19062,
+        "part": 0.00011254721283841679
+      },
+      {
+        "fonction": "tdefl_compress",
+        "ir": 6037,
+        "part": 3.564408372182993e-05
+      },
+      {
+        "fonction": "miniz.c (hors fonction)",
+        "ir": 4514,
+        "part": 2.6651879065817513e-05
+      },
+      {
+        "fonction": "mz_deflate",
+        "ir": 3843,
+        "part": 2.269011325873653e-05
+      },
+      {
+        "fonction": "tdefl_init",
+        "ir": 3660,
+        "part": 2.160963167498717e-05
+      },
+      {
+        "fonction": "mz_compress2",
+        "ir": 2928,
+        "part": 1.728770533998974e-05
+      },
+      {
+        "fonction": "tdefl_flush_output_buffer",
+        "ir": 2806,
+        "part": 1.6567384284156833e-05
+      },
+      {
+        "fonction": "tdefl_create_comp_flags_from_zip_params",
+        "ir": 1830,
+        "part": 1.0804815837493586e-05
+      },
+      {
+        "fonction": "tdefl_start_static_block",
+        "ir": 546,
+        "part": 3.2237319383997256e-06
+      },
+      {
+        "fonction": "tdefl_compress_block",
+        "ir": 284,
+        "part": 1.6768129496438133e-06
+      },
+      {
+        "fonction": "miniz_def_alloc_func",
+        "ir": 244,
+        "part": 1.4406421116658115e-06
+      },
+      {
+        "fonction": "tdefl_get_adler32",
+        "ir": 183,
+        "part": 1.0804815837493587e-06
+      },
+      {
+        "fonction": "miniz_def_free_func",
+        "ir": 183,
+        "part": 1.0804815837493587e-06
+      }
+    ]
+  },
+  "n6": {
+    "total_ir": 333644424,
+    "fonctions": [
+      {
+        "fonction": "tdefl_find_match (l. 862)",
+        "ir": 195881267,
+        "part": 0.5870958808530845
+      },
+      {
+        "fonction": "tdefl_compress_normal",
+        "ir": 90895252,
+        "part": 0.27243150330604654
+      },
+      {
+        "fonction": "tdefl_compress_lz_codes (l. 482)",
+        "ir": 14169525,
+        "part": 0.04246893992749599
+      },
+      {
+        "fonction": "hors miniz (libc : memset, memcpy…)",
+        "ir": 10337045,
+        "part": 0.030982220161425506
+      },
+      {
+        "fonction": "mz_adler32",
+        "ir": 7510775,
+        "part": 0.022511315819262724
+      },
+      {
+        "fonction": "tdefl_record_literal",
+        "ir": 4491226,
+        "part": 0.013461115118171434
+      },
+      {
+        "fonction": "tdefl_record_match",
+        "ir": 4400317,
+        "part": 0.013188642409321367
+      },
+      {
+        "fonction": "tdefl_flush_block",
+        "ir": 3482984,
+        "part": 0.010439209378185202
+      },
+      {
+        "fonction": "tdefl_optimize_huffman_table",
+        "ir": 1111947,
+        "part": 0.0033327306557954044
+      },
+      {
+        "fonction": "tdefl_start_dynamic_block",
+        "ir": 511611,
+        "part": 0.0015334019189243216
+      },
+      {
+        "fonction": "tdefl_radix_sort_syms",
+        "ir": 441807,
+        "part": 0.0013241851750533076
+      },
+      {
+        "fonction": "tdefl_calculate_minimum_redundancy",
+        "ir": 366158,
+        "part": 0.0010974497808481283
+      },
+      {
+        "fonction": "tdefl_huffman_enforce_max_code_size",
+        "ir": 17651,
+        "part": 5.2903626526664206e-05
+      },
+      {
+        "fonction": "tdefl_compress",
+        "ir": 6037,
+        "part": 1.809411327071961e-05
+      },
+      {
+        "fonction": "miniz.c (hors fonction)",
+        "ir": 4514,
+        "part": 1.3529373414614595e-05
+      },
+      {
+        "fonction": "mz_deflate",
+        "ir": 3843,
+        "part": 1.1518250339469183e-05
+      },
+      {
+        "fonction": "tdefl_init",
+        "ir": 3660,
+        "part": 1.0969762228065888e-05
+      },
+      {
+        "fonction": "mz_compress2",
+        "ir": 2928,
+        "part": 8.77580978245271e-06
+      },
+      {
+        "fonction": "tdefl_flush_output_buffer",
+        "ir": 2806,
+        "part": 8.410151041517182e-06
+      },
+      {
+        "fonction": "tdefl_create_comp_flags_from_zip_params",
+        "ir": 1647,
+        "part": 4.93639300262965e-06
+      },
+      {
+        "fonction": "tdefl_start_static_block",
+        "ir": 546,
+        "part": 1.6364727258262228e-06
+      },
+      {
+        "fonction": "tdefl_compress_block",
+        "ir": 268,
+        "part": 8.032503489403438e-07
+      },
+      {
+        "fonction": "miniz_def_alloc_func",
+        "ir": 244,
+        "part": 7.313174818710592e-07
+      },
+      {
+        "fonction": "tdefl_get_adler32",
+        "ir": 183,
+        "part": 5.484881114032944e-07
+      },
+      {
+        "fonction": "miniz_def_free_func",
+        "ir": 183,
+        "part": 5.484881114032944e-07
+      }
+    ]
+  },
+  "n9": {
+    "total_ir": 481644530,
+    "fonctions": [
+      {
+        "fonction": "tdefl_find_match (l. 862)",
+        "ir": 343625627,
+        "part": 0.7134423949546359
+      },
+      {
+        "fonction": "tdefl_compress_normal",
+        "ir": 90543871,
+        "part": 0.18798899470528607
+      },
+      {
+        "fonction": "tdefl_compress_lz_codes (l. 482)",
+        "ir": 14083467,
+        "part": 0.029240375677057933
+      },
+      {
+        "fonction": "hors miniz (libc : memset, memcpy…)",
+        "ir": 11087658,
+        "part": 0.023020417152874135
+      },
+      {
+        "fonction": "mz_adler32",
+        "ir": 7510775,
+        "part": 0.01559402117574137
+      },
+      {
+        "fonction": "tdefl_record_literal",
+        "ir": 4490754,
+        "part": 0.009323793213223039
+      },
+      {
+        "fonction": "tdefl_record_match",
+        "ir": 4344260,
+        "part": 0.009019639442391258
+      },
+      {
+        "fonction": "tdefl_flush_block",
+        "ir": 3482970,
+        "part": 0.007231411929457602
+      },
+      {
+        "fonction": "tdefl_optimize_huffman_table",
+        "ir": 1111738,
+        "part": 0.0023082126563339148
+      },
+      {
+        "fonction": "tdefl_start_dynamic_block",
+        "ir": 511148,
+        "part": 0.0010612556941111736
+      },
+      {
+        "fonction": "tdefl_radix_sort_syms",
+        "ir": 441758,
+        "part": 0.0009171867891866228
+      },
+      {
+        "fonction": "tdefl_calculate_minimum_redundancy",
+        "ir": 365982,
+        "part": 0.00075985914342264
+      },
+      {
+        "fonction": "tdefl_huffman_enforce_max_code_size",
+        "ir": 17663,
+        "part": 3.667227363715726e-05
+      },
+      {
+        "fonction": "tdefl_compress",
+        "ir": 6037,
+        "part": 1.2534140063835044e-05
+      },
+      {
+        "fonction": "miniz.c (hors fonction)",
+        "ir": 4514,
+        "part": 9.372057023049759e-06
+      },
+      {
+        "fonction": "mz_deflate",
+        "ir": 3843,
+        "part": 7.978913411515334e-06
+      },
+      {
+        "fonction": "tdefl_init",
+        "ir": 3660,
+        "part": 7.598965153824128e-06
+      },
+      {
+        "fonction": "mz_compress2",
+        "ir": 2928,
+        "part": 6.079172123059302e-06
+      },
+      {
+        "fonction": "tdefl_flush_output_buffer",
+        "ir": 2806,
+        "part": 5.825873284598499e-06
+      },
+      {
+        "fonction": "tdefl_create_comp_flags_from_zip_params",
+        "ir": 1647,
+        "part": 3.4195343192208576e-06
+      },
+      {
+        "fonction": "tdefl_start_static_block",
+        "ir": 546,
+        "part": 1.1336161131114684e-06
+      },
+      {
+        "fonction": "tdefl_compress_block",
+        "ir": 268,
+        "part": 5.564269566188159e-07
+      },
+      {
+        "fonction": "miniz_def_alloc_func",
+        "ir": 244,
+        "part": 5.065976769216086e-07
+      },
+      {
+        "fonction": "tdefl_get_adler32",
+        "ir": 183,
+        "part": 3.799482576912064e-07
+      },
+      {
+        "fonction": "miniz_def_free_func",
+        "ir": 183,
+        "part": 3.799482576912064e-07
+      }
+    ]
+  },
+  "decompression": {
+    "total_ir": 29952240,
+    "fonctions": [
+      {
+        "fonction": "tinfl_decompress",
+        "ir": 28585422,
+        "part": 0.9543667518689755
+      },
+      {
+        "fonction": "hors miniz (libc : memset, memcpy…)",
+        "ir": 1355811,
+        "part": 0.045265763094847
+      },
+      {
+        "fonction": "mz_inflate",
+        "ir": 6222,
+        "part": 0.00020773070728599932
+      },
+      {
+        "fonction": "miniz.c (hors fonction)",
+        "ir": 1403,
+        "part": 4.684123791743122e-05
+      },
+      {
+        "fonction": "mz_uncompress2",
+        "ir": 1159,
+        "part": 3.869493567092144e-05
+      },
+      {
+        "fonction": "mz_uncompress",
+        "ir": 1098,
+        "part": 3.6658360109293995e-05
+      },
+      {
+        "fonction": "tinfl_clear_tree",
+        "ir": 698,
+        "part": 2.330376626255666e-05
+      },
+      {
+        "fonction": "miniz_def_alloc_func",
+        "ir": 244,
+        "part": 8.146302246509777e-06
+      },
+      {
+        "fonction": "miniz_def_free_func",
+        "ir": 183,
+        "part": 6.109726684882333e-06
+      }
+    ]
+  }
+}
