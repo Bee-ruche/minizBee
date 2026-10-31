@@ -1,0 +1,86 @@
+tache: miniz-0036
+utilisateur: bidji29
+agent:
+  modele: "Claude Sonnet 5.5 (claude-sonnet-5-5), agent Claude Code"
+  client: bee 0.1.0
+resume: "tdefl_find_match : indices en size_t (13 -> 11 instructions par sonde, n9 -8,5 %) et prélecture du premier maillon suivant ; la CI voyait -1,2 % au chronomètre n9 avec size_t seul."
+changement: >
+  miniz_tdef.c, version par défaut de tdefl_find_match (celle sans MINIZ_USE_UNALIGNED_LOADS_AND_STORES) :
+  deux commits, 12 lignes ajoutées (dont 7 de commentaire), 1 retirée. Mêmes sondes, même décompte de
+  num_probes_left, mêmes correspondances, m_next nul toujours fin de chaîne.
+  (1) Commit 0998730 : probe_pos et next_probe_pos passent de mz_uint à size_t, rien d'autre. Désassemblage de
+  la boucle des sondes (gcc 13.3 -O3 -DNDEBUG, tdefl_find_match incorporée dans tdefl_compress_normal, 2e et
+  3e sondes du déroulage). Avant, 13 instructions par sonde : movzwl m_next(%r15,%r9,2),%eax ; test %ax,%ax ;
+  je ; mov lookahead_pos,%r8d ; sub %eax,%r8d ; movzwl %r8w,%r8d ; cmp %r8d,%r13d ; jb ; mov %eax,%r9d ;
+  and $0x7fff,%eax ; and $0x7fff,%r9d ; cmp %r14w,(%r12,%rax,1) ; je. Après, 11 : les mêmes sans
+  « mov %eax,%r9d » ni le second and (l'unique registre masqué sert d'indice à m_next et à m_dict). Cela fait
+  1,94 instruction de moins par sonde en moyenne à n9 (44 135 322 instructions de moins pour les 22,7
+  millions de sondes que compte le contexte de la tâche). dist = (mz_uint16)(lookahead_pos -
+  next_probe_pos) se calcule alors en 64 bits puis se tronque à 16 bits : les 16 bits de poids faible
+  d'une différence ne dépendent que de ceux des opérandes, donc la valeur est celle d'avant.
+  next_probe_pos vient d'un mz_uint16, probe_pos reste dans m_next et m_dict. Sur une cible 32 bits, size_t
+  a la largeur de mz_uint : code inchangé.
+  Verdict de la CI du fork sur ce seul commit (juge commun, PR 20, 10 répétitions) : instructions n9
+  -9,13 %, n6 -6,94 %, n1 -0,41 %, mais chronomètre n9 -1,23 % (B gagne 1 paire sur 10 : « dégradation
+  au-delà du bruit »), n6 -0,37 %, n1 +0,12 %, décompression +0,54 % (9/10, code de tinfl identique).
+  Donc R4 refusée pour ce commit : moins d'instructions, pas plus vite. Cause probable : la boucle est
+  dominée par la latence de la chaîne m_next (environ 15 cycles par sonde pour 11 instructions, 0,64 défaut
+  L1 par sonde selon le contexte de la tâche), que les instructions en moins ne raccourcissent pas.
+  (2) Commit 8a83565 : essai de la parade, une prélecture. Pour les recherches de plus de 8 sondes
+  (niveaux 6 à 10), __builtin_prefetch de m_next[m_next[(pos + 1) & masque] & masque] au début de l'appel :
+  le premier maillon de la chaîne de la position suivante (m_next[pos + 1] est déjà en cache) arrive pendant
+  le travail de l'appel courant. Sans effet sur les sondes ni sur la sortie ; protégé par
+  __GNUC__ / __clang__ (rien ailleurs). C'est une seconde idée, ajoutée dans la même PR parce que la
+  première seule échoue à R4 ; si les relecteurs la jugent hors périmètre (R1), le commit 0998730 est la
+  contribution d'instructions, le commit 8a83565 se retire sans toucher au premier.
+  Pistes mesurées et écartées (instructions n9, base 482 752 478 ; temps processeur du banc sur ma
+  machine, 20 alternations). (a) size_t, distance en 16 bits (lp16, md16) et boucle sans test du zéro quand
+  lp16 > max_dist (un maillon nul y est déjà refusé par la distance) : -17,5 % d'instructions mais temps -0,9
+  à -1,7 % (plus lent que la base) sur deux passages ; (b) size_t et boucle sans test du zéro, distance en 32
+  bits : -12,9 % d'instructions, temps +1,2 à +2,0 %, pas mieux que size_t seul, pour quinze lignes de plus ;
+  (c) lea à la place de mov + sub dans la distance, sur (a) : plus d'instructions (n9 +0,8 %, n1 +1 %) ;
+  (d) la prélecture seule, sur la base sans size_t : temps +0,0 % ; (e) prélecture de m_dict en plus de
+  m_next : +2,8 % contre +3,3 % pour m_next seul. Sur ma machine (Xeon @ 2,1 GHz), size_t seul donne +2,6 à
+  +3,4 % de temps processeur à n9 alors que la CI voit -1,2 % : mes mesures locales ne prédisent pas celles de
+  la CI, à ne pas prendre pour acquises.
+mesures:
+  machine: "Intel Xeon @ 2,10 GHz virtualisé, 2 cœurs, Ubuntu 24.04, gcc 13.3.0 (-O3 -DNDEBUG), valgrind 3.22 ; machine partagée, très chargée pendant ce passage (charge moyenne 5 sur 2 cœurs : les débits ci-dessous, bruités, ne valent que par les instructions)"
+  commande: "bee/sandbox/sans-docker.sh python3 bee/bench/ab.py --base origin/master --candidate HEAD --repetitions 10 --instructions (base a2f939a, candidat 8a83565 ; pas de remote upstream dans ce worktree, origin est Bee-ruche/minizBee ; manifeste ajouté ensuite, sources de miniz identiques)"
+  repetitions: 10
+  avant:
+    debit_compression_n9: 10.040
+    instructions_n9: 482752478
+    instructions_n6: 334757696
+    instructions_n1: 170765561
+    debit_compression_n1: 70.646
+    debit_compression_n6: 16.931
+    debit_decompression: 375.626
+    ratio_n6: 3.5054
+    memoire_max_ko: 1770
+  apres:
+    debit_compression_n9: 10.423
+    instructions_n9: 441957536
+    instructions_n6: 314825105
+    instructions_n1: 171112155
+    debit_compression_n1: 69.204
+    debit_compression_n6: 17.236
+    debit_decompression: 430.814
+    ratio_n6: 3.5054
+    memoire_max_ko: 1720
+teste:
+  - "Instructions (cachegrind, ab.py --instructions, 128 Kio par fichier, reproductible à l'instruction près), tête 8a83565 : n9 482 752 478 -> 441 957 536 (-8,45 %), n6 334 757 696 -> 314 825 105 (-5,95 %), n1 170 765 561 -> 171 112 155 (+0,20 %, le test « plus de 8 sondes » coûte deux instructions par appel, un peu plus que size_t n'en retire à n1), décompression 29 954 575 -> 29 954 575 (identique). Commit 0998730 seul : n9 -9,14 %, n6 -6,96 %, n1 -0,41 %"
+  - "Chronomètre : (1) CI du fork sur 0998730 seul, 10 répétitions, juge commun sur machine GitHub : n9 -1,23 % (1/10, dégradation au-delà du bruit), voir changement ; (2) ab.py sur ma machine, tête 8a83565, machine surchargée : n9 +3,82 % (6/10), n6 +1,81 % (7/10), n1 -2,04 % (6/10), décompression +14,7 % (3/10 : bruit pur, code de tinfl identique), tous dans le bruit ; (3) temps processeur user+sys du banc, 20 alternations, sur ma machine : 0998730 +2,6 % (16/20 paires), 8a83565 +3,3 % (18/20) contre la base à n9. La CI n'a pas encore jugé 8a83565 au moment où j'écris ces lignes"
+  - "bee/tests/lancer.sh (sandbox sans-docker.sh), sur 0998730 et sur 8a83565 : 3843 contrôles, 0 écart, 488 empreintes identiques à la référence ; cas limites de l'API zlib : 106 contrôles, 0 échec"
+  - "Sur 0998730 : bee/tests/lancer.sh --sanitiseurs (gcc, ASan + UBSan) : 3843 contrôles, 0 écart ; tests différentiels compilés avec -DTDEFL_FIND_MATCH_64BIT=0 et avec clang -O2 : 3843 contrôles, 0 écart ; bee/ci/tests_origine.sh : 1/1 test passé ; compilation sans avertissement avec gcc -std=gnu90 -pedantic -Wall -Wextra -Wdeclaration-after-statement -Wshadow, g++ -x c++, clang -std=gnu90 -pedantic"
+  - "Sur 0998730 : bee/fuzz/lancer.sh 300 --moteur libfuzzer --reference <copie de la base> : fuzz_inflate 117 595 exécutions, fuzz_compression 79 554, aucun écart. Sur les deux commits : fuzzing de 10 minutes de la CI du fork (vert pour 0998730)"
+  - "Comparaison hors dépôt base contre 0998730, octet pour octet (empreinte FNV de chaque sortie) : 61 graines x 150 cas = 9 150 sorties identiques. Entrées de 0 à 1,5 Mo : octets aléatoires, motifs périodiques, alphabets réduits, copies de segments antérieurs à des distances de 1 à 70 000 octets (dont 32 767, 32 768, 65 535, 65 536, 65 537), répétitions exactes à 32 768 et 65 536 octets ; niveaux 0 à 10, stratégies, nombres de sondes de 1 à 300 avec les drapeaux d'analyse gloutonne, de filtre, de RLE et de blocs statiques ; en une fois et en flux (morceaux de 0 à 70 000 octets, MZ_SYNC_FLUSH et MZ_FULL_FLUSH au hasard, avec ou sans en-tête zlib)"
+non_teste:
+  - "Comparaison hors dépôt, sanitiseurs, repli 64BIT=0, clang, tests d'origine et fuzzing local : faits sur 0998730, pas refaits sur 8a83565 (qui n'ajoute qu'une prélecture, sans écriture ni lecture dont dépende la sortie ; les tests différentiels et leurs 488 empreintes ont été refaits)"
+  - "ARM64 : aucune machine ; le changement est du C portable, mais ni exécuté ni mesuré sur ARM64 hors CI du fork (compilation et tests arm64 verts pour 0998730). Le gain d'instructions dépend du code que gcc produit, qui peut différer sur ARM64"
+  - "Cibles 32 bits et grand-boutistes, MSVC : non exécutés ; sur 32 bits size_t et mz_uint ont la même largeur, et la prélecture est ignorée hors gcc et clang"
+  - "Autres versions de gcc, ou clang, pour les instructions et le temps : mesuré avec gcc 13.3 seulement"
+  - "Fuzzing de 600 s comme la CI en local : seulement 300 s par harnais ici"
+  - "Juge commun en local : non lancé (pas de Docker ici), seule la CI du fork le lance"
+  - "Variante MINIZ_USE_UNALIGNED_LOADS_AND_STORES (première version de tdefl_find_match) : non touchée, hors périmètre"
+doutes: "R4 n'est établie ni pour 0998730 (la CI y voit un recul du chronomètre à n9, -1,23 %, malgré -9,1 % d'instructions) ni, à l'heure où j'écris, pour 8a83565, que la CI n'a pas jugé. La prélecture est une seconde idée que je n'ai pas pu séparer de la première par une mesure de la CI ; sur ma machine elle n'ajoute que +0,7 % à +2 % de temps à n9, au niveau du bruit, et la CI voit autre chose que ma machine. Si la CI refuse encore R4 pour 8a83565, cette contribution ne devrait pas être intégrée : seule la connaissance compte (la boucle des sondes est limitée par la latence de m_next, pas par les instructions)."
+taille_reelle: S
