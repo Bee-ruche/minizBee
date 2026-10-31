@@ -1,0 +1,59 @@
+tache: miniz-0034
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "profil.py repère les noms à majuscules (mz_deflateInit2, mz_inflateEnd…) sans prendre d'appel de macro ni de mot-clé pour une fonction ; tests, tableau de profil du README refait."
+changement: |
+  bee/bench/profil.py (6 lignes ajoutées, 2 retirées) : le nom capturé par DEBUT_FONCTION passe de
+  [a-z_][a-z0-9_]* à [A-Za-z_][A-Za-z0-9_]*. Le reste de l'expression ne change pas : elle exige toujours un
+  type devant le nom (un premier identifiant suivi d'une frontière de mot), donc un appel de macro en tête
+  de ligne (MZ_ASSERT(…), TDEFL_PUT_BITS(…), TINFL_CR_RETURN(…), TINFL_CR_BEGIN) ne peut pas être pris
+  pour un en-tête. Les mots-clés exclus deviennent un ensemble INSTRUCTIONS (if, else, while, for, do,
+  switch, case, return, goto, sizeof, typedef), refusé comme nom (comme avant, liste élargie) et désormais
+  aussi comme premier mot de la ligne : « else MZ_ASSERT(… » ou « return MZ_MAX(… » sans « ; » final ne
+  passent plus pour la fonction MZ_ASSERT ou MZ_MAX. Format de sortie inchangé.
+
+  bee/bench/test_profil.py (25 lignes ajoutées, aucune retirée) : l'exemple C gagne, après les cas
+  existants (numéros de ligne inchangés), une macro sur plusieurs lignes dont une ligne commence par un
+  appel de macro suivi d'une accolade (TINFL_CR_RETURN(etat, 1) puis « { ») et une autre par
+  « else MZ_ASSERT(… », puis deux fonctions à majuscules : static LIRE_MOT16 et mz_exempleInit2 (en-tête
+  sur deux lignes). Plages attendues et attribution des lignes (macros « hors fonction ») vérifiées.
+
+  bee/README.md (10 ajoutées, 6 retirées) : commande de profilage avec make -B ; rappel de compiler le
+  banc et de profiler dans la même session de bee/sandbox/sans-docker.sh (le dépôt y est monté à un autre
+  chemin à chaque session, sinon tout part en « hors miniz » : je l'ai reproduit pendant ce travail, make
+  sans -B ne recompile pas un banc d'une autre session) ; tableau de profil refait à a2f939a (il datait
+  de 2948eeb) et une phrase sur ce que miniz-0034 change au profil.
+
+  Avant/après (bee/resultats/miniz-0034/, hors décompte R1) : plages_de_fonctions() sur les trois
+  sources de a2f939a, 13 plages ajoutées, aucune retirée ni déplacée : miniz.c mz_deflateInit 191-194,
+  mz_deflateInit2 196-230, mz_deflateReset 232-239, mz_deflateEnd 299-309, mz_deflateBound 311-316,
+  mz_compressBound 353-356, mz_inflateInit2 371-405, mz_inflateInit 407-410, mz_inflateReset 412-436,
+  mz_inflateEnd 550-560 ; miniz_tdef.c TDEFL_READ_UNALIGNED_WORD 793-798, TDEFL_READ_UNALIGNED_WORD2
+  799-804, TDEFL_READ_UNALIGNED_WORD32 947-952 (bornes vérifiées dans le source). Aucun appel de macro ni
+  mot-clé dans la liste. Profil callgrind complet, mêmes fichiers attribués par les deux versions
+  (--reutiliser) : totaux identiques (n1 169 368 921, n6 333 644 424, n9 481 644 530, décompression
+  29 952 240 Ir) ; « miniz.c (hors fonction) » passe de 4 514 à 0 dans chaque scénario de compression
+  (mz_deflateInit2 3 782, mz_deflateInit 427, mz_deflateEnd 305) et de 1 403 à 0 en décompression
+  (mz_inflateInit2 1 098, mz_inflateEnd 305) ; aucune autre ligne ne change.
+teste:
+  - "python3 bee/bench/test_profil.py dans bee/sandbox/sans-docker.sh : « Ran 4 tests … OK »."
+  - "Régressions semées, chacune avec le nouveau test_profil.py, dans la sandbox : profil.py de la base (FAILED, failures=2 : LIRE_MOT16 et mz_exempleInit2 absents) ; refus du mot-clé en premier mot retiré (FAILED : fausse fonction MZ_ASSERT 53-59, LIRE_MOT16 perdue) ; type devant le nom rendu facultatif (FAILED : fausse fonction TINFL_CR_RETURN 49-52). Sorties : bee/resultats/miniz-0034/regressions-semees.txt."
+  - "Liste des plages avant/après sur miniz.c, miniz_tdef.c, miniz_tinfl.c (plages.py, dans la sandbox) : voir changement et bee/resultats/miniz-0034/plages.diff."
+  - "Profil complet (make -B -C bee banc && python3 bee/bench/profil.py, ≈ 17 s sur machine chargée) puis l'ancien profil.py sur les mêmes fichiers callgrind, dans une seule session de sandbox : bee/resultats/miniz-0034/comparaison.txt."
+  - "bee/tests/lancer.sh dans la sandbox : 3843 contrôles, 0 écart, 488 empreintes identiques ; API : 192 cas, 0 échec (sources de miniz non modifiées)."
+  - "python3 bee/bench/test_ab.py dans la sandbox : OK (inchangé)."
+non_teste:
+  - "La CI de cette PR lance test_profil.py de la base (bee-ci.yml, juges pris dans la base) : les nouveaux cas n'y tourneront qu'à partir des PR suivantes. Sortie locale jointe à la place."
+  - "Pas de profil sur ARM64 ni avec un autre compilateur (le repérage est textuel ; seules les parts du tableau du README dépendent de la machine : x86-64, gcc 13.3)."
+  - "TDEFL_READ_UNALIGNED_WORD* sont repérées mais n'apparaissent pas au profil : elles ne sont compilées qu'avec MINIZ_UNALIGNED_USE_MEMCPY, absent du banc ; leur attribution n'est donc vérifiée que par les plages."
+  - "Pas de fuzzing ni de banc A/B : aucun code de miniz ne change ; la CI les lance de toute façon."
+doutes: |
+  Le repérage reste textuel. Une ligne « TYPE MACRO(…) » sans « ; » final, hors d'une
+  fonction et suivie plus loin d'une accolade, serait prise pour une fonction : aucune n'existe dans les
+  trois sources (liste des plages jointe). L'ensemble INSTRUCTIONS refuse aussi « typedef » et « do » comme
+  premier mot : aucun en-tête de fonction réel n'en commence. Les parts du tableau du README sont celles de
+  ma machine (x86-64 virtualisée, 2 cœurs partagés, gcc 13.3) ; les instructions sont déterministes, les
+  parts peuvent bouger d'un compilateur à l'autre.
+taille_reelle: S

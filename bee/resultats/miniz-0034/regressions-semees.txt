@@ -1,0 +1,34 @@
+Régressions semées dans des copies de bee/bench/profil.py (bee/construction/semees/<variante>/, hors dépôt),
+chacune lancée avec le test_profil.py de miniz-0034, dans bee/sandbox/sans-docker.sh :
+  base             : profil.py de a2f939a (noms en minuscules seulement)
+  sans_premier_mot : sans le refus d'un mot-clé en premier mot (« else MZ_ASSERT(… »)
+  sans_type        : type devant le nom rendu facultatif (un appel de macro en tête de ligne devient un en-tête)
+Plus : le candidat (4 tests OK) et bee/bench/test_ab.py (OK, inchangé).
+
+### candidat
+Ran 4 tests in 0.007s
+
+OK
+
+OK
+### régression semée : base
+FAIL: test_attribution_des_lignes (__main__.Reperage.test_attribution_des_lignes)
+AssertionError: 'exemple.c (hors fonction)' != 'LIRE_MOT16'
+FAIL: test_plages_exactes (__main__.Reperage.test_plages_exactes)
+AssertionError: Lists differ: [(9, [122 chars]_public')] != [(9, [122 chars]_public'), (56, 59, 'LIRE_MOT16'), (61, 65, 'mz_exempleInit2')]
+Ran 4 tests in 0.003s
+FAILED (failures=2)
+### régression semée : sans_premier_mot
+FAIL: test_attribution_des_lignes (__main__.Reperage.test_attribution_des_lignes)
+AssertionError: 'MZ_ASSERT' != 'exemple.c (hors fonction)'
+FAIL: test_plages_exactes (__main__.Reperage.test_plages_exactes)
+AssertionError: Lists differ: [(9, [122 chars]_public'), (53, 59, 'MZ_ASSERT'), (61, 65, 'mz_exempleInit2')] != [(9, [122 chars]_public'), (56, 59, 'LIRE_MOT16'), (61, 65, 'mz_exempleInit2')]
+Ran 4 tests in 0.004s
+FAILED (failures=2)
+### régression semée : sans_type
+FAIL: test_attribution_des_lignes (__main__.Reperage.test_attribution_des_lignes)
+AssertionError: 'TINFL_CR_RETURN' != 'exemple.c (hors fonction)'
+FAIL: test_plages_exactes (__main__.Reperage.test_plages_exactes)
+AssertionError: Lists differ: [(9, [129 chars]'), (49, 52, 'TINFL_CR_RETURN'), (56, 59, 'LIR[34 chars]t2')] != [(9, [129 chars]'), (56, 59, 'LIRE_MOT16'), (61, 65, 'mz_exempleInit2')]
+Ran 4 tests in 0.003s
+FAILED (failures=2)

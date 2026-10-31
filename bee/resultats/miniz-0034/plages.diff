@@ -1,0 +1,19 @@
+10a11,12
+> miniz_tdef.c:793-798 TDEFL_READ_UNALIGNED_WORD
+> miniz_tdef.c:799-804 TDEFL_READ_UNALIGNED_WORD2
+12a15
+> miniz_tdef.c:947-952 TDEFL_READ_UNALIGNED_WORD32
+46a50,52
+> miniz.c:191-194 mz_deflateInit
+> miniz.c:196-230 mz_deflateInit2
+> miniz.c:232-239 mz_deflateReset
+47a54,55
+> miniz.c:299-309 mz_deflateEnd
+> miniz.c:311-316 mz_deflateBound
+49a58,61
+> miniz.c:353-356 mz_compressBound
+> miniz.c:371-405 mz_inflateInit2
+> miniz.c:407-410 mz_inflateInit
+> miniz.c:412-436 mz_inflateReset
+50a63
+> miniz.c:550-560 mz_inflateEnd

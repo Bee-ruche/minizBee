@@ -24,8 +24,11 @@ ICI = os.path.dirname(os.path.abspath(__file__))
 BEE = os.path.dirname(ICI)
 RACINE = os.path.dirname(BEE)
 SOURCES = ["miniz_tdef.c", "miniz_tinfl.c", "miniz.c"]
+# Type, nom (majuscules admises : mz_deflateInit2), « ( » ; un appel de macro en tête de ligne n'a pas de type.
 DEBUT_FONCTION = re.compile(r"^\s*(?:static\s+)?(?:MZ_FORCEINLINE\s+)?(?:MINIZ_EXPORT\s+)?"
-                            r"(?:const\s+)?[A-Za-z_][A-Za-z0-9_ \*]*?\b([a-z_][a-z0-9_]*)\s*\([^;]*$")
+                            r"(?:const\s+)?[A-Za-z_][A-Za-z0-9_ \*]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*$")
+# Ni comme nom ni comme premier mot (« else TDEFL_PUT_BITS(… », « return MZ_MAX(… ») : ce sont des instructions.
+INSTRUCTIONS = {"if", "else", "while", "for", "do", "switch", "case", "return", "goto", "sizeof", "typedef"}
 # Commentaires de bloc et de ligne (prolongés par « \ » en fin de ligne), chaînes et caractères littéraux.
 # Une seule expression balayée de gauche à droite : le premier qui commence l'emporte, donc un « /* »
 # dans une chaîne ou un « " » dans un commentaire ne sont pas pris pour ce qu'ils ne sont pas.
@@ -48,7 +51,8 @@ def plages_de_fonctions(chemin):
     plages, i = [], 0
     while i < len(lignes):
         m = DEBUT_FONCTION.match(lignes[i])
-        if m and not lignes[i].rstrip().endswith(";") and m.group(1) not in ("if", "while", "for", "switch", "return", "sizeof"):
+        if (m and not lignes[i].rstrip().endswith(";") and m.group(1) not in INSTRUCTIONS
+                and lignes[i].split()[0] not in INSTRUCTIONS):
             j = i
             while j < len(lignes) and "{" not in lignes[j] and not lignes[j].rstrip().endswith(";"):
                 j += 1
