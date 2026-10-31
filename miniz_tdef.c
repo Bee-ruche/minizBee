@@ -877,6 +877,13 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
     MZ_ASSERT(max_match_len <= TDEFL_MAX_MATCH_LEN);
     if (max_match_len <= match_len)
         return;
+#if defined(__GNUC__) || defined(__clang__)
+    /* Recherche longue : amorce la chaîne du tour suivant (en général la position suivante), dont la première
+       sonde attend un défaut L1 de m_next. m_next[pos + 1] est déjà en cache ; on n'en lit rien d'autre, et
+       la prélecture ne change ni les sondes ni la sortie. */
+    if (num_probes_left > 8)
+        __builtin_prefetch(&d->m_next[d->m_next[(pos + 1) & TDEFL_LZ_DICT_SIZE_MASK] & TDEFL_LZ_DICT_SIZE_MASK]);
+#endif
     for (;;)
     {
         for (;;)
