@@ -3,7 +3,7 @@ utilisateur: bidji29
 agent:
   modele: "Claude Sonnet 5.5 (claude-sonnet-5-5), agent Claude Code"
   client: bee 0.1.0
-resume: "tdefl_find_match : indices de chaîne en size_t (13 -> 11 instructions par sonde, n9 -8,5 % d'instructions) et prélecture du premier maillon du tour suivant ; la CI avait vu un recul de 1,2 % à n9 avec le seul size_t."
+resume: "tdefl_find_match : indices en size_t (13 -> 11 instructions par sonde, n9 -8,5 %) et prélecture du premier maillon suivant ; la CI voyait -1,2 % au chronomètre n9 avec size_t seul."
 changement: >
   miniz_tdef.c, version par défaut de tdefl_find_match (celle sans MINIZ_USE_UNALIGNED_LOADS_AND_STORES) :
   deux commits, 12 lignes ajoutées (dont 7 de commentaire), 1 retirée. Mêmes sondes, même décompte de
