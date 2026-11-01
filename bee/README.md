@@ -186,19 +186,23 @@ python3 bee/bench/test_ab.py                                            # tests 
 ## Profilage
 
 ```bash
-make -C bee banc && python3 bee/bench/profil.py --json bee/construction/profil/profil.json   # ≈ 10 s
+make -B -C bee banc && python3 bee/bench/profil.py --json bee/construction/profil/profil.json   # ≈ 15 s
 ```
+
+Avec `bee/sandbox/sans-docker.sh`, compilez le banc et profilez **dans la même session** (`sans-docker.sh bash -c '…'` avec la ligne ci-dessus), recompilation forcée (`-B`) : le dépôt y est monté à un chemin différent à chaque session, un banc compilé dans une autre renvoie Callgrind vers des sources introuvables, et tout part en « hors miniz ».
 
 `profil.py` lance le banc sous `valgrind --tool=callgrind --toggle-collect=…`, scénario par scénario, sur les 128 premiers Kio de chaque fichier (2,2 Mo en tout). Seules les passes mesurées sont comptées. Le coût exclusif de chaque ligne est ensuite attribué à la fonction qui la contient dans le source, ce qui fait apparaître séparément les fonctions inline (`tdefl_find_match`, `tdefl_record_*`) que callgrind fond dans leur appelant. Les fichiers `callgrind.<scénario>` s'ouvrent avec `callgrind_annotate --auto=yes`.
 
-Profil de la base (part des instructions des passes mesurées, gcc 13.3 -O3, x86-64 ; « l. 829 » désigne la variante de `tdefl_find_match` compilée par défaut) :
+Profil de master à a2f939a (part des instructions des passes mesurées, gcc 13.3 -O3, x86-64 ; « l. 862 » désigne la variante de `tdefl_find_match` compilée par défaut) :
 
 | Scénario | 1ʳᵉ fonction | 2ᵉ | 3ᵉ | Reste |
 | --- | --- | --- | --- | --- |
-| compression n1 (202 M) | `tdefl_compress_normal` 48,2 % | `tdefl_find_match` 22,7 % | `tdefl_compress_lz_codes` 13,6 % | `mz_adler32` 3,7 %, `tdefl_record_match` 3,3 %, libc 3,1 % |
-| compression n6 (381 M) | `tdefl_find_match` 60,0 % | `tdefl_compress_normal` 26,8 % | `tdefl_compress_lz_codes` 5,7 % | `mz_adler32` 2,0 %, libc 1,6 % |
-| compression n9 (543 M) | `tdefl_find_match` 72,1 % | `tdefl_compress_normal` 18,7 % | `tdefl_compress_lz_codes` 4,0 % | `mz_adler32` 1,4 % |
-| décompression (34 M) | `tinfl_decompress` 99,3 % | libc 0,6 % | — | — |
+| compression n1 (169 M) | `tdefl_compress_normal` 50,7 % | `tdefl_find_match` 18,6 % | `tdefl_compress_lz_codes` 10,7 % | libc 5,4 %, `mz_adler32` 4,4 %, `tdefl_record_match` 4,0 % |
+| compression n6 (334 M) | `tdefl_find_match` 58,7 % | `tdefl_compress_normal` 27,2 % | `tdefl_compress_lz_codes` 4,2 % | libc 3,1 %, `mz_adler32` 2,3 % |
+| compression n9 (482 M) | `tdefl_find_match` 71,3 % | `tdefl_compress_normal` 18,8 % | `tdefl_compress_lz_codes` 2,9 % | libc 2,3 %, `mz_adler32` 1,6 % |
+| décompression (30 M) | `tinfl_decompress` 95,4 % | libc 4,5 % | — | — |
+
+Les noms à majuscules sont repérés depuis miniz-0034 : `mz_deflateInit2`, `mz_deflateInit` et `mz_deflateEnd` (4 514 instructions par scénario de compression), `mz_inflateInit2` et `mz_inflateEnd` (1 403 en décompression) ne partent plus en « miniz.c (hors fonction) ».
 
 ## CI : `.github/workflows/bee-ci.yml`
 

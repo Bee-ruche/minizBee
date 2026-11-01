@@ -64,6 +64,25 @@ int exemple_public(void)
 {
     return minimum(1, 2) + (etat(0) != 0);
 }
+
+#define LIRE_OCTET(etat, c)          \
+    TINFL_CR_RETURN(etat, 1)         \
+    {                                \
+        MZ_ASSERT(c >= 0);           \
+    }                                \
+    else MZ_ASSERT(c < 256)          \
+    MZ_MACRO_END
+
+static unsigned LIRE_MOT16(const unsigned char *p)
+{
+    return p[0] | (p[1] << 8);
+}
+
+int mz_exempleInit2(int niveau,
+                    int fenetre)
+{
+    return niveau + fenetre;
+}
 """
 
 # (début, fin, nom) attendus, lignes comptées à partir de 1 dans EXEMPLE.
@@ -74,6 +93,8 @@ ATTENDU = [
     (30, 34, "cherche"),
     (36, 40, "cherche"),
     (43, 46, "exemple_public"),
+    (56, 59, "LIRE_MOT16"),  # noms à majuscules (miniz-0034)
+    (61, 65, "mz_exempleInit2"),
 ]
 
 
@@ -100,6 +121,10 @@ class Reperage(unittest.TestCase):
             33: "cherche (l. 30)",  # deux variantes sous #if : distinguées par leur première ligne
             39: "cherche (l. 36)",
             45: "exemple_public",
+            49: "exemple.c (hors fonction)",  # appel de macro en tête de ligne, suivi d'une accolade
+            53: "exemple.c (hors fonction)",  # « else MZ_ASSERT(… » : un mot-clé n'est pas un type
+            58: "LIRE_MOT16",
+            64: "mz_exempleInit2",
         }
         for ligne, nom in attendu.items():
             self.assertEqual(profil.nom_de(plages, ligne, "exemple.c"), nom, f"ligne {ligne}")

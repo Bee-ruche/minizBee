@@ -1,0 +1,21 @@
+Coût exclusif (Ir) qui change d'attribution entre profil.py de a2f939a (avant) et celui de miniz-0034 (après),
+mêmes fichiers callgrind (--reutiliser), même session de sandbox.
+== n1 : total 169,368,921 avant, 169,368,921 après ; somme des fonctions 169,368,921 / 169,368,921
+   miniz.c (hors fonction)           4,514 ->        0
+   mz_deflateEnd                         0 ->      305
+   mz_deflateInit                        0 ->      427
+   mz_deflateInit2                       0 ->    3,782
+== n6 : total 333,644,424 avant, 333,644,424 après ; somme des fonctions 333,644,424 / 333,644,424
+   miniz.c (hors fonction)           4,514 ->        0
+   mz_deflateEnd                         0 ->      305
+   mz_deflateInit                        0 ->      427
+   mz_deflateInit2                       0 ->    3,782
+== n9 : total 481,644,530 avant, 481,644,530 après ; somme des fonctions 481,644,530 / 481,644,530
+   miniz.c (hors fonction)           4,514 ->        0
+   mz_deflateEnd                         0 ->      305
+   mz_deflateInit                        0 ->      427
+   mz_deflateInit2                       0 ->    3,782
+== decompression : total 29,952,240 avant, 29,952,240 après ; somme des fonctions 29,952,240 / 29,952,240
+   miniz.c (hors fonction)           1,403 ->        0
+   mz_inflateEnd                         0 ->      305
+   mz_inflateInit2                       0 ->    1,098

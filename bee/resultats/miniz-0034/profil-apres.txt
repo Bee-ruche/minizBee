@@ -1,0 +1,44 @@
+== n1 : 169,368,921 instructions (passes mesurées, 131072 premiers octets par fichier)
+   50.66 %     85,804,319  tdefl_compress_normal
+   18.55 %     31,421,890  tdefl_find_match (l. 862)
+   10.73 %     18,174,744  tdefl_compress_lz_codes (l. 482)
+    5.36 %      9,072,012  hors miniz (libc : memset, memcpy…)
+    4.43 %      7,510,775  mz_adler32
+    3.95 %      6,696,870  tdefl_record_match
+    2.68 %      4,541,271  tdefl_record_literal
+    2.06 %      3,482,845  tdefl_flush_block
+    0.70 %      1,180,111  tdefl_optimize_huffman_table
+    0.32 %        547,985  tdefl_start_dynamic_block
+== n6 : 333,644,424 instructions (passes mesurées, 131072 premiers octets par fichier)
+   58.71 %    195,881,267  tdefl_find_match (l. 862)
+   27.24 %     90,895,252  tdefl_compress_normal
+    4.25 %     14,169,525  tdefl_compress_lz_codes (l. 482)
+    3.10 %     10,337,045  hors miniz (libc : memset, memcpy…)
+    2.25 %      7,510,775  mz_adler32
+    1.35 %      4,491,226  tdefl_record_literal
+    1.32 %      4,400,317  tdefl_record_match
+    1.04 %      3,482,984  tdefl_flush_block
+    0.33 %      1,111,947  tdefl_optimize_huffman_table
+    0.15 %        511,611  tdefl_start_dynamic_block
+== n9 : 481,644,530 instructions (passes mesurées, 131072 premiers octets par fichier)
+   71.34 %    343,625,627  tdefl_find_match (l. 862)
+   18.80 %     90,543,871  tdefl_compress_normal
+    2.92 %     14,083,467  tdefl_compress_lz_codes (l. 482)
+    2.30 %     11,087,658  hors miniz (libc : memset, memcpy…)
+    1.56 %      7,510,775  mz_adler32
+    0.93 %      4,490,754  tdefl_record_literal
+    0.90 %      4,344,260  tdefl_record_match
+    0.72 %      3,482,970  tdefl_flush_block
+    0.23 %      1,111,738  tdefl_optimize_huffman_table
+    0.11 %        511,148  tdefl_start_dynamic_block
+== decompression : 29,952,240 instructions (passes mesurées, 131072 premiers octets par fichier)
+   95.44 %     28,585,422  tinfl_decompress
+    4.53 %      1,355,811  hors miniz (libc : memset, memcpy…)
+    0.02 %          6,222  mz_inflate
+    0.00 %          1,159  mz_uncompress2
+    0.00 %          1,098  mz_inflateInit2
+    0.00 %          1,098  mz_uncompress
+    0.00 %            698  tinfl_clear_tree
+    0.00 %            305  mz_inflateEnd
+    0.00 %            244  miniz_def_alloc_func
+    0.00 %            183  miniz_def_free_func
