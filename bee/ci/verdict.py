@@ -28,7 +28,7 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
   base_juge         le commit A réellement extrait par le juge commun (son greffon et ses sources), la règle qui
                     l'a choisi (point_de_depart, introduction, ou un refus) et le point de départ de la PR,
                     d'après les sorties du job greffon ; null hors CI
-  juge              section du juge commun : version (3 pour juge-v1), commun (« juge-v1 »), projet, greffon
+  juge              section du juge commun : version (3 depuis juge-v1), commun (« juge-vN »), projet, greffon
                     (SHA-256 de bee/juge/projet.py), graine, sorties comparées et constructions_suspectes
                     (liste vide si l'analyse des objets n'a rien trouvé) ; null si le juge n'a pas tourné
   etapes, details   pour les relecteurs (details.juge_ancien : l'ancien juge isolé, s'il a jugé)

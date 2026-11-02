@@ -6,7 +6,7 @@ Usage : python3 bee/ci/test_verdict.py
 
 import json
 import os
-from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -458,9 +458,11 @@ class Juges(unittest.TestCase):
         # Greffon lu dans la base : le commit vient du job greffon, jamais de la tête de la PR directement.
         self.assertEqual(juge["with"]["base_sha"], "${{ needs.greffon.outputs.base_juge }}")
         self.assertIn("greffon", juge["needs"])
-        # Le commit du corpus est déclaré à juge.yml (juge-v2), qui le récupère avant la PR : c'est celui du greffon.
-        greffon = (Path(__file__).resolve().parents[1] / "juge" / "projet.py").read_text(encoding="utf-8")
-        self.assertIn(f'COMMIT_CORPUS = "{juge["with"]["historique"]}"', greffon)
+        # Le commit du corpus est déclaré à juge.yml (juge-v2), qui le récupère avant la PR : celui du greffon en est
+        # (l'ancien et le nouveau, le temps d'une PR qui le change, car le greffon qui juge est celui de la base).
+        with open(os.path.join(os.path.dirname(ICI), "juge", "projet.py"), encoding="utf-8") as f:
+            commit = re.search(r'^COMMIT_CORPUS = "([0-9a-f]{40})"$', f.read(), re.M).group(1)
+        self.assertIn(commit, juge["with"]["historique"].split())
         extractions = [e for job in workflow["jobs"].values() for e in job.get("steps", [])
                        if e.get("with", {}).get("path") == "juge-commun"]
         self.assertEqual(len(extractions), 3)  # compilation et tests, fuzzing, méta-tests

@@ -1,7 +1,7 @@
 """Greffon de minizBee pour le juge commun Bee (registre : outils/juge/, docs/juge-commun.md).
 
 Le juge commun (isolement, lanceur chrono, lecture sûre, analyse des objets, graine, statistiques,
-rapport) est lu dans le registre à une étiquette (juge-vN, épinglée dans .github/workflows/bee-ci.yml).
+rapport) est lu dans le registre à un commit (juge-vN, épinglé par SHA dans .github/workflows/bee-ci.yml).
 Ce fichier dit ce qui est propre à miniz : les sources, la construction (construire.sh), les entrées
 (corpus, données tirées au hasard, flux zlib produits par l'hôte), la règle de justesse (sorties
 identiques à la base, aller-retour par la zlib de l'hôte) et les scénarios mesurés. Il est lu depuis la
@@ -151,7 +151,8 @@ def historique_du_corpus(outillage):
     accès réseau ici : un commit absent est une erreur d'environnement (code 2)."""
     if subprocess.run(["git", "-C", outillage, "cat-file", "-e", COMMIT_CORPUS + "^{commit}"],
                       capture_output=True).returncode != 0:
-        raise Erreur(f"corpus : commit {COMMIT_CORPUS} absent de la base ; déclarez-le à juge.yml (historique)")
+        raise Erreur(f"corpus : commit {COMMIT_CORPUS} absent de la base ; déclarez-le à juge.yml (historique), "
+                     f"ou, en local, git fetch --depth=1 origin {COMMIT_CORPUS}")
 
 
 class Projet:
@@ -159,8 +160,8 @@ class Projet:
     # Paquets en plus de l'image commune : tests d'origine (g++, cmake), tests différentiels (zlib1g-dev),
     # générateur du corpus (git), fuzzing libFuzzer (clang-18, libclang-rt-18-dev), lancés par isoler.sh.
     PAQUETS = ["g++", "cmake", "zlib1g-dev", "git", "clang-18", "libclang-rt-18-dev"]
-    # Fichiers compilés par construire.sh (miniz_zip.c ne l'est pas : il n'est ni copié, ni jugé) ; le diff
-    # analysé est celui de ces fichiers, et chaque .c doit laisser son objet dans obj/.
+    # Fichiers compilés par construire.sh (miniz_zip.c ne l'est pas : il n'est ni copié, ni jugé) ; le juge
+    # analyse ces fichiers en entier, et chaque .c doit laisser son objet dans obj/.
     SOURCES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz*.h"]
     SOURCES_REQUISES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz.h"]
     OUTILLAGE = ["bee/juge", "bee/commun"]
