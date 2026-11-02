@@ -1,7 +1,7 @@
 """Greffon de minizBee pour le juge commun Bee (registre : outils/juge/, docs/juge-commun.md).
 
 Le juge commun (isolement, lanceur chrono, lecture sûre, analyse des objets, graine, statistiques,
-rapport) est lu dans le registre à une étiquette (juge-vN, épinglée dans .github/workflows/bee-ci.yml).
+rapport) est lu dans le registre à un commit (juge-vN, épinglé par SHA dans .github/workflows/bee-ci.yml).
 Ce fichier dit ce qui est propre à miniz : les sources, la construction (construire.sh), les entrées
 (corpus, données tirées au hasard, flux zlib produits par l'hôte), la règle de justesse (sorties
 identiques à la base, aller-retour par la zlib de l'hôte) et les scénarios mesurés. Il est lu depuis la
@@ -143,22 +143,16 @@ def flux_zlib(rng, originaux):
 
 
 def historique_du_corpus(outillage):
-    """Rend lisibles les objets git du commit COMMIT_CORPUS dans la copie de la base (outillage).
+    """Vérifie que les objets git du commit COMMIT_CORPUS sont lisibles dans la copie de la base (outillage).
 
-    Le workflow juge.yml du registre extrait la base sans historique (fetch-depth 1) : les sources figées
-    que bee/corpus/generer.py lit par identifiant d'objet (miniz_tdef.c et miniz_tinfl.c d'origine, entre
-    autres) n'y sont pas. Ce seul commit est alors demandé au dépôt de la copie (git fetch, sur l'hôte, sans
-    rien exécuter de la PR) ; generer.py vérifie ensuite la somme SHA-256 de chaque source et du corpus.
-    C'est un accès réseau de l'hôte APRÈS l'extraction de la PR (le juge commun appelle corpus() après la
-    compilation) : la sûreté tient (SHA fixe, sommes vérifiées), la disponibilité dépend de GitHub. À retirer
-    quand juge.yml extraira la base avec son historique (ruche-0024, dans le registre)."""
-    git = ["git", "-C", outillage]
-    if subprocess.run(git + ["cat-file", "-e", COMMIT_CORPUS + "^{commit}"], capture_output=True).returncode == 0:
-        return
-    r = subprocess.run(git + ["fetch", "--quiet", "--no-tags", "--depth=1", "origin", COMMIT_CORPUS],
-                       capture_output=True, text=True, timeout=600)
-    if r.returncode != 0:
-        raise Erreur(f"corpus : commit {COMMIT_CORPUS} introuvable dans la base et impossible à récupérer : " + r.stderr[-500:])
+    Les sources figées que bee/corpus/generer.py lit par identifiant d'objet (miniz_tdef.c et miniz_tinfl.c
+    d'origine, entre autres) viennent de ce commit. juge.yml (juge-v2, ruche-0024) le récupère avant la PR,
+    parce que bee-ci.yml le déclare (historique) ; pendant le jugement, git n'a plus aucun transport. Aucun
+    accès réseau ici : un commit absent est une erreur d'environnement (code 2)."""
+    if subprocess.run(["git", "-C", outillage, "cat-file", "-e", COMMIT_CORPUS + "^{commit}"],
+                      capture_output=True).returncode != 0:
+        raise Erreur(f"corpus : commit {COMMIT_CORPUS} absent de la base ; déclarez-le à juge.yml (historique), "
+                     f"ou, en local, git fetch --depth=1 origin {COMMIT_CORPUS}")
 
 
 class Projet:
@@ -166,8 +160,8 @@ class Projet:
     # Paquets en plus de l'image commune : tests d'origine (g++, cmake), tests différentiels (zlib1g-dev),
     # générateur du corpus (git), fuzzing libFuzzer (clang-18, libclang-rt-18-dev), lancés par isoler.sh.
     PAQUETS = ["g++", "cmake", "zlib1g-dev", "git", "clang-18", "libclang-rt-18-dev"]
-    # Fichiers compilés par construire.sh (miniz_zip.c ne l'est pas : il n'est ni copié, ni jugé) ; le diff
-    # analysé est celui de ces fichiers, et chaque .c doit laisser son objet dans obj/.
+    # Fichiers compilés par construire.sh (miniz_zip.c ne l'est pas : il n'est ni copié, ni jugé) ; le juge
+    # analyse ces fichiers en entier, et chaque .c doit laisser son objet dans obj/.
     SOURCES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz*.h"]
     SOURCES_REQUISES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz.h"]
     OUTILLAGE = ["bee/juge", "bee/commun"]
