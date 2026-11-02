@@ -1,0 +1,23 @@
+tache: miniz-0047
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5), agent principal du projet Bee"
+  client: bee 0.1.0
+resume: "minizBee moves to the common judge juge-v2: juge.yml pinned at dab13a6, corpus commit declared as history, no git fetch while judging."
+changement: >
+  bee-ci.yml calls Bee-ruche/registre/.github/workflows/juge.yml@dab13a6e769a19937def567ed896a05b534c61dc (juge-v2,
+  ruche-0024: the judge read at the workflow's own commit, refused unless on the registry's main) and extracts
+  isoler.sh and the common image at the same commit (JUGE_COMMUN_SHA). It declares the corpus commit
+  2948eebafc5b9f1c69bebed80333e403a09bd62d as `historique`: juge.yml checks it is in the base's ancestry and fetches it
+  in a step of its own, before any file of the PR, the only judge step with the read-only token. The plugin's own git
+  fetch during judging (the workaround of miniz-0032) is removed: historique_du_corpus only checks the commit is there,
+  and a missing one is an environment error (code 2). A test in bee/ci/test_verdict.py ties the declared history to
+  the plugin's COMMIT_CORPUS (the old and the new commit may both be declared during a PR that changes it).
+  bee/README.md, bee/juge/projet.py and bee/ci/verdict.py no longer describe juge-v1 or the fetch.
+teste:
+  - "The fork's CI on the first push of this PR (run 41366329152, before this manifest): the common judge juge-v2 gave code 0 on master's code, with the declared history fetched in its own step; 914 outputs for 129 inputs, 7868 outputs compared, the same counts and image tag as juge-v1 on PR #21; compilation and tests (x86-64, ARM64), fuzzing, the plugin's meta-tests (19, the 7 variants as expected) and the CI tooling tests (44, the new test included) passed. Only the manifest job failed, as this manifest was missing."
+  - "2948eeb is an ancestor of master (git merge-base --is-ancestor; GitHub compare API: behind)."
+non_teste:
+  - "No local run of the fork's code: it runs only in the sandbox, and CI ran it."
+doutes: "This changes bee/ on master, so the open task PRs (#13, #15, #18, #20) will be asked by the greffon job to rebase, as after any change to bee/; their next run is judged by juge-v2. Changing COMMIT_CORPUS later needs both commits declared for one PR (README)."
+taille_reelle: M
