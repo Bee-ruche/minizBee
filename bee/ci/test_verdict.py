@@ -6,6 +6,7 @@ Usage : python3 bee/ci/test_verdict.py
 
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
@@ -457,6 +458,9 @@ class Juges(unittest.TestCase):
         # Greffon lu dans la base : le commit vient du job greffon, jamais de la tête de la PR directement.
         self.assertEqual(juge["with"]["base_sha"], "${{ needs.greffon.outputs.base_juge }}")
         self.assertIn("greffon", juge["needs"])
+        # Le commit du corpus est déclaré à juge.yml (juge-v2), qui le récupère avant la PR : c'est celui du greffon.
+        greffon = (Path(__file__).resolve().parents[1] / "juge" / "projet.py").read_text(encoding="utf-8")
+        self.assertIn(f'COMMIT_CORPUS = "{juge["with"]["historique"]}"', greffon)
         extractions = [e for job in workflow["jobs"].values() for e in job.get("steps", [])
                        if e.get("with", {}).get("path") == "juge-commun"]
         self.assertEqual(len(extractions), 3)  # compilation et tests, fuzzing, méta-tests

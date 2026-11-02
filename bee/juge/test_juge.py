@@ -6,7 +6,7 @@
                                                     + méta-tests : le juge commun, avec CE greffon, contre des
                                                       variantes de miniz honnête et MALVEILLANTES (Docker requis)
   BEE_JUGE_COMMUN=<registre>/outils/juge            le juge commun, à l'étiquette épinglée par
-                                                    .github/workflows/bee-ci.yml (juge-v1) ; par défaut,
+                                                    .github/workflows/bee-ci.yml (juge-v2) ; par défaut,
                                                     ../registre/outils/juge à côté de ce dépôt
   BEE_JUGE_RESEAU=host                              réseau de « docker build » (machines sans pont Docker)
 

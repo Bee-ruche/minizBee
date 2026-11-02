@@ -214,7 +214,7 @@ Déclenchée sur chaque pull request, avec le seul droit `contents: read`.
 | Compilation et tests | ubuntu-24.04 **et** ubuntu-24.04-arm | `compilation_<arch>`, `differentiel_<arch>` | `bee/ci/tests_origine.sh` (CMake + ctest), puis `bee/ci/differentiel.sh` (juges de la base, sources de la PR) |
 | Fuzzing | ubuntu-24.04 | `fuzzing` | `bee/fuzz/lancer.sh 600 --source pr --reference base` (libFuzzer, 2 harnais en parallèle, 10 min, mode discret ; seuls les écarts nouveaux font échouer) |
 | Greffon du juge commun | ubuntu-24.04 | `greffon_juge` | choisit le commit dont le juge commun lit le greffon et les sources de A : toujours le point de départ de la PR, qui doit être unique ; si `bee/` ou miniz a changé sur master depuis, l'étape est rouge (« rebasez ») (voir « Juge commun ») |
-| Juge commun | ubuntu-24.04 | `juge_isole` | `Bee-ruche/registre/.github/workflows/juge.yml@821647d…` (juge-v1 épinglé par SHA ; option `sortie_compressee` de la tâche) : vérification de l'extérieur, 10 répétitions, instructions, analyse des objets ; artefact `juge` (`juge.json`, `code`) |
+| Juge commun | ubuntu-24.04 | `juge_isole` | `Bee-ruche/registre/.github/workflows/juge.yml@dab13a6…` (juge-v2 épinglé par SHA ; option `sortie_compressee` de la tâche ; `historique` : le commit du corpus) : vérification de l'extérieur, 10 répétitions, instructions, analyse des objets ; artefact `juge` (`juge.json`, `code`) |
 | Ancien juge isolé (transition) | ubuntu-24.04 | `juge_ancien` | `bee/juge/juge.py` de la base, tant qu'une base en a encore un (les PR vers master tant que miniz-0032 n'y est pas fusionnée) ; sinon rien |
 | Méta-tests du greffon | ubuntu-24.04 | `meta_juge` | `bee/juge/test_juge.py` avec `BEE_JUGE_INTEGRATION=1` et le juge commun au même commit, seulement si la PR modifie `bee/juge/` ou ce workflow (code de la PR : job à part, lecture seule, ni artefact ni sortie, seul son résultat compte) |
 | Tests de l'outillage de CI de la PR | ubuntu-24.04 | `outillage_pr` | `bee/ci/test_verdict.py` de la PR, seulement si elle modifie `bee/ci/` ou ce workflow (le job manifeste lance ceux de la base) ; mêmes conditions que les méta-tests |
@@ -227,7 +227,7 @@ Les jobs « Compilation et tests » et « Fuzzing » exécutent leurs commandes 
 **Sécurité.**
 - Aucun secret, et aucun checkout ne conserve d'identifiants.
 - Le code C de la PR ne s'exécute **jamais** sur la machine de CI elle-même : seulement dans le conteneur du juge, sans réseau (section suivante).
-- Les **juges** (tests, corpus, banc, fuzzing, greffon du juge commun, scripts) viennent de la **base** de la PR : la PR ne peut pas assouplir ce qui la juge. Le juge commun lui-même vient du registre, épinglé par SHA (`821647d8fcb27840908b98f6778862bfb228aef2`, l'étiquette `juge-v1` au 30/10/2026).
+- Les **juges** (tests, corpus, banc, fuzzing, greffon du juge commun, scripts) viennent de la **base** de la PR : la PR ne peut pas assouplir ce qui la juge. Le juge commun lui-même vient du registre, épinglé par SHA (`dab13a6e769a19937def567ed896a05b534c61dc`, juge-v2, la fusion de ruche-0024 le 2/11/2026).
 - Le manifeste de la PR (`manifestes/<tâche>.yaml`, un fichier par tâche ; l'ancien `CONTRIBUTION.yaml` à la racine reste lu) et la tâche sont lus comme des données.
 - `ci` se décide sur le résultat des jobs GitHub, que le code de la PR ne peut pas réécrire.
 
@@ -246,7 +246,7 @@ python3 <registre>/outils/juge/juge.py --outillage . --source-a <dossier de la b
 BEE_JUGE_COMMUN=<registre>/outils/juge python3 bee/juge/test_juge.py                            # tests du greffon
 BEE_JUGE_COMMUN=<registre>/outils/juge BEE_JUGE_INTEGRATION=1 python3 bee/juge/test_juge.py     # + méta-tests (Docker, ≈ 6 min)
 ```
-(`<registre>` au commit épinglé par `bee-ci.yml`, `JUGE_COMMUN_SHA` (juge-v1). Sans pont Docker, comme dans certaines sessions cloud : ajoutez `--reseau-construction host`, ou `BEE_JUGE_RESEAU=host` pour les méta-tests.)
+(`<registre>` au commit épinglé par `bee-ci.yml`, `JUGE_COMMUN_SHA` (juge-v2). Sans pont Docker, comme dans certaines sessions cloud : ajoutez `--reseau-construction host`, ou `BEE_JUGE_RESEAU=host` pour les méta-tests.)
 
 **Déroulement** (le juge commun, avec ce greffon).
 1. **Image** : `Dockerfile.base` du registre (Ubuntu 24.04 épinglée par empreinte) plus les `PAQUETS` du greffon (g++, cmake, zlib1g-dev, git, clang-18, libclang-rt-18-dev : ceux des tests d'origine, des tests différentiels et du fuzzing, qui tournent dans la même image). Construite avant que le moindre fichier de la PR ne soit monté : c'est la seule étape où le conteneur a du réseau. Sur l'hôte, le greffon fait aussi un `git fetch` d'un SHA fixe pour le corpus, après l'extraction de la PR (voir « Historique pour le corpus »).
@@ -268,7 +268,7 @@ Le rapport (`juge.json`) a le format de celui d'`ab.py`, plus une section `juge`
 
 **L'attaquant** est l'auteur d'une PR qui ne modifie que les sources de miniz. Une PR qui touche `bee/` ou `.github/` change ses propres juges (le fichier de workflow est celui de la PR) : le registre le détecte (fichiers de la PR lus auprès de GitHub) et exige la relecture d'un gardien (R3).
 
-**Ce qui est de confiance, et où il vit.** Le juge commun (registre : `juge.yml` épinglé par SHA, `821647d8fcb27840908b98f6778862bfb228aef2`, l'étiquette `juge-v1` au 30/10/2026 ; `isoler.sh` et l'image commune extraits au même commit ; jamais la branche principale) ; le greffon, la construction, le harnais et le corpus de la **base** du fork ; la zlib de l'hôte ; le noyau, Docker et Valgrind. Corriger une faille du juge commun se fait une fois, dans le registre (nouvelle étiquette, dont le fork épingle le SHA par une PR jugée par l'ancienne et la nouvelle version) ; corriger le greffon se fait ici. Limite : à ce commit, `juge.yml` extrait lui-même le code du juge commun à l'**étiquette** `juge-v1` (son `JUGE_COMMUN_REF`) ; une étiquette se déplace, et une branche du même nom la masquerait. Le fork ne peut pas le corriger : c'est à faire dans le registre (épingler par SHA, protéger les étiquettes `juge-v*`).
+**Ce qui est de confiance, et où il vit.** Le juge commun (registre : `juge.yml` épinglé par SHA, `dab13a6e769a19937def567ed896a05b534c61dc`, juge-v2 au 2/11/2026 ; `isoler.sh` et l'image commune extraits au même commit ; jamais la branche principale) ; le greffon, la construction, le harnais et le corpus de la **base** du fork ; la zlib de l'hôte ; le noyau, Docker et Valgrind. Corriger une faille du juge commun se fait une fois, dans le registre (nouvelle étiquette, dont le fork épingle le SHA par une PR jugée par l'ancienne et la nouvelle version) ; corriger le greffon se fait ici. Depuis juge-v2 (ruche-0024), `juge.yml` lit le code du juge commun à son propre commit, qu'il refuse s'il n'est pas sur la branche principale du registre, jamais à une étiquette.
 
 **Ce que le code de la PR peut faire**, dans son conteneur : tout ce qu'un programme peut faire dans son propre processus. Lire et écrire sa mémoire et celle du harnais, écrire ce qu'il veut dans son dossier de sorties, consommer du temps et de la mémoire jusqu'aux limites, s'arrêter quand il veut, chercher à savoir s'il est mesuré.
 

@@ -5,7 +5,7 @@
 #   2. compilation et tests d'origine de miniz, x86-64 et ARM64
 #   3. tests différentiels contre zlib et empreintes de déterminisme, x86-64 et ARM64
 #   4. fuzzing libFuzzer, 2 harnais en parallèle pendant 10 minutes, x86-64
-#   5. juge commun du registre (workflow réutilisable juge.yml de juge-v1, épinglé par SHA) avec le greffon de
+#   5. juge commun du registre (workflow réutilisable juge.yml de juge-v2, épinglé par SHA) avec le greffon de
 #      minizBee (bee/juge/projet.py) lu dans la BASE : point de départ de la PR (merge-base avec la base)
 #      contre tête de la PR ; vérification de toutes les sorties par l'hôte (zlib de l'hôte, entrées tirées
 #      au hasard), mesures entrelacées (10 répétitions) et décompte d'instructions Cachegrind, tout en
@@ -31,10 +31,9 @@
 #   - le code C de la PR ne s'exécute JAMAIS sur la machine de CI elle-même : compilation, tests,
 #     fuzzing et mesures tournent dans le conteneur du juge commun (sans réseau, lecture seule, sans
 #     privilège), sur des copies jetables. isoler.sh et l'image viennent du registre au commit JUGE_COMMUN_SHA ;
-#     juge.yml est appelé à ce commit, mais il extrait encore lui-même juge.py à l'étiquette juge-v1 (voir le
-#     job juge), tant que ruche-0024 n'est pas faite dans le registre.
-#     L'image est construite avant que le moindre fichier de la PR ne soit monté. Sur l'hôte, le greffon fait
-#     aussi un git fetch d'un SHA fixe pour le corpus (bee/juge/projet.py), après l'extraction de la PR.
+#     juge.yml est appelé à ce commit et en extrait lui-même le juge (ruche-0024 : jamais une étiquette).
+#     L'image est construite avant que le moindre fichier de la PR ne soit monté. Le commit du corpus
+#     (2948eeb) est déclaré à juge.yml (historique) et récupéré avant la PR ; aucun réseau ensuite.
 #   - le greffon (bee/juge/projet.py) est lu dans la BASE, jamais dans la PR : seule la PR qui l'introduit
 #     (bee/ci/juges.sh, « introduction du greffon ») est jugée avec le sien, en amorçage (amorcage: true).
 #   - les étapes 2 à 4 restent des contrôles « de l'intérieur » : un code malveillant peut fausser ses
@@ -60,11 +59,11 @@ env:
   BASE_SHA: ${{ github.event.pull_request.base.sha }}
   TETE_SHA: ${{ github.event.pull_request.head.sha }}
   REGISTRE: Bee-ruche/registre
-  # Version du juge commun : le commit que désignait l'étiquette juge-v1 du registre le 30/10/2026 (vérifié
-  # par l'API GitHub). Épinglé par SHA, pas par l'étiquette : une étiquette se déplace, et une branche du
+  # Version du juge commun : juge-v2, le commit de la fusion de ruche-0024 dans le registre (PR #126, le
+  # 2/11/2026 ; juge.yml refuse lui-même un commit qui n'est pas sur la branche principale du registre). Épinglé par SHA, pas par l'étiquette : une étiquette se déplace, et une branche du
   # même nom la masquerait (revue adverse de miniz-0032). Le même SHA que dans le « uses: » du job juge (une
   # expression n'y est pas permise) ; bee/ci/test_verdict.py vérifie qu'ils sont égaux.
-  JUGE_COMMUN_SHA: "821647d8fcb27840908b98f6778862bfb228aef2"  # juge-v1
+  JUGE_COMMUN_SHA: "dab13a6e769a19937def567ed896a05b534c61dc"  # juge-v2
   ETATS: ${{ github.workspace }}/etats
   # Amorçage : la première PR, qui apporte bee/, a pour base le master d'origine, sans juges.
   # Pour CE commit seulement, les juges viennent de la PR elle-même (verdict : amorcage: true).
@@ -294,7 +293,7 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Juge commun (registre, au commit épinglé de juge-v1)
+      - name: Juge commun (registre, au commit épinglé de juge-v2)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.REGISTRE }}
@@ -348,7 +347,7 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Juge commun (registre, au commit épinglé de juge-v1)
+      - name: Juge commun (registre, au commit épinglé de juge-v2)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.REGISTRE }}
@@ -374,18 +373,18 @@ jobs:
           path: etats/
           if-no-files-found: warn
 
-  # Juge commun du registre, juge.yml de juge-v1 épinglé par SHA : il juge la tête contre A avec le greffon
+  # Juge commun du registre, juge.yml de juge-v2 épinglé par SHA : il juge la tête contre A avec le greffon
   # de needs.greffon (la base), et publie l'artefact « juge » (juge.json, code). Le job ne devient jamais
-  # rouge à cause de B : c'est verdict.py qui lit le code (0 juste, 1 refusé, 2 environnement). Limite : à
-  # ce commit, juge.yml extrait lui-même le code du juge commun à l'étiquette juge-v1 (JUGE_COMMUN_REF du
-  # registre) et la base sans historique ; ces deux points se corrigent dans le registre. Réseau sur l'hôte :
-  # outre l'image, le greffon fait un git fetch d'un SHA fixe (2948eeb, corpus) après l'extraction de la PR.
+  # rouge à cause de B : c'est verdict.py qui lit le code (0 juste, 1 refusé, 2 environnement). juge.yml lit
+  # le juge commun à son propre commit ; historique : le commit du corpus (2948eeb), que juge.yml vérifie
+  # dans l'ascendance de la base et récupère avant la PR, à la place de l'ancien git fetch du greffon.
   juge:
     name: Juge commun
     needs: [manifeste, greffon]
     if: always() && needs.greffon.result == 'success' && needs.greffon.outputs.base_juge != ''
-    uses: Bee-ruche/registre/.github/workflows/juge.yml@821647d8fcb27840908b98f6778862bfb228aef2 # juge-v1
+    uses: Bee-ruche/registre/.github/workflows/juge.yml@dab13a6e769a19937def567ed896a05b534c61dc # juge-v2
     with:
+      historique: 2948eebafc5b9f1c69bebed80333e403a09bd62d
       base_sha: ${{ needs.greffon.outputs.base_juge }}
       tete_sha: ${{ github.event.pull_request.head.sha }}
       options: sortie_compressee=${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
@@ -480,7 +479,7 @@ jobs:
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Juge commun (registre, au commit épinglé de juge-v1)
+      - name: Juge commun (registre, au commit épinglé de juge-v2)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.REGISTRE }}

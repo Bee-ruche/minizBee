@@ -143,22 +143,15 @@ def flux_zlib(rng, originaux):
 
 
 def historique_du_corpus(outillage):
-    """Rend lisibles les objets git du commit COMMIT_CORPUS dans la copie de la base (outillage).
+    """Vérifie que les objets git du commit COMMIT_CORPUS sont lisibles dans la copie de la base (outillage).
 
-    Le workflow juge.yml du registre extrait la base sans historique (fetch-depth 1) : les sources figées
-    que bee/corpus/generer.py lit par identifiant d'objet (miniz_tdef.c et miniz_tinfl.c d'origine, entre
-    autres) n'y sont pas. Ce seul commit est alors demandé au dépôt de la copie (git fetch, sur l'hôte, sans
-    rien exécuter de la PR) ; generer.py vérifie ensuite la somme SHA-256 de chaque source et du corpus.
-    C'est un accès réseau de l'hôte APRÈS l'extraction de la PR (le juge commun appelle corpus() après la
-    compilation) : la sûreté tient (SHA fixe, sommes vérifiées), la disponibilité dépend de GitHub. À retirer
-    quand juge.yml extraira la base avec son historique (ruche-0024, dans le registre)."""
-    git = ["git", "-C", outillage]
-    if subprocess.run(git + ["cat-file", "-e", COMMIT_CORPUS + "^{commit}"], capture_output=True).returncode == 0:
-        return
-    r = subprocess.run(git + ["fetch", "--quiet", "--no-tags", "--depth=1", "origin", COMMIT_CORPUS],
-                       capture_output=True, text=True, timeout=600)
-    if r.returncode != 0:
-        raise Erreur(f"corpus : commit {COMMIT_CORPUS} introuvable dans la base et impossible à récupérer : " + r.stderr[-500:])
+    Les sources figées que bee/corpus/generer.py lit par identifiant d'objet (miniz_tdef.c et miniz_tinfl.c
+    d'origine, entre autres) viennent de ce commit. juge.yml (juge-v2, ruche-0024) le récupère avant la PR,
+    parce que bee-ci.yml le déclare (historique) ; pendant le jugement, git n'a plus aucun transport. Aucun
+    accès réseau ici : un commit absent est une erreur d'environnement (code 2)."""
+    if subprocess.run(["git", "-C", outillage, "cat-file", "-e", COMMIT_CORPUS + "^{commit}"],
+                      capture_output=True).returncode != 0:
+        raise Erreur(f"corpus : commit {COMMIT_CORPUS} absent de la base ; déclarez-le à juge.yml (historique)")
 
 
 class Projet:
