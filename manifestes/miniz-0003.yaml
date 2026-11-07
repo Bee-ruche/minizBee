@@ -1,0 +1,37 @@
+tache: miniz-0003
+utilisateur: bidji29
+agent:
+  modele: "Claude Sonnet 5.5 (claude-sonnet-5-5)"
+  client: bee 0.1.0
+resume: "Test A/A du banc ab.py (base contre elle-même, 6 passages) sur une machine partagée : bruit des médianes de 2 à 21 %, aucun faux au-delà du bruit."
+changement: >
+  Aucune modification de code : ajout de bee/resultats/miniz-0003/ (6 rapports JSON A/A, RAPPORT.md avec configuration,
+  plus grand écart de médiane par métrique, faux positifs comptés). Machine partagée (autres suites de tests en parallèle,
+  charge 4,8 pour 2 coeurs) : écarts de médiane jusqu'à 13 % (n1), 21 % (décompression), mais le test du signe n'a
+  déclaré aucun faux au-delà du bruit et les instructions sont identiques. Réglages proposés dans RAPPORT.md, non testés.
+mesures:
+  machine: "Intel Xeon 2,1 GHz virtualisé, 2 coeurs, Linux 6.18 x86_64, gcc 13.3.0, conteneur bee-miniz, machine non calme"
+  commande: "python3 bee/bench/ab.py --base HEAD --candidate HEAD --repetitions 10 [--instructions] (A contre A ; valeurs : passage 1 sans --instructions ; 6 passages au total, chauffe de 1)"
+  repetitions: 10
+  avant:
+    debit_compression_n1: 90.9695
+    debit_compression_n6: 18.7525
+    debit_compression_n9: 11.1555
+    debit_decompression: 552.3105
+    ratio_n6: 3.5054
+    memoire_max_ko: 1720.0
+  apres:
+    debit_compression_n1: 84.4965
+    debit_compression_n6: 18.984
+    debit_compression_n9: 11.2895
+    debit_decompression: 515.1235
+    ratio_n6: 3.5054
+    memoire_max_ko: 1720.0
+teste:
+  - "6 passages A/A de ab.py (3 sans, 3 avec --instructions), base b16e34e contre elle-même, dans le conteneur bee-miniz sans réseau"
+  - "calcul, sur les JSON, des plus grands écarts de médiane par métrique et des faux au-delà du bruit (0)"
+non_teste:
+  - "machine calme (le bruit mesuré est celui d'une machine partagée) ; autre architecture (ARM) ; autre compilateur"
+  - "les réglages proposés (charge dans le JSON, médiane des rapports de paires, 20 répétitions, taskset)"
+doutes: "Le bruit est probablement surestimé par la charge des autres agents sur la machine ; une seule machine, 3 passages par mode, donc le comptage de faux positifs (0 sur 6 passages) est trop faible pour borner leur taux."
+taille_reelle: S

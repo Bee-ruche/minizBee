@@ -1,0 +1,372 @@
+{
+  "base": {
+    "rev": "HEAD",
+    "commit": "b16e34e65477b5716f054011b9646bac0c48ae86"
+  },
+  "candidat": {
+    "rev": "HEAD",
+    "commit": "b16e34e65477b5716f054011b9646bac0c48ae86"
+  },
+  "repetitions": 10,
+  "chauffe": 1,
+  "ordre": "A, B, A, B…",
+  "machine": {
+    "processeur": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "architecture": "x86_64",
+    "coeurs": 2,
+    "systeme": "Linux-6.18.44-fc-v242-x86_64-with-glibc2.39",
+    "compilateur": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+  },
+  "methode": {
+    "valeur_retenue": "médiane des répétitions",
+    "gain": "médiane(B)/médiane(A) - 1 (plus_haut) ; 1 - médiane(B)/médiane(A) (plus_bas) ; positif = mieux",
+    "au_dela_du_bruit": "test du signe sur les paires entrelacées (A_i, B_i) : B gagne au moins k paires, k = plus petit entier tel que P(X >= k | N, 1/2) <= 0.02 ; ici N = 10, k = 9",
+    "degradation_au_dela_du_bruit": "même test, A gagne au moins k paires",
+    "minmax_disjoints": "information seulement : intervalles [min, max] de A et de B disjoints"
+  },
+  "metriques": {
+    "debit_compression_n1": {
+      "sens": "plus_haut",
+      "unite": "Mo/s",
+      "A": {
+        "mediane": 90.8695,
+        "min": 73.053,
+        "max": 98.544,
+        "valeurs": [
+          73.053,
+          75.591,
+          91.665,
+          97.357,
+          98.544,
+          81.038,
+          83.482,
+          98.527,
+          90.074,
+          94.042
+        ]
+      },
+      "B": {
+        "mediane": 78.943,
+        "min": 67.454,
+        "max": 101.224,
+        "valeurs": [
+          71.942,
+          73.582,
+          84.596,
+          67.454,
+          101.224,
+          76.341,
+          88.558,
+          75.936,
+          81.545,
+          92.306
+        ]
+      },
+      "gain": -0.13124865879090353,
+      "au_dela_du_bruit": false,
+      "degradation_au_dela_du_bruit": false,
+      "test_du_signe": {
+        "paires": 10,
+        "paires_utiles": 10,
+        "victoires_B": 2,
+        "victoires_A": 8,
+        "egalites": 0,
+        "seuil_k": 9,
+        "p_amelioration": 0.9892578125,
+        "p_degradation": 0.0546875,
+        "au_dela_du_bruit": false,
+        "degradation_au_dela_du_bruit": false
+      },
+      "minmax_disjoints": false
+    },
+    "debit_compression_n6": {
+      "sens": "plus_haut",
+      "unite": "Mo/s",
+      "A": {
+        "mediane": 18.5315,
+        "min": 16.996,
+        "max": 24.503,
+        "valeurs": [
+          18.603,
+          18.458,
+          16.996,
+          23.78,
+          24.503,
+          18.032,
+          18.708,
+          18.46,
+          17.588,
+          19.639
+        ]
+      },
+      "B": {
+        "mediane": 17.989,
+        "min": 16.805,
+        "max": 25.068,
+        "valeurs": [
+          16.805,
+          17.725,
+          25.061,
+          17.652,
+          25.068,
+          18.253,
+          19.159,
+          18.483,
+          17.679,
+          17.592
+        ]
+      },
+      "gain": -0.029274478590508024,
+      "au_dela_du_bruit": false,
+      "degradation_au_dela_du_bruit": false,
+      "test_du_signe": {
+        "paires": 10,
+        "paires_utiles": 10,
+        "victoires_B": 6,
+        "victoires_A": 4,
+        "egalites": 0,
+        "seuil_k": 9,
+        "p_amelioration": 0.376953125,
+        "p_degradation": 0.828125,
+        "au_dela_du_bruit": false,
+        "degradation_au_dela_du_bruit": false
+      },
+      "minmax_disjoints": false
+    },
+    "debit_compression_n9": {
+      "sens": "plus_haut",
+      "unite": "Mo/s",
+      "A": {
+        "mediane": 10.678,
+        "min": 9.722,
+        "max": 14.628,
+        "valeurs": [
+          11.885,
+          10.81,
+          9.722,
+          13.744,
+          14.628,
+          10.269,
+          11.213,
+          10.129,
+          10.546,
+          10.099
+        ]
+      },
+      "B": {
+        "mediane": 10.896,
+        "min": 10.101,
+        "max": 15.048,
+        "valeurs": [
+          10.483,
+          10.524,
+          13.904,
+          10.101,
+          15.048,
+          10.814,
+          10.776,
+          11.1,
+          10.978,
+          11.174
+        ]
+      },
+      "gain": 0.020415808203783525,
+      "au_dela_du_bruit": false,
+      "degradation_au_dela_du_bruit": false,
+      "test_du_signe": {
+        "paires": 10,
+        "paires_utiles": 10,
+        "victoires_B": 6,
+        "victoires_A": 4,
+        "egalites": 0,
+        "seuil_k": 9,
+        "p_amelioration": 0.376953125,
+        "p_degradation": 0.828125,
+        "au_dela_du_bruit": false,
+        "degradation_au_dela_du_bruit": false
+      },
+      "minmax_disjoints": false
+    },
+    "debit_decompression": {
+      "sens": "plus_haut",
+      "unite": "Mo/s",
+      "A": {
+        "mediane": 485.249,
+        "min": 405.73,
+        "max": 572.878,
+        "valeurs": [
+          476.031,
+          470.687,
+          427.459,
+          567.065,
+          551.002,
+          405.73,
+          494.467,
+          562.132,
+          572.878,
+          462.751
+        ]
+      },
+      "B": {
+        "mediane": 567.98,
+        "min": 403.015,
+        "max": 579.591,
+        "valeurs": [
+          574.181,
+          485.719,
+          575.574,
+          579.591,
+          576.335,
+          476.243,
+          475.554,
+          565.877,
+          403.015,
+          570.083
+        ]
+      },
+      "gain": 0.17049185057568383,
+      "au_dela_du_bruit": false,
+      "degradation_au_dela_du_bruit": false,
+      "test_du_signe": {
+        "paires": 10,
+        "paires_utiles": 10,
+        "victoires_B": 8,
+        "victoires_A": 2,
+        "egalites": 0,
+        "seuil_k": 9,
+        "p_amelioration": 0.0546875,
+        "p_degradation": 0.9892578125,
+        "au_dela_du_bruit": false,
+        "degradation_au_dela_du_bruit": false
+      },
+      "minmax_disjoints": false
+    },
+    "ratio_n6": {
+      "sens": "plus_haut",
+      "unite": "ratio",
+      "A": {
+        "mediane": 3.5054,
+        "min": 3.5054,
+        "max": 3.5054,
+        "valeurs": [
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054
+        ]
+      },
+      "B": {
+        "mediane": 3.5054,
+        "min": 3.5054,
+        "max": 3.5054,
+        "valeurs": [
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054,
+          3.5054
+        ]
+      },
+      "gain": 0.0,
+      "au_dela_du_bruit": false,
+      "degradation_au_dela_du_bruit": false,
+      "test_du_signe": {
+        "paires": 10,
+        "paires_utiles": 0,
+        "victoires_B": 0,
+        "victoires_A": 0,
+        "egalites": 10,
+        "seuil_k": null,
+        "p_amelioration": null,
+        "p_degradation": null,
+        "au_dela_du_bruit": false,
+        "degradation_au_dela_du_bruit": false
+      },
+      "minmax_disjoints": false
+    },
+    "memoire_max_ko": {
+      "sens": "plus_bas",
+      "unite": "Ko",
+      "A": {
+        "mediane": 1718.0,
+        "min": 1552,
+        "max": 1824,
+        "valeurs": [
+          1552,
+          1708,
+          1716,
+          1824,
+          1720,
+          1676,
+          1676,
+          1784,
+          1776,
+          1772
+        ]
+      },
+      "B": {
+        "mediane": 1718.0,
+        "min": 1588,
+        "max": 1828,
+        "valeurs": [
+          1656,
+          1716,
+          1720,
+          1720,
+          1828,
+          1784,
+          1656,
+          1588,
+          1772,
+          1624
+        ]
+      },
+      "gain": 0.0,
+      "au_dela_du_bruit": false,
+      "degradation_au_dela_du_bruit": false,
+      "test_du_signe": {
+        "paires": 10,
+        "paires_utiles": 10,
+        "victoires_B": 5,
+        "victoires_A": 5,
+        "egalites": 0,
+        "seuil_k": 9,
+        "p_amelioration": 0.623046875,
+        "p_degradation": 0.623046875,
+        "au_dela_du_bruit": false,
+        "degradation_au_dela_du_bruit": false
+      },
+      "minmax_disjoints": false
+    }
+  },
+  "mesures": {
+    "A": {
+      "debit_compression_n1": 90.8695,
+      "debit_compression_n6": 18.5315,
+      "debit_compression_n9": 10.678,
+      "debit_decompression": 485.249,
+      "ratio_n6": 3.5054,
+      "memoire_max_ko": 1718.0
+    },
+    "B": {
+      "debit_compression_n1": 78.943,
+      "debit_compression_n6": 17.989,
+      "debit_compression_n9": 10.896,
+      "debit_decompression": 567.98,
+      "ratio_n6": 3.5054,
+      "memoire_max_ko": 1718.0
+    }
+  },
+  "duree_s": 157.6
+}
