@@ -838,8 +838,10 @@ class Vocabulaire(unittest.TestCase):
                 self.assertEqual(self.v.lire_tache(self.yaml(TACHE_EN.replace("optimization", en)))["type"], fr)
         sans_sortie = self.v.lire_tache(self.yaml(TACHE_EN.replace("compressed_output: may_change\n", "")))
         self.assertEqual(sans_sortie["sortie_compressee"], "identique")  # absente : le contrôle le plus strict
-        nulle = self.v.lire_tache(self.yaml(TACHE_EN.replace("metric: debit_decompression", "metric: null")))
-        self.assertIsNone(nulle["metrique"])  # la tâche dit explicitement qu'elle n'a pas de métrique
+        for texte in (TACHE_EN.replace("metric: debit_decompression", "metric: null").replace("optimization", "test"),
+                      TACHE_FR.replace("metrique: debit_decompression", "metrique: null").replace("optimisation", "mesure")):
+            nulle = self.v.lire_tache(self.yaml(texte))
+            self.assertIsNone(nulle["metrique"])  # la tâche dit explicitement qu'elle n'a pas de métrique
 
     def test_tache_melee_refusee(self):
         for texte in (TACHE_FR.replace("statut: reservee", "status: reserved"),
@@ -857,7 +859,10 @@ class Vocabulaire(unittest.TestCase):
                       TACHE_FR.replace("metrique: debit_decompression\n", ""),
                       TACHE_EN.replace("metric: debit_decompression\n", ""),
                       TACHE_EN.replace("debit_decompression", "vitesse"), TACHE_FR.replace("debit_decompression", "[ratio_n6]"),
-                      "id: miniz-0050\ntype: test\n", "- liste\n", ""):
+                      "id: miniz-0050\ntype: test\n", "- liste\n", "",
+                      # revue adverse (M1) : une optimisation sans métrique n'a rien que R4 puisse juger
+                      TACHE_EN.replace("metric: debit_decompression", "metric: null"),
+                      TACHE_FR.replace("metrique: debit_decompression", "metrique: null")):
             with self.subTest(tache=texte), self.assertRaises(self.v.Illisible):
                 self.v.lire_tache(self.yaml(texte))
         with self.assertRaises(self.v.Illisible):
@@ -980,7 +985,9 @@ class JobManifeste(unittest.TestCase):
                                ("taches", TACHE_FR.replace("metrique: debit_decompression\n", "")),
                                ("tasks", TACHE_EN.replace("debit_decompression", "vitesse")),
                                ("tasks", TACHE_EN.replace("compressed_output: may_change", "sortie_compressee: peut_changer")),
-                               ("taches", TACHE_FR.replace("optimisation", "optimization")), ("tasks", "- pas un objet\n")):
+                               ("taches", TACHE_FR.replace("optimisation", "optimization")), ("tasks", "- pas un objet\n"),
+                               ("tasks", TACHE_EN.replace("metric: debit_decompression", "metric: null")),
+                               ("taches", TACHE_FR.replace("metrique: debit_decompression", "metrique: null"))):
             with self.subTest(dossier=dossier, tache=texte):
                 self.setUp()
                 code, sortie = self.lancer([("manifestes/miniz-0050.yaml", MANIFESTE_FR)], taches=((dossier, texte),))
@@ -1067,8 +1074,8 @@ class DeuxVocabulairesDansLeVerdict(unittest.TestCase):
         manifeste = MANIFESTE_FR.replace("debit_decompression", "debit_compression_n6")
         for jobs in (JOBS_OK, None):
             with self.subTest(ci=jobs is not None):
-                v = self.executer({e: "succes" for e in ETAPES}, jobs, rapport_ab(), TACHE_EN.replace("metric: debit_decompression", "metric: null"),
-                                  manifeste=manifeste, code=None if jobs else "0")
+                tache = TACHE_EN.replace("metric: debit_decompression", "metric: null").replace("optimization", "test")
+                v = self.executer({e: "succes" for e in ETAPES}, jobs, rapport_ab(), tache, manifeste=manifeste, code=None if jobs else "0")
                 self.assertEqual((v["ci"], v["metrique"], v["gain"]), ("verte", None, None))
 
     def test_simulation_sans_tache_lit_le_manifeste(self):

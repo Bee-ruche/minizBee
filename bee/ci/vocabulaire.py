@@ -81,11 +81,15 @@ def metrique_de_la_tache(donnees):
 
 def lire_tache(donnees):
     """type, metrique et sortie_compressee de la tâche, en noms internes. Une sortie_compressee absente vaut
-    « identique », le contrôle le plus strict ; présente, elle doit être lisible."""
+    « identique », le contrôle le plus strict ; présente, elle doit être lisible. Une optimisation sans métrique
+    (metric: null) est illisible : R4 n'aurait rien à juger."""
     metrique = metrique_de_la_tache(donnees)
     tache, langue_tache = tache_en_francais(donnees)
     sortie = valeur(tache, "sortie_compressee", SORTIES, langue_tache) if "sortie_compressee" in tache else "identique"
-    return {"type": valeur(tache, "type", TYPES, langue_tache), "metrique": metrique, "sortie_compressee": sortie}
+    type_tache = valeur(tache, "type", TYPES, langue_tache)
+    if type_tache == "optimisation" and metrique is None:
+        raise Illisible("une tâche d'optimisation sans métrique (metric: null) : illisible, R4 n'aurait rien à juger")
+    return {"type": type_tache, "metrique": metrique, "sortie_compressee": sortie}
 
 
 def lire_manifeste(donnees):
