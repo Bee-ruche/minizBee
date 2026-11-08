@@ -210,7 +210,7 @@ Déclenchée sur chaque pull request, avec le seul droit `contents: read`.
 
 | Job | Machine | Étape(s) du verdict | Commande |
 | --- | --- | --- | --- |
-| Manifeste et taille | ubuntu-24.04 | `manifeste_et_taille` | `bee/ci/manifeste.sh` : tâche lue dans le registre, puis `bee verifier-fork` (R1, commandement 3, manifeste) |
+| Manifeste et taille | ubuntu-24.04 | `manifeste_et_taille` | `bee/ci/manifeste.sh` : tâche lue dans le registre, puis `bee verifier-fork` (R1, commandement 3, manifeste) ; le registre et le manifeste sont lus en français ou en anglais (`bee/ci/vocabulaire.py`, `bee/ci/verifier_fork.py`), un seul vocabulaire par document |
 | Compilation et tests | ubuntu-24.04 **et** ubuntu-24.04-arm | `compilation_<arch>`, `differentiel_<arch>` | `bee/ci/tests_origine.sh` (CMake + ctest), puis `bee/ci/differentiel.sh` (juges de la base, sources de la PR) |
 | Fuzzing | ubuntu-24.04 | `fuzzing` | `bee/fuzz/lancer.sh 600 --source pr --reference base` (libFuzzer, 2 harnais en parallèle, 10 min, mode discret ; seuls les écarts nouveaux font échouer) |
 | Greffon du juge commun | ubuntu-24.04 | `greffon_juge` | choisit le commit dont le juge commun lit le greffon et les sources de A : toujours le point de départ de la PR, qui doit être unique ; si `bee/` ou miniz a changé sur master depuis, l'étape est rouge (« rebasez ») (voir « Juge commun ») |
@@ -318,7 +318,7 @@ bee/
 ├── bench/                  banc.c, ab.py, test_ab.py, profil.py
 ├── sandbox/                Dockerfile
 ├── juge/                   greffon du juge commun : projet.py, construire.sh, execution.c, test_juge.py
-└── ci/                     etape.sh, juges.sh, manifeste.sh, tache.py, tests_origine.sh, differentiel.sh, verdict.py, test_verdict.py
+└── ci/                     etape.sh, juges.sh, manifeste.sh, tache.py, verifier_fork.py, vocabulaire.py, tests_origine.sh, differentiel.sh, verdict.py, test_verdict.py
 .github/workflows/bee-ci.yml
 ```
 

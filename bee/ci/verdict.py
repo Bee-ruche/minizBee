@@ -23,7 +23,7 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
   mesures           {"A": {6 métriques}, "B": {6 métriques}} : médianes du juge isolé (ou d'ab.py)
   instructions      décompte Cachegrind par scénario sur un sous-corpus : {"instructions_n6": {"A", "B", "gain"}, ...}
   degradations      métriques dégradées au-delà du bruit (test du signe ; instructions au-delà du seuil), avec leur gain
-  lignes_modifiees  lignes modifiées hors bee/**, tests/**, manifestes/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
+  lignes_modifiees  lignes modifiées hors bee/**, tests/**, manifests/**, manifestes/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
   amorcage          true si les juges ou le greffon venaient de la PR elle-même (bee/ci/juges.sh)
   base_juge         le commit A réellement extrait par le juge commun (son greffon et ses sources), la règle qui
                     l'a choisi (point_de_depart, introduction, ou un refus) et le point de départ de la PR,
@@ -33,8 +33,11 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
                     (liste vide si l'analyse des objets n'a rien trouvé) ; null si le juge n'a pas tourné
   etapes, details   pour les relecteurs (details.juge_ancien : l'ancien juge isolé, s'il a jugé)
 
-Métrique principale, dans l'ordre : la clé « metrique » de la tâche du registre (tache.yaml), sinon une clé
-« metrique » du manifeste, sinon la seule métrique de mesures.avant du manifeste. Faute de quoi, gain = null.
+Métrique principale : la clé « metric » ou « metrique » de la copie de la tâche du registre (tache.yaml, dans l'un
+des deux vocabulaires, bee/ci/vocabulaire.py) ; null si la tâche dit null. Copie absente en CI, illisible, mêlée, sans
+cette clé ou avec une métrique inconnue : étape « Manifeste et taille » en échec, jamais une métrique choisie par la PR.
+Seulement en simulation locale sans tâche : la clé « metric »/« metrique » du manifeste, sinon la seule métrique de
+measurements.before/mesures.avant (un vocabulaire par manifeste). Faute de quoi, gain = null.
 
 La CI ne tranche pas R4 et R5 (seuils de gain et d'effets de bord) : elle publie les mesures et les
 dégradations, l'outil du registre applique les règles.
@@ -50,6 +53,8 @@ import os
 import re
 import subprocess
 import sys
+
+from vocabulaire import METRIQUES, Illisible, lire_manifeste, metrique_de_la_tache
 
 # (étape, libellé, job GitHub qui la porte), dans l'ordre de la CI. « juges » est écrite par
 # bee/ci/juges.sh dans chaque job ; son job est None : elle compte dès qu'un job l'a écrite.
@@ -71,10 +76,8 @@ ETAPES = [
 # PR) : en CI, leur état vient du seul résultat du job. Ces jobs ne publient ni artefact ni sortie : rien de ce
 # que le code de la PR a pu écrire n'est lu ici.
 ETAPES_RESULTAT_SEUL = {"meta_juge", "outillage_pr"}
-METRIQUES = ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
-             "debit_decompression", "ratio_n6", "memoire_max_ko"]
-# Repris de projets/miniz.yaml (chemins_hors_decompte) dans le registre Bee.
-CHEMINS_HORS_DECOMPTE = ["bee/**", "tests/**", "CONTRIBUTION.yaml", "manifestes/**"]
+# Repris de projets/miniz.yaml (chemins_hors_decompte) dans le registre Bee ; les manifestes dans les deux dossiers.
+CHEMINS_HORS_DECOMPTE = ["bee/**", "tests/**", "CONTRIBUTION.yaml", "manifests/**", "manifestes/**"]
 
 
 def lire_texte(chemin):
@@ -116,10 +119,15 @@ def charger_yaml(chemin):
     return (donnees, "ok") if isinstance(donnees, dict) else (None, "pas un objet YAML")
 
 
-def metrique_principale(tache, manifeste):
-    if isinstance(tache, dict) and tache.get("metrique") in METRIQUES:
-        return tache["metrique"], "tâche du registre"
-    if isinstance(manifeste, dict):
+def metrique_principale(tache, etat_tache, manifeste, en_ci):
+    """(métrique ou None, origine). Lève Illisible quand la tâche ne dit pas lisiblement sa métrique."""
+    if tache is not None:
+        metrique = metrique_de_la_tache(tache)
+        return metrique, "tâche du registre" if metrique else "tâche du registre (metrique: null)"
+    if en_ci or etat_tache != "absent":
+        raise Illisible(f"copie de la tâche du registre {etat_tache} : métrique illisible")
+    if manifeste is not None:
+        manifeste = lire_manifeste(manifeste)
         if manifeste.get("metrique") in METRIQUES:
             return manifeste["metrique"], "manifeste (clé metrique)"
         mesures = manifeste.get("mesures") if isinstance(manifeste.get("mesures"), dict) else {}
@@ -281,6 +289,15 @@ def main():
         etats["greffon_juge"] = "echec"
     chemin_manifeste = args.manifeste or trouver_dans(args.artefacts, "etat-manifeste", "CONTRIBUTION.yaml")
     chemin_tache = args.tache or trouver_dans(args.artefacts, "etat-manifeste", "tache.yaml")
+    manifeste, etat_manifeste = charger_yaml(chemin_manifeste)
+    tache, etat_tache = charger_yaml(chemin_tache)
+    try:
+        metrique, origine = metrique_principale(tache, etat_tache, manifeste, bool(jobs))
+    except Illisible as e:
+        # La tâche fixe la métrique, jamais la PR : sans elle, pas de verdict vert (sa copie vient du job manifeste).
+        metrique, origine = None, f"illisible : {e}"
+        etats["manifeste_et_taille"] = "echec"
+        print(f"::error::verdict.py : {e}", file=sys.stderr)
 
     # Étape par étape : réussie seulement si son fichier d'état dit « succes » ET (en CI) si son job a réussi.
     resultat_etapes = {}
@@ -312,10 +329,6 @@ def main():
         en_echec = next((libelle + " (sans résultat)" for etape, libelle, _ in ETAPES if resultat_etapes[etape] != "succes"), None)
     if en_echec is None and jobs_en_echec:
         en_echec = "job " + ", ".join(sorted(jobs_en_echec))
-
-    manifeste, etat_manifeste = charger_yaml(chemin_manifeste)
-    tache, etat_tache = charger_yaml(chemin_tache)
-    metrique, origine = metrique_principale(tache, manifeste)
 
     metriques_ab = (rapport or {}).get("metriques", {})
     instructions = (rapport or {}).get("instructions")
