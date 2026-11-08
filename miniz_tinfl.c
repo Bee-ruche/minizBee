@@ -202,6 +202,8 @@ extern "C"
         const mz_uint8 *pIn_buf_cur = pIn_buf_next, *const pIn_buf_end = pIn_buf_next + *pIn_buf_size;
         mz_uint8 *pOut_buf_cur = pOut_buf_next, *const pOut_buf_end = pOut_buf_next ? pOut_buf_next + *pOut_buf_size : NULL;
         size_t out_buf_size_mask = (decomp_flags & TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF) ? (size_t)-1 : ((pOut_buf_next - pOut_buf_start) + *pOut_buf_size) - 1, dist_from_out_buf_start;
+        /* Fast literal loop bound: pOut_buf_cur < pOut_buf_fast_end <=> (pOut_buf_end - pOut_buf_cur) >= 2. */
+        mz_uint8 *const pOut_buf_fast_end = pOut_buf_next ? pOut_buf_next + ((*pOut_buf_size >= 2) ? (*pOut_buf_size - 1) : 0) : NULL;
 
         /* Ensure the output buffer's size is a power of 2, unless the output buffer is large enough to hold the entire output file (in which case it doesn't matter). */
         if (((out_buf_size_mask + 1) & out_buf_size_mask) || (pOut_buf_next < pOut_buf_start))
@@ -424,7 +426,7 @@ extern "C"
                     mz_uint8 *pSrc;
                     for (;;)
                     {
-                        if (((pIn_buf_end - pIn_buf_cur) < 4) || ((pOut_buf_end - pOut_buf_cur) < 2))
+                        if (((pIn_buf_end - pIn_buf_cur) < 4) || (pOut_buf_cur >= pOut_buf_fast_end))
                         {
                             TINFL_HUFF_DECODE(23, counter, r->m_look_up[0], r->m_tree_0);
                             if (counter >= 256)
@@ -454,10 +456,17 @@ extern "C"
                             num_bits += 16;
                         }
 #endif /* TINFL_USE_64BIT_BITBUF */
-                            if ((sym2 = r->m_look_up[0][bit_buf & (TINFL_FAST_LOOKUP_SIZE - 1)]) >= 0)
+                            /* Positive look-up entries are (code_len << 9) | sym with code_len >= 1, and the tree walk gives code_len > 10: */
+                            /* code_len == 0 only comes from an empty (zero) entry, tested apart from the hot path. */
+                            if ((sym2 = r->m_look_up[0][bit_buf & (TINFL_FAST_LOOKUP_SIZE - 1)]) > 0)
                                 code_len = sym2 >> 9;
                             else
                             {
+                                if (!sym2)
+                                {
+                                    counter = 0;
+                                    TINFL_CR_RETURN_FOREVER(40, TINFL_STATUS_FAILED);
+                                }
                                 code_len = TINFL_FAST_LOOKUP_BITS;
                                 do
                                 {
@@ -467,10 +476,6 @@ extern "C"
                             counter = sym2;
                             bit_buf >>= code_len;
                             num_bits -= code_len;
-                            if (code_len == 0)
-                            {
-                                TINFL_CR_RETURN_FOREVER(40, TINFL_STATUS_FAILED);
-                            }
                             if (counter & 256)
                                 break;
 
@@ -482,10 +487,14 @@ extern "C"
                                 num_bits += 16;
                             }
 #endif /* !TINFL_USE_64BIT_BITBUF */
-                            if ((sym2 = r->m_look_up[0][bit_buf & (TINFL_FAST_LOOKUP_SIZE - 1)]) >= 0)
+                            if ((sym2 = r->m_look_up[0][bit_buf & (TINFL_FAST_LOOKUP_SIZE - 1)]) > 0)
                                 code_len = sym2 >> 9;
                             else
                             {
+                                if (!sym2)
+                                {
+                                    TINFL_CR_RETURN_FOREVER(54, TINFL_STATUS_FAILED);
+                                }
                                 code_len = TINFL_FAST_LOOKUP_BITS;
                                 do
                                 {
@@ -494,10 +503,6 @@ extern "C"
                             }
                             bit_buf >>= code_len;
                             num_bits -= code_len;
-                            if (code_len == 0)
-                            {
-                                TINFL_CR_RETURN_FOREVER(54, TINFL_STATUS_FAILED);
-                            }
 
                             pOut_buf_cur[0] = (mz_uint8)counter;
                             if (sym2 & 256)
