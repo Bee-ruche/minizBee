@@ -29,6 +29,26 @@ JOBS_OK = {"manifeste": {"result": "success"}, "greffon": GREFFON_OK,
 # Copie de la tâche par défaut des tests du verdict (miniz-0049 : en CI, sans copie lisible de la tâche, le verdict est
 # rouge) : metrique: null, donc gain null, comme sans tâche auparavant ; tache=None pour un verdict sans copie.
 TACHE_SANS_METRIQUE = "type: test\nmetrique: null\n"
+# Dossier où chaque job dépose ses fichiers d'état dans son artefact (bee-ci.yml), écrit à la main : les tests vérifient
+# verdict.py, ils ne le recopient pas. Les autres états (juges, amorcage, juge_isole, meta_juge, outillage_pr) vont dans
+# --etats, le dossier du job verdict.
+DOSSIER_ETAT = {"manifeste_et_taille": "etat-manifeste/etats", "compilation_x86_64": "etat-tests-x86_64",
+                "differentiel_x86_64": "etat-tests-x86_64", "compilation_arm64": "etat-tests-arm64",
+                "differentiel_arm64": "etat-tests-arm64", "fuzzing": "etat-fuzzing", "greffon_juge": "etat-greffon",
+                "juge_ancien": "etat-juge-ancien/etats"}
+
+
+def ecrire_etats(d, etats):
+    """Écrit chaque état là où son job le dépose ; renvoie (dossier des artefacts, dossier --etats)."""
+    artefacts, propres = os.path.join(d, "artefacts"), os.path.join(d, "etats")
+    os.makedirs(artefacts, exist_ok=True)
+    os.makedirs(propres, exist_ok=True)
+    for etape, valeur in etats.items():
+        dossier = os.path.join(artefacts, DOSSIER_ETAT[etape]) if etape in DOSSIER_ETAT else propres
+        os.makedirs(dossier, exist_ok=True)
+        with open(os.path.join(dossier, etape + ".txt"), "w") as f:
+            f.write(valeur + "\n")
+    return artefacts, propres
 
 
 def rapport_ab(gain_n6=0.03, signe_n6=True, degradation_n1=False):
@@ -49,12 +69,8 @@ class Verdict(unittest.TestCase):
     def executer(self, etats, jobs=None, ab=None, tache=TACHE_SANS_METRIQUE, nom_rapport="juge.json", code=None, ancien=None,
                  manifeste=None):
         with tempfile.TemporaryDirectory() as d:
-            artefacts = os.path.join(d, "artefacts")
-            os.makedirs(os.path.join(artefacts, "x", "etats"))
-            for etape, valeur in etats.items():
-                with open(os.path.join(artefacts, "x", "etats", etape + ".txt"), "w") as f:
-                    f.write(valeur + "\n")
-            commande = [sys.executable, VERDICT, "--artefacts", artefacts, "--sortie", os.path.join(d, "verdict.json")]
+            artefacts, propres = ecrire_etats(d, etats)
+            commande = [sys.executable, VERDICT, "--artefacts", artefacts, "--etats", propres, "--sortie", os.path.join(d, "verdict.json")]
             if jobs is not None:
                 with open(os.path.join(d, "jobs.json"), "w") as f:
                     json.dump(jobs, f)
@@ -197,8 +213,8 @@ class Verdict(unittest.TestCase):
     def test_donnees_lues_dans_leur_artefact(self):
         """La tâche (métrique) et le rapport de l'ancien juge ne sont lus que dans l'artefact de leur job."""
         with tempfile.TemporaryDirectory() as d:
-            artefacts = os.path.join(d, "artefacts")
-            fichiers = (("x/etats", None, None), ("etat-aaa", "tache.yaml", "metrique: ratio_n6\n"),
+            artefacts, propres = ecrire_etats(d, {e: "succes" for e in ETAPES})
+            fichiers = (("etat-aaa", "tache.yaml", "metrique: ratio_n6\n"),
                         ("etat-aaa", "juge-ancien.json", json.dumps({"juge": {"version": 99}})),
                         ("etat-manifeste", "tache.yaml", "metrique: debit_compression_n6\n"),
                         ("juge", "juge.json", json.dumps(rapport_ab())))
@@ -207,26 +223,28 @@ class Verdict(unittest.TestCase):
                 if nom:
                     with open(os.path.join(artefacts, dossier, nom), "w") as f:
                         f.write(contenu)
-            for e in ETAPES:
-                with open(os.path.join(artefacts, "x", "etats", e + ".txt"), "w") as f:
-                    f.write("succes\n")
             with open(os.path.join(d, "jobs.json"), "w") as f:
                 json.dump(JOBS_OK, f)
-            subprocess.run([sys.executable, VERDICT, "--artefacts", artefacts, "--jobs", os.path.join(d, "jobs.json"),
+            subprocess.run([sys.executable, VERDICT, "--artefacts", artefacts, "--etats", propres, "--jobs", os.path.join(d, "jobs.json"),
                             "--sortie", os.path.join(d, "v.json")], check=True, capture_output=True)
             with open(os.path.join(d, "v.json")) as f:
                 v = json.load(f)
         self.assertEqual(v["metrique"], "debit_compression_n6")
         self.assertIsNone(v["details"]["juge_ancien"])
 
-    def verdict_avec(self, fichiers, jobs):
+    def verdict_avec(self, fichiers, jobs, etats=None, liens=()):
+        """Verdict sur des artefacts : les états là où leurs jobs les déposent (tous « succes » par défaut), puis des
+        fichiers aux chemins donnés, et des liens symboliques aux chemins donnés vers un fichier hors des artefacts."""
         with tempfile.TemporaryDirectory() as d:
-            artefacts = os.path.join(d, "artefacts")
-            for chemin, contenu in list(fichiers) + [(f"x/etats/{e}.txt", "succes\n") for e in ETAPES]:
+            artefacts, propres = ecrire_etats(d, {e: "succes" for e in ETAPES} if etats is None else etats)
+            for i, (chemin, contenu) in enumerate(list(fichiers) + list(liens)):
+                cible = os.path.join(artefacts, chemin) if i < len(fichiers) else os.path.join(d, f"cible-{i}")
                 os.makedirs(os.path.dirname(os.path.join(artefacts, chemin)), exist_ok=True)
-                with open(os.path.join(artefacts, chemin), "w") as f:
+                with open(cible, "w") as f:
                     f.write(contenu)
-            commande = [sys.executable, VERDICT, "--artefacts", artefacts, "--sortie", os.path.join(d, "v.json")]
+                if cible != os.path.join(artefacts, chemin):
+                    os.symlink(cible, os.path.join(artefacts, chemin))
+            commande = [sys.executable, VERDICT, "--artefacts", artefacts, "--etats", propres, "--sortie", os.path.join(d, "v.json")]
             if jobs is not None:
                 with open(os.path.join(d, "jobs.json"), "w") as f:
                     json.dump(jobs, f)
@@ -267,6 +285,46 @@ class Verdict(unittest.TestCase):
                 self.assertIsNone(v["mesures"]["B"]["debit_compression_n6"])
         v = self.verdict_avec(fichiers + [("juge/juge.json", json.dumps(rapport_ab())), ("juge/code", "0\n")], None)
         self.assertEqual((v["ci"], v["gain"]), ("verte", 0.03))
+
+    def test_etat_lu_seulement_dans_le_dossier_de_son_job(self):
+        """Chaque <etape>.txt n'est lu que dans le dossier d'état du job qui l'écrit : un « succes » déposé dans
+        « juge », dans un autre artefact, dans le dossier d'un autre job, à la racine ou dans un sous-dossier du bon
+        artefact ne remplace pas un état manquant (rouge, sans résultat) ; un état qui est un lien symbolique non plus."""
+        base = [("etat-manifeste/tache.yaml", TACHE_SANS_METRIQUE), ("juge/juge.json", json.dumps(rapport_ab()))]
+        self.assertEqual(self.verdict_avec(base, JOBS_OK)["ci"], "verte")  # le parcours honnête
+        for manquante, proprietaire in DOSSIER_ETAT.items():
+            autre = "etat-manifeste/etats" if proprietaire != "etat-manifeste/etats" else "etat-fuzzing"
+            dossiers = ["juge", "etat-evil", "etat-evil/etats", "x/etats", autre, proprietaire + "/sous"]
+            dossiers += [proprietaire.split("/")[0]] if "/" in proprietaire else []
+            etats = {e: "succes" for e in ETAPES if e != manquante}
+            with self.subTest(manquante=manquante):
+                v = self.verdict_avec(base + [(f"{d}/{manquante}.txt", "succes\n") for d in dossiers], JOBS_OK, etats)
+                self.assertEqual((v["ci"], v["etapes"][manquante]), ("rouge", "absent"))
+                v = self.verdict_avec(base, JOBS_OK, etats, liens=[(f"{proprietaire}/{manquante}.txt", "succes\n")])
+                self.assertEqual((v["ci"], v["etapes"][manquante]), ("rouge", "absent"))
+        # « juges » et « amorcage », écrits par chaque job, ne se lisent pas non plus hors des dossiers d'état des jobs.
+        v = self.verdict_avec(base + [("juge/amorcage.txt", "oui\n"), ("etat-evil/amorcage.txt", "oui\n")], JOBS_OK)
+        self.assertFalse(v["amorcage"])
+        v = self.verdict_avec(base + [("etat-fuzzing/amorcage.txt", "oui\n")], JOBS_OK)
+        self.assertTrue(v["amorcage"])
+
+    def test_lien_symbolique_jamais_lu(self):
+        """La copie de la tâche, le rapport de l'ancien juge et celui du juge commun ne sont jamais lus à travers un
+        lien symbolique, même à leur place et vers un contenu valide."""
+        tache, ancien = "metrique: debit_compression_n6\n", json.dumps({"juge": {"version": 2}})
+        honnete = [("etat-manifeste/tache.yaml", tache), ("etat-juge-ancien/juge-ancien.json", ancien),
+                   ("juge/juge.json", json.dumps(rapport_ab()))]
+        v = self.verdict_avec(honnete, JOBS_OK)
+        self.assertEqual((v["ci"], v["metrique"], v["details"]["juge_ancien"]["juge"]["version"]), ("verte", "debit_compression_n6", 2))
+        for i, (chemin, contenu) in enumerate(honnete):
+            with self.subTest(lien=chemin):
+                v = self.verdict_avec(honnete[:i] + honnete[i + 1:], JOBS_OK, liens=[(chemin, contenu)])
+                if chemin == "etat-juge-ancien/juge-ancien.json":
+                    self.assertIsNone(v["details"]["juge_ancien"])
+                else:
+                    self.assertEqual(v["ci"], "rouge")
+                    self.assertEqual(v["etape_en_echec"], "Manifeste et taille" if "tache" in chemin else
+                                     "Juge commun (vérification de l'extérieur et mesures)")
 
     def test_base_juge_publiee(self):
         """verdict.json publie le commit A du juge commun et la règle qui l'a choisi (revue adverse de miniz-0032)."""
