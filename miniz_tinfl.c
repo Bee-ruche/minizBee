@@ -192,6 +192,19 @@ extern "C"
         static const mz_uint8 s_dist_extra[32] = { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
         static const mz_uint8 s_length_dezigzag[19] = { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
         static const mz_uint16 s_min_table_sizes[3] = { 257, 1, 4 };
+#if TINFL_USE_64BIT_BITBUF
+        /* Tables of the length/distance fast path below (task miniz-0017), in one array so that one address serves them
+           all: rows 0 to 2 are s_dist_base, s_dist_extra and the extra bits mask (1 << extra) - 1, by distance symbol;
+           rows 3 to 5 are s_length_base, s_length_extra and the mask, by length symbol - 257 (last column unused). */
+        static const mz_uint16 s_fast_tables[6][32] = {
+            { 1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577, 0, 0 },
+            { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 0, 0 },
+            { 0, 0, 0, 0, 1, 1, 3, 3, 7, 7, 15, 15, 31, 31, 63, 63, 127, 127, 255, 255, 511, 511, 1023, 1023, 2047, 2047, 4095, 4095, 8191, 8191, 0, 0 },
+            { 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258, 0, 0, 0 },
+            { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0, 0, 0, 0 },
+            { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 3, 3, 3, 3, 7, 7, 7, 7, 15, 15, 15, 15, 31, 31, 31, 31, 0, 0, 0, 0 }
+        };
+#endif /* TINFL_USE_64BIT_BITBUF */
 
         mz_int16 *pTrees[3];
         mz_uint8 *pCode_sizes[3];
@@ -513,23 +526,74 @@ extern "C"
                     if ((counter &= 511) == 256)
                         break;
 
-                    num_extra = s_length_extra[counter - 257];
-                    counter = s_length_base[counter - 257];
-                    if (num_extra)
+#if TINFL_USE_64BIT_BITBUF
+                    /* Fast path (task miniz-0017). With num_bits >= 20, the length extra bits (<= 5) and the distance code
+                       (<= 15 bits) are already in bit_buf (the 32-bit refill of the literal loop above makes this the usual
+                       case): decode them here, without the checks of the macros below and without reading any input. If
+                       the distance extra bits are not all in bit_buf, finish with the TINFL_GET_BITS(27) of the generic
+                       path, which reads them as before. The same bits are consumed in the same order as on the generic
+                       path; num_extra, dead after this point, is only set before that jump. */
+                    if (num_bits >= 20)
                     {
-                        mz_uint extra_bits;
-                        TINFL_GET_BITS(25, extra_bits, num_extra);
-                        counter += extra_bits;
+                        int sym2;
+                        size_t i = (size_t)counter - 257;
+                        mz_uint n = s_fast_tables[4][i];
+                        counter = s_fast_tables[3][i];
+                        if (n)
+                        {
+                            counter += (mz_uint)bit_buf & s_fast_tables[5][i];
+                            bit_buf >>= n;
+                            num_bits -= n;
+                        }
+                        if ((sym2 = r->m_look_up[1][bit_buf & (TINFL_FAST_LOOKUP_SIZE - 1)]) < 0)
+                        {
+                            /* Code longer than TINFL_FAST_LOOKUP_BITS: walk the tree, then build a look-up style entry. */
+                            n = TINFL_FAST_LOOKUP_BITS;
+                            do
+                            {
+                                sym2 = r->m_tree_1[~sym2 + ((bit_buf >> n++) & 1)];
+                            } while (sym2 < 0);
+                            sym2 |= (int)(n << 9);
+                        }
+                        n = (mz_uint)sym2 >> 9;
+                        sym2 &= 511;
+                        bit_buf >>= n;
+                        num_bits -= n;
+                        n = s_fast_tables[1][sym2];
+                        dist = s_fast_tables[0][sym2];
+                        if (num_bits < n)
+                        {
+                            num_extra = n;
+                            goto tinfl_dist_extra_bits;
+                        }
+                        dist += (mz_uint)bit_buf & s_fast_tables[2][sym2];
+                        bit_buf >>= n;
+                        num_bits -= n;
                     }
-
-                    TINFL_HUFF_DECODE(26, dist, r->m_look_up[1], r->m_tree_1);
-                    num_extra = s_dist_extra[dist];
-                    dist = s_dist_base[dist];
-                    if (num_extra)
+                    else
+#endif /* TINFL_USE_64BIT_BITBUF */
                     {
-                        mz_uint extra_bits;
-                        TINFL_GET_BITS(27, extra_bits, num_extra);
-                        dist += extra_bits;
+                        num_extra = s_length_extra[counter - 257];
+                        counter = s_length_base[counter - 257];
+                        if (num_extra)
+                        {
+                            mz_uint extra_bits;
+                            TINFL_GET_BITS(25, extra_bits, num_extra);
+                            counter += extra_bits;
+                        }
+
+                        TINFL_HUFF_DECODE(26, dist, r->m_look_up[1], r->m_tree_1);
+                        num_extra = s_dist_extra[dist];
+                        dist = s_dist_base[dist];
+#if TINFL_USE_64BIT_BITBUF
+                    tinfl_dist_extra_bits:
+#endif /* TINFL_USE_64BIT_BITBUF */
+                        if (num_extra)
+                        {
+                            mz_uint extra_bits;
+                            TINFL_GET_BITS(27, extra_bits, num_extra);
+                            dist += extra_bits;
+                        }
                     }
 
                     dist_from_out_buf_start = pOut_buf_cur - pOut_buf_start;

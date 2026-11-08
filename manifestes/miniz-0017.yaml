@@ -1,0 +1,78 @@
+tache: miniz-0017
+utilisateur: bidji29
+agent:
+  modele: "Claude Opus 5.5 (claude-opus-5-5)"
+  client: bee 0.1.0
+resume: "tinfl_decompress : si bit_buf a 20 bits après un symbole de longueur, longueur et distance décodées sans les macros ni lecture d'entrée ; -5,5 % d'instructions en décompression."
+changement: >
+  miniz_tinfl.c, tinfl_decompress seulement, sous #if TINFL_USE_64BIT_BITBUF (le tampon de bits de 32
+  bits garde le code d'origine) : (1) un tableau statique s_fast_tables[6][32] qui reprend
+  s_dist_base, s_dist_extra, s_length_base, s_length_extra et les masques (1 << extra) - 1 dans un seul
+  objet, pour qu'une seule adresse les serve tous (une seule instruction lea en code PIE au lieu de
+  quatre, plus de calcul de masque) ; ses valeurs ont été comparées par programme aux tables d'origine ;
+  (2) après un symbole de longueur, un chemin rapide pris quand num_bits >= 20. Les bits
+  supplémentaires de la longueur (5 au plus) et le code de distance (15 bits au plus) sont alors déjà
+  dans bit_buf : ils sont décodés sans les tests des macros et sans lire d'entrée. Code de distance
+  par la table m_look_up[1] (entrées (longueur du code << 9) | symbole) ou, au-delà de 10 bits, par le
+  même parcours d'arbre que TINFL_HUFF_DECODE, dont le résultat est remis sous forme d'entrée de table.
+  Si num_bits >= bits supplémentaires de la distance, ils sont lus aussi ; sinon le code saute
+  (goto tinfl_dist_extra_bits, étiquette ajoutée juste avant le if (num_extra) d'origine) dans le
+  TINFL_GET_BITS(27) inchangé, avec num_extra et dist comme la base les aurait : même état 27, mêmes
+  lectures, même suspension éventuelle. Le chemin générique (num_bits < 20) est le code d'origine, mis
+  dans un bloc else et réindenté (git diff -w le montre inchangé hors l'étiquette). Pourquoi la sortie,
+  les statuts et les octets consommés sont identiques : quand num_bits >= 20, la base non plus ne lit
+  rien dans TINFL_GET_BITS(25) (num_bits >= 5) ni dans TINFL_HUFF_DECODE(26) (num_bits >= 15 après les
+  bits de longueur, donc ni remplissage de 2 octets ni TINFL_HUFF_BITBUF_FILL) ; les deux codes
+  consomment les mêmes bits dans le même ordre et donnent le même counter et le même dist, y compris
+  pour une entrée de table vide (longueur de code 0, symbole 0, comme la branche rapide de la macro),
+  les symboles invalides 30 et 31 (base 0, 0 bit) et 286, 287 (longueur 0). Seule différence d'état
+  interne : num_extra, mort à cet endroit, n'est écrit que juste avant le saut ; r->m_num_extra peut
+  donc différer de la base à un retour ultérieur, sans effet, car il n'est lu qu'à la reprise des états
+  18, 25 et 27, qui l'écrivent eux-mêmes. L'écrire coûterait 264 000 instructions (-4,6 % au lieu de
+  -5,5 %). Pourquoi pas la piste de la tâche (recharger bit_buf de 32 bits sur le chemin rapide) :
+  essayée d'abord ; recharger quand num_bits < 33 donnait jusqu'à -4,5 % d'instructions, mais ce test
+  part dans les deux sens selon les données (num_bits < 33 dans 30,5 % des cas à cet endroit, mesuré
+  sur le scénario de décompression) : +31 000 prédictions de branchement manquées en simulation
+  (cachegrind --branch-sim) et aucun gain au chronomètre. num_bits >= 20 est vrai dans 98,5 % des cas :
+  le test est presque toujours pris et le nouveau chemin a autant de prédictions manquées simulées que
+  la base (315 792 contre 314 368). Effet mesuré : -5,48 % d'instructions sur instructions_decompression
+  (29 954 575 -> 28 312 841), compression inchangée à l'instruction près ; au chronomètre, gain petit
+  mais au-delà du bruit, +0,7 à +0,9 % (séries décompression seule décrites dans teste) ; ab.py ne
+  conclut pas sur cette machine chargée (voir teste et doutes). Diff : 78 lignes ajoutées, 14 retirées.
+mesures:
+  machine: "Intel Xeon @ 2,10 GHz virtualisé, 2 cœurs, Ubuntu 24.04, noyau 6.18, gcc 13.3.0 (-O3 -DNDEBUG), valgrind 3.22 ; machine partagée avec d'autres agents (charge moyenne entre 2,4 et 5,7 pendant les mesures, d'où le bruit)"
+  commande: "bee/sandbox/sans-docker.sh python3 bee/bench/ab.py --base origin/master --candidate HEAD --repetitions 30 --instructions (base 9977da4, candidat 8839681 ; pas de remote upstream dans ce clone, origin = Bee-ruche/minizBee). Chiffres au chronomètre dans le bruit, voir teste"
+  repetitions: 30
+  avant:
+    debit_decompression: 420.294
+    debit_compression_n1: 77.207
+    debit_compression_n6: 13.687
+    debit_compression_n9: 8.7945
+    ratio_n6: 3.5054
+    memoire_max_ko: 1764
+  apres:
+    debit_decompression: 431.641
+    debit_compression_n1: 86.6705
+    debit_compression_n6: 15.2715
+    debit_compression_n9: 8.6675
+    ratio_n6: 3.5054
+    memoire_max_ko: 1764
+teste:
+  - "Instructions (ab.py --instructions, cachegrind, 128 Kio par fichier, passes mesurées seulement), deux passages identiques : décompression 29 954 575 -> 28 312 841 (-5,481 %) ; n1 170 765 561, n6 334 757 696, n9 482 752 478, identiques entre base et candidat"
+  - "Chronomètre, ab.py : 20 répétitions, décompression +1,26 % (B gagne 11/20) ; 30 répétitions (chiffres déclarés), +2,70 % (17/30) ; les deux « dans le bruit ». Dans les mêmes passages, la compression, au code inchangé, varie de -6,3 % à +12,3 % : la charge de la machine domine, ces chiffres ne mesurent pas le changement"
+  - "Chronomètre, configuration moins sensible à la charge : banc officiel compilé par bee/Makefile pour la base et pour HEAD (sources extraites hors dépôt), lancé en alternance stricte A, B avec --scenario decompression --passes-decompression 50 --sans-memoire, une exécution de chauffe chacun, test du signe unilatéral à 0,02 comme ab.py. Série 1 : 30 paires, médianes 536,8 -> 540,5 Mo/s (+0,69 %), B gagne 21/30 (p = 0,021). Série 2 : 60 paires, médianes 539,5 -> 544,5 Mo/s (+0,92 %, médiane des écarts par paire +0,87 %), B gagne 39/60 (seuil 39, p = 0,0137) : gain au-delà du bruit. Les deux séries ensemble : 60 victoires sur 90 paires"
+  - "Prédictions de branchement simulées (cachegrind --branch-sim, scénario décompression, 128 Kio par fichier) : 314 368 (base) contre 315 792 (candidat)"
+  - "bee/tests/lancer.sh (sandbox) sur le commit 8839681 : 3843 contrôles, 0 écart, 488 empreintes identiques à la référence ; cas limites de l'API : 192 cas, 0 échec"
+  - "bee/tests/lancer.sh --sanitiseurs (gcc, ASan + UBSan) : 3843 contrôles, 0 écart ; cas limites de l'API, 0 échec"
+  - "bee/ci/tests_origine.sh (CMake + ctest) : 1/1 test passé ; miniz_tinfl.c compilé sans avertissement par gcc -std=gnu90 -pedantic -Wall -Wextra, g++ en C++ (le goto ne franchit aucune initialisation) et clang -Wall -Wextra"
+  - "bee/fuzz/lancer.sh 150 --reference <extraction de origin/master> (libFuzzer) : fuzz_inflate 24 934 entrées, fuzz_compression 17 743, aucun écart ; puis fuzz_inflate seul 300 s, avec en graines les 1 636 variantes des flux aux bornes décrits ci-dessous : 6 391 entrées (grosses), aucun écart"
+  - "Différentiel aux bornes, hors dépôt et non commité : 904 flux, dont des blocs dynamiques écrits par un encodeur Deflate fait pour l'occasion (codes de distance de 1 à 15 bits, 15 bits sur le symbole 29 à 13 bits supplémentaires, longueurs 131 à 258, jusqu'à 33 bits par correspondance, codes de longueur de 13 et 14 bits pour abaisser num_bits à la sortie de la boucle des littéraux, distances 1 à 32768, arbre de distance dégénéré à un seul code d'un bit avec emploi du code non attribué, arbre de distance vide, symboles invalides 30, 31, 286 et 287 en bloc fixe), des flux de zlib (niveaux 1, 6, 9, quatre stratégies, fenêtres 2^9 et 2^15) et des mutations (23 troncatures en fin, 12 bits inversés, données après la fin). Chaque flux est décodé par la base et par le candidat : tinfl en une fois ; tinfl en flux, tampon non circulaire, morceaux d'entrée de 1 à 4096 octets ou entiers et de sortie de 1 à 65536 octets ; tinfl en flux avec dictionnaire circulaire de 32 et 64 Kio ; mz_inflate par morceaux (MZ_NO_FLUSH, MZ_SYNC_FLUSH, MZ_FINISH) ; mz_uncompress2. Statut, octets consommés et produits à chaque appel, et empreinte de la sortie : 148 509 lignes de trace identiques. Couverture gcov : chaque ligne du chemin rapide est exécutée (parcours d'arbre 606 060 fois, saut vers TINFL_GET_BITS(27) 608 942 fois, bits de longueur 937 123 fois)"
+  - "Chemin à tampon de bits de 32 bits : TINFL_USE_64BIT_BITBUF forcé à 0 dans des copies hors dépôt de la base et du candidat, même trace sur 208 flux : 41 724 lignes identiques"
+non_teste:
+  - "ARM64 (pas de machine ; la CI le fait) et toute autre architecture que x86-64, dont les machines gros-boutistes (le chemin rapide n'y fait que des décalages sur bit_buf, aucune lecture mémoire multi-octets)"
+  - "Vraie machine 32 bits, MSVC, compilateurs autres que gcc 13.3 et clang 18 : le chemin 32 bits n'est essayé qu'en forçant la macro sur x86-64"
+  - "Juge isolé (bee/juge/juge.py, Docker) : non lancé localement"
+  - "Fuzzing local court (150 s par harnais puis 300 s pour fuzz_inflate) et peu d'entrées, sur machine chargée ; la CI en fait 600 s"
+  - "Combinaison avec miniz-0018 (tests code_len de la boucle des littéraux) : git merge-tree fusionne sans conflit, ni testée ni mesurée ensemble"
+doutes: "Le gain au chronomètre est petit (+0,7 à +0,9 % ici) au regard des 5,5 % d'instructions : les instructions retirées sont surtout des tests bien prédits et des calculs hors du chemin critique. Il n'est confirmé localement que par les séries décompression seule à 50 passes, pas par ab.py, que la charge de la machine rendait inutilisable ; si le chronomètre du juge isolé ne le voit pas, R4 n'est pas rempli. La part du chemin rapide dépend du rechargement de 32 bits de la boucle des littéraux (98,5 % des correspondances sur le corpus) : une autre boucle des littéraux changerait le gain, pas la sortie. État interne : r->m_num_extra peut différer de la base après une correspondance décodée par le chemin rapide (variable morte, voir changement). Taille (gcc 13.3 -O3, x86-64) : tinfl_decompress passe de 9 904 à 10 091 octets (+187), plus 384 octets de tables ; section text de miniz_tinfl.o +576 octets."
+taille_reelle: M
