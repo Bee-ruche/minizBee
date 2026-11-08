@@ -60,7 +60,7 @@ class Verdict(unittest.TestCase):
                     json.dump(jobs, f)
                 commande += ["--jobs", os.path.join(d, "jobs.json")]
             if ab is not None:
-                # Le rapport du juge commun est dans l'artefact « juge » ; ab.json (simulation) n'importe où.
+                # Le rapport du juge commun est dans l'artefact « juge » ; sous un autre nom, ailleurs (jamais lu).
                 dossier = os.path.join(artefacts, "juge" if nom_rapport == "juge.json" else "x")
                 os.makedirs(dossier, exist_ok=True)
                 with open(os.path.join(dossier, nom_rapport), "w") as f:
@@ -218,6 +218,55 @@ class Verdict(unittest.TestCase):
                 v = json.load(f)
         self.assertEqual(v["metrique"], "debit_compression_n6")
         self.assertIsNone(v["details"]["juge_ancien"])
+
+    def verdict_avec(self, fichiers, jobs):
+        with tempfile.TemporaryDirectory() as d:
+            artefacts = os.path.join(d, "artefacts")
+            for chemin, contenu in list(fichiers) + [(f"x/etats/{e}.txt", "succes\n") for e in ETAPES]:
+                os.makedirs(os.path.dirname(os.path.join(artefacts, chemin)), exist_ok=True)
+                with open(os.path.join(artefacts, chemin), "w") as f:
+                    f.write(contenu)
+            commande = [sys.executable, VERDICT, "--artefacts", artefacts, "--sortie", os.path.join(d, "v.json")]
+            if jobs is not None:
+                with open(os.path.join(d, "jobs.json"), "w") as f:
+                    json.dump(jobs, f)
+                commande += ["--jobs", os.path.join(d, "jobs.json")]
+            subprocess.run(commande, check=True, capture_output=True)
+            with open(os.path.join(d, "v.json")) as f:
+                return json.load(f)
+
+    def test_chaque_fichier_lu_a_la_racine_de_son_artefact(self):
+        """Chaque fichier n'est lu qu'à la racine de l'artefact du job qui le produit : déposé dans un autre artefact
+        (même rangé avant) ou dans un sous-dossier du bon artefact (rangé avant la racine), il est ignoré."""
+        faux_tache, faux_ancien = "metrique: ratio_n6\n", json.dumps({"juge": {"version": 99}})
+        fichiers = [("etat-manifeste/tache.yaml", "metrique: debit_compression_n6\n"),
+                    ("etat-juge-ancien/juge-ancien.json", json.dumps({"juge": {"version": 2}})),
+                    ("juge/juge.json", json.dumps(rapport_ab())),
+                    ("etat-manifeste/etats/tache.yaml", faux_tache), ("etat-aaa/tache.yaml", faux_tache),
+                    ("etat-juge-ancien/etats/juge-ancien.json", faux_ancien), ("etat-aaa/juge-ancien.json", faux_ancien),
+                    ("etat-manifeste/etats/CONTRIBUTION.yaml", MANIFESTE_FR), ("etat-aaa/CONTRIBUTION.yaml", MANIFESTE_FR)]
+        v = self.verdict_avec(fichiers, JOBS_OK)
+        self.assertEqual((v["ci"], v["metrique"], v["gain"]), ("verte", "debit_compression_n6", 0.03))
+        self.assertEqual(v["details"]["juge_ancien"]["juge"]["version"], 2)
+        self.assertEqual(v["details"]["manifeste"], "absent")
+        # Seulement dans un sous-dossier ou un autre artefact : la copie de la tâche manque, rouge (jamais la fausse).
+        v = self.verdict_avec([f for f in fichiers if f[0] != "etat-manifeste/tache.yaml"], JOBS_OK)
+        self.assertEqual((v["ci"], v["etape_en_echec"], v["metrique"]), ("rouge", "Manifeste et taille", None))
+
+    def test_aucun_rapport_cherche_dans_les_artefacts(self):
+        """Le rapport vient de --ab ou de juge.json à la racine de l'artefact « juge » ; hors CI non plus, un ab.json
+        ou un juge.json déposé dans un autre artefact (ou un sous-dossier de « juge ») n'est jamais lu."""
+        faux = json.dumps(rapport_ab(gain_n6=0.5))
+        fichiers = [("etat-manifeste/tache.yaml", "metrique: debit_compression_n6\n"), ("etat-aaa/ab.json", faux),
+                    ("x/ab.json", faux), ("etat-manifeste/ab.json", faux), ("etat-aaa/juge.json", faux),
+                    ("juge/etats/juge.json", faux), ("juge/ab.json", faux)]
+        for jobs in (None, JOBS_OK):
+            with self.subTest(ci=jobs is not None):
+                v = self.verdict_avec(fichiers, jobs)
+                self.assertEqual((v["ci"], v["metrique"], v["gain"], v["juge"]), ("rouge", "debit_compression_n6", None, None))
+                self.assertIsNone(v["mesures"]["B"]["debit_compression_n6"])
+        v = self.verdict_avec(fichiers + [("juge/juge.json", json.dumps(rapport_ab())), ("juge/code", "0\n")], None)
+        self.assertEqual((v["ci"], v["gain"]), ("verte", 0.03))
 
     def test_base_juge_publiee(self):
         """verdict.json publie le commit A du juge commun et la règle qui l'a choisi (revue adverse de miniz-0032)."""
@@ -911,13 +960,16 @@ class JobManifeste(unittest.TestCase):
         with open(os.path.join(racine, chemin), "w", encoding="utf-8") as f:
             f.write(texte)
 
-    def lancer(self, manifestes, taches=(("taches", TACHE_FR),), outils=(("outils", OUTIL_FR),)):
+    def lancer(self, manifestes, taches=(("taches", TACHE_FR),), outils=(("outils", OUTIL_FR),), liens=()):
         for dossier, texte in taches:
             self.ecrire(self.registre, f"{dossier}/miniz/miniz-0050.yaml", texte)
         for dossier, texte in outils:
             self.ecrire(self.registre, f"{dossier}/bee.py", texte)
         for chemin, texte in manifestes:
             self.ecrire(self.pr, chemin, texte)
+        for chemin, cible in liens:
+            os.makedirs(os.path.dirname(os.path.join(self.pr, chemin)) or self.pr, exist_ok=True)
+            os.symlink(cible, os.path.join(self.pr, chemin))
         self.ecrire(self.pr, "miniz_tinfl.c", "int y;\n")
         tete = self.commit()
         sortie, copie = os.path.join(self.d, "sortie"), os.path.join(self.d, "copie.yaml")
@@ -1002,6 +1054,47 @@ class JobManifeste(unittest.TestCase):
         code, sortie = self.lancer([("manifestes/miniz-0050.yaml", MANIFESTE_FR)], taches=(("taches", TACHE_FR), ("tasks", TACHE_EN)))
         self.assertEqual((code, self.journal), (1, []), sortie)
         self.assertIn("plusieurs fois", sortie)
+
+    def test_manifeste_fichier_ordinaire(self):
+        """Un manifeste est un fichier ordinaire : un lien symbolique (vers un manifeste valide du dépôt ou hors de lui,
+        ou cassé) ou un dossier est refusé avant toute lecture : ni tâche lue, ni outil appelé, ni sortie écrite."""
+        for manifestes, liens in (([("hors.yaml", MANIFESTE_FR)], [("manifestes/miniz-0050.yaml", "../hors.yaml")]),
+                                  ([], [("manifests/miniz-0050.yaml", "DEHORS")]),
+                                  ([], [("manifestes/miniz-0050.yaml", "absent.yaml")]),
+                                  ([("hors.yaml", MANIFESTE_FR)], [("CONTRIBUTION.yaml", "hors.yaml")]),
+                                  ([("CONTRIBUTION.yaml/x", "a\n")], [])):
+            with self.subTest(manifestes=manifestes, liens=liens):
+                self.setUp()
+                self.ecrire(self.d, "dehors.yaml", MANIFESTE_EN)  # hors du dépôt
+                liens = [(c, os.path.join(self.d, "dehors.yaml") if cible == "DEHORS" else cible) for c, cible in liens]
+                code, sortie = self.lancer(manifestes, liens=liens)
+                self.assertEqual((code, self.journal, self.copie, self.sorties), (1, [], None, {}), sortie)
+                self.assertIn("doit être un fichier ordinaire", sortie)
+        self.setUp()  # le parcours honnête, à côté : un fichier ordinaire passe
+        code, sortie = self.lancer([("manifestes/miniz-0050.yaml", MANIFESTE_FR)])
+        self.assertEqual((code, len(self.journal)), (0, 1), sortie)
+
+    def test_tache_py_n_ouvre_qu_un_fichier_ordinaire(self):
+        """tache.py, appelé seul, refuse lui aussi un lien symbolique (même vers un manifeste valide, même cassé) ou un
+        dossier, sans trace d'exception ni copie de la tâche, avec le contrôle le plus strict en sortie."""
+        self.ecrire(self.registre, "taches/miniz/miniz-0050.yaml", TACHE_FR)
+        self.ecrire(self.d, "vrai/miniz-0050.yaml", MANIFESTE_FR)
+        os.makedirs(os.path.join(self.d, "lien"))
+        os.symlink(os.path.join(self.d, "vrai", "miniz-0050.yaml"), os.path.join(self.d, "lien", "miniz-0050.yaml"))
+        os.makedirs(os.path.join(self.d, "casse"))
+        os.symlink("absent.yaml", os.path.join(self.d, "casse", "miniz-0050.yaml"))
+        os.makedirs(os.path.join(self.d, "dossier", "miniz-0050.yaml"))
+        for nom, attendu in (("vrai", 0), ("lien", 1), ("casse", 1), ("dossier", 1)):
+            with self.subTest(manifeste=nom):
+                copie = os.path.join(self.d, f"copie-{nom}.yaml")
+                r = subprocess.run([sys.executable, os.path.join(ICI, "tache.py"), "--manifeste",
+                                    os.path.join(self.d, nom, "miniz-0050.yaml"), "--registre", self.registre, "--sortie", copie],
+                                   capture_output=True, text=True)
+                self.assertEqual((r.returncode, os.path.exists(copie)), (attendu, attendu == 0), r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+                if attendu:
+                    self.assertIn("doit être un fichier ordinaire", r.stderr)
+                    self.assertEqual(r.stdout, "sortie_compressee=identique\n")
 
     def test_deux_manifestes_refuses(self):
         code, sortie = self.lancer([("manifests/miniz-0050.yaml", MANIFESTE_EN), ("manifestes/miniz-0050.yaml", MANIFESTE_FR)])
@@ -1140,6 +1233,46 @@ class DependancesDeLOutil(unittest.TestCase):
                 code, appel, erreur = self.lancer(fichiers)
                 self.assertEqual((code, appel), (1, None))
                 self.assertIn("::error::", erreur)
+
+
+class ConserverLeManifeste(unittest.TestCase):
+    """Étape « Conserver le manifeste, la tâche et l'état » du job manifeste, extraite telle quelle : seul un manifeste
+    au nom validé et qui est un fichier ordinaire est copié dans l'artefact etat-manifeste (ni lien, ni dossier)."""
+
+    def test_seul_un_fichier_ordinaire_au_nom_valide_est_copie(self):
+        import yaml
+        with open(WORKFLOW, encoding="utf-8") as f:
+            etapes = yaml.safe_load(f)["jobs"]["manifeste"]["steps"]
+        scripts = [e["run"] for e in etapes if e.get("name", "").startswith("Conserver le manifeste")]
+        self.assertEqual(len(scripts), 1)
+        for chemin, forme, garde in (("manifests/miniz-0050.yaml", "fichier", True), ("manifestes/miniz-0050.yaml", "fichier", True),
+                                     ("CONTRIBUTION.yaml", "fichier", True), ("manifests/miniz-50.yaml", "fichier", False),
+                                     ("autre/miniz-0050.yaml", "fichier", False), ("manifests/../tache.yaml", "fichier", False),
+                                     ("manifests/miniz-0050.yaml", "lien", False), ("CONTRIBUTION.yaml", "lien", False),
+                                     ("manifestes/miniz-0050.yaml", "lien interne", False), ("CONTRIBUTION.yaml", "dossier", False)):
+            with self.subTest(chemin=chemin, forme=forme), tempfile.TemporaryDirectory() as d:
+                cible = os.path.join(d, "pr", chemin)
+                os.makedirs(os.path.dirname(cible), exist_ok=True)
+                with open(os.path.join(d, "dehors.yaml"), "w") as f:
+                    f.write("tache: miniz-0050\n")
+                if forme == "fichier":
+                    with open(cible, "w") as f:
+                        f.write("tache: miniz-0050\n")
+                elif forme == "lien":
+                    os.symlink(os.path.join(d, "dehors.yaml"), cible)
+                elif forme == "lien interne":
+                    with open(os.path.join(d, "pr", "hors.yaml"), "w") as f:
+                        f.write("tache: miniz-0050\n")
+                    os.symlink("../hors.yaml", cible)
+                else:
+                    os.makedirs(os.path.join(cible, "x"))
+                env = dict(os.environ, MANIFESTE=chemin, ETATS=os.path.join(d, "etats"))
+                r = subprocess.run(["bash", "-e", "-c", scripts[0]], cwd=d, capture_output=True, text=True, env=env)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                copie = os.path.join(d, "donnees", "CONTRIBUTION.yaml")
+                self.assertEqual(os.path.lexists(copie), garde)
+                if garde:
+                    self.assertTrue(os.path.isfile(copie) and not os.path.islink(copie))
 
 
 if __name__ == "__main__":

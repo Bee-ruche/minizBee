@@ -3,7 +3,8 @@
 #
 # 1. Trouve le manifeste de la PR : manifests/<tâche>.yaml ou manifestes/<tâche>.yaml, le seul fichier de ces
 #    dossiers que la PR ajoute ou modifie (sinon l'ancien CONTRIBUTION.yaml à la racine) ; lit la tâche qu'il
-#    désigne (donnée de la PR) et la retrouve dans le registre (bee/ci/tache.py, les deux vocabulaires).
+#    désigne (donnée de la PR) et la retrouve dans le registre (bee/ci/tache.py, les deux vocabulaires). Un manifeste
+#    est un fichier ordinaire (ni lien symbolique, ni dossier) : vérifié avant toute lecture.
 # 2. Lance « bee verifier-fork » (« check-fork » en anglais), l'outil du registre (branche main), par
 #    bee/ci/verifier_fork.py, qui demande ses noms à son --help : manifeste valide, plafond de lignes modifiées
 #    (R1), chemins juges intacts pour une optimisation (commandement 3), aucun binaire.
@@ -31,6 +32,10 @@ fi
 manifeste="${manifestes[0]:-CONTRIBUTION.yaml}"
 if ! printf '%s' "$manifeste" | grep -Eq '^(manifests|manifestes)/miniz-[0-9]{4}\.yaml$|^CONTRIBUTION\.yaml$'; then
   echo "Nom de manifeste invalide : manifests/miniz-NNNN.yaml (ou manifestes/miniz-NNNN.yaml) attendu." >&2
+  exit 1
+fi
+if [ -L "$pr/$manifeste" ] || { [ -e "$pr/$manifeste" ] && [ ! -f "$pr/$manifeste" ]; }; then
+  echo "Le manifeste $manifeste doit être un fichier ordinaire (ni lien symbolique, ni dossier)." >&2
   exit 1
 fi
 echo "Manifeste : $manifeste"

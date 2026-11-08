@@ -7,7 +7,8 @@ Entrées :
   --artefacts   dossier où les artefacts « etat-* » ont été téléchargés : fichiers d'état <etape>.txt
                 (« succes » / « echec », écrits par bee/ci/etape.sh), rapport juge-ancien.json de l'ancien juge
                 isolé (artefact etat-juge-ancien, transition), CONTRIBUTION.yaml de la PR et tache.yaml du registre
-                (artefact etat-manifeste). Ce sont des DONNÉES : lues, jamais exécutées. Les jobs qui exécutent du
+                (artefact etat-manifeste). Ce sont des DONNÉES : lues, jamais exécutées ; chaque fichier n'est lu
+                qu'à la racine de l'artefact du job qui le produit (rapport du juge commun : --juge). Les jobs qui exécutent du
                 code de la PR (meta-juge, outillage-pr) n'ont pas d'artefact : leur étape vient de leur résultat.
   --juge        dossier de l'artefact « juge » du juge commun (workflow juge.yml du registre) : juge.json (au
                 format d'ab.py plus une section « juge ») et code (0 juste, 1 refusé, 2 environnement) ; défaut
@@ -235,15 +236,10 @@ def lire_json(chemin):
 
 
 def trouver_dans(artefacts, artefact, nom):
-    """Fichier d'un artefact précis (etat-manifeste, etat-juge-ancien…) : jamais celui d'un autre job."""
-    return trouver(os.path.join(artefacts, artefact), nom) if artefacts else None
-
-
-def trouver(dossier, nom):
-    if not dossier:
-        return None
-    trouves = sorted(glob.glob(os.path.join(dossier, "**", nom), recursive=True))
-    return trouves[0] if trouves else None
+    """Le fichier `nom` à la racine de l'artefact du job qui le produit (etat-manifeste, etat-juge-ancien) : jamais
+    celui d'un autre job ou d'un sous-dossier."""
+    chemin = os.path.join(artefacts, artefact, nom) if artefacts else None
+    return chemin if chemin and os.path.isfile(chemin) else None
 
 
 def main():
@@ -252,9 +248,9 @@ def main():
     analyseur.add_argument("--artefacts", help="dossier des artefacts etat-* téléchargés")
     analyseur.add_argument("--etats", help="dossier des fichiers <etape>.txt (simulation locale)")
     analyseur.add_argument("--juge", help="dossier de l'artefact « juge » du juge commun (défaut : <artefacts>/juge)")
-    analyseur.add_argument("--ab", help="rapport JSON du juge ou d'ab.py (défaut : juge.json de --juge, sinon ab.json dans --artefacts)")
-    analyseur.add_argument("--manifeste", help="CONTRIBUTION.yaml de la PR (donnée)")
-    analyseur.add_argument("--tache", help="tâche du registre (défaut : tache.yaml trouvé dans --artefacts)")
+    analyseur.add_argument("--ab", help="rapport JSON du juge ou d'ab.py (défaut : juge.json à la racine de --juge)")
+    analyseur.add_argument("--manifeste", help="CONTRIBUTION.yaml de la PR (donnée ; défaut : celui de l'artefact etat-manifeste)")
+    analyseur.add_argument("--tache", help="tâche du registre (défaut : tache.yaml de l'artefact etat-manifeste)")
     analyseur.add_argument("--depot", help="clone du fork, pour compter les lignes modifiées")
     analyseur.add_argument("--base")
     analyseur.add_argument("--tete")
@@ -274,8 +270,10 @@ def main():
         etats.pop("juge_isole", None)
     elif code_juge is not None:
         etats["juge_isole"] = "succes" if code_juge == "0" and etats.get("juge_isole") != "echec" else "echec"
+    # Le rapport vient de --ab, sinon de juge.json à la racine de l'artefact « juge », le job qui le produit ; en CI
+    # comme en simulation, jamais d'un autre artefact.
     chemin_ab = args.ab or (os.path.join(dossier_juge, "juge.json") if dossier_juge and os.path.isfile(os.path.join(dossier_juge, "juge.json"))
-                            else None) or (None if jobs else trouver(args.artefacts, "ab.json"))
+                            else None)
     rapport = lire_json(chemin_ab)
     # Un code 0 sans section juge, ou sans aucune sortie comparée, n'est pas un jugement : rouge.
     section = section_juge((rapport or {}).get("juge"))
