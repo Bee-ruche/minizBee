@@ -210,7 +210,7 @@ Déclenchée sur chaque pull request, avec le seul droit `contents: read`.
 
 | Job | Machine | Étape(s) du verdict | Commande |
 | --- | --- | --- | --- |
-| Manifeste et taille | ubuntu-24.04 | `manifeste_et_taille` | `bee/ci/manifeste.sh` : tâche lue dans le registre, puis `bee verifier-fork` (R1, commandement 3, manifeste) ; le registre et le manifeste sont lus en français ou en anglais (`bee/ci/vocabulaire.py`, `bee/ci/verifier_fork.py`), un seul vocabulaire par document |
+| Manifeste et taille | ubuntu-24.04 | `manifeste_et_taille` | `bee/ci/manifeste.sh` : manifeste, un fichier ordinaire (ni lien symbolique, ni dossier), et tâche lue dans le registre, puis `bee verifier-fork` (R1, commandement 3, manifeste) ; le registre et le manifeste sont lus en français ou en anglais (`bee/ci/vocabulaire.py`, `bee/ci/verifier_fork.py`), un seul vocabulaire par document |
 | Compilation et tests | ubuntu-24.04 **et** ubuntu-24.04-arm | `compilation_<arch>`, `differentiel_<arch>` | `bee/ci/tests_origine.sh` (CMake + ctest), puis `bee/ci/differentiel.sh` (juges de la base, sources de la PR) |
 | Fuzzing | ubuntu-24.04 | `fuzzing` | `bee/fuzz/lancer.sh 600 --source pr --reference base` (libFuzzer, 2 harnais en parallèle, 10 min, mode discret ; seuls les écarts nouveaux font échouer) |
 | Greffon du juge commun | ubuntu-24.04 | `greffon_juge` | choisit le commit dont le juge commun lit le greffon et les sources de A : toujours le point de départ de la PR, qui doit être unique ; si `bee/` ou miniz a changé sur master depuis, l'étape est rouge (« rebasez ») (voir « Juge commun ») |
@@ -218,7 +218,7 @@ Déclenchée sur chaque pull request, avec le seul droit `contents: read`.
 | Ancien juge isolé (transition) | ubuntu-24.04 | `juge_ancien` | `bee/juge/juge.py` de la base, tant qu'une base en a encore un (les PR vers master tant que miniz-0032 n'y est pas fusionnée) ; sinon rien |
 | Méta-tests du greffon | ubuntu-24.04 | `meta_juge` | `bee/juge/test_juge.py` avec `BEE_JUGE_INTEGRATION=1` et le juge commun au même commit, seulement si la PR modifie `bee/juge/` ou ce workflow (code de la PR : job à part, lecture seule, ni artefact ni sortie, seul son résultat compte) |
 | Tests de l'outillage de CI de la PR | ubuntu-24.04 | `outillage_pr` | `bee/ci/test_verdict.py` de la PR, seulement si elle modifie `bee/ci/` ou ce workflow (le job manifeste lance ceux de la base) ; mêmes conditions que les méta-tests |
-| Verdict | ubuntu-24.04 | — | `bee/ci/verdict.py` produit `verdict.json`, publié en artefact `verdict` |
+| Verdict | ubuntu-24.04 | — | `bee/ci/verdict.py` produit `verdict.json`, publié en artefact `verdict` ; chaque fichier n'est lu qu'à la racine de l'artefact du job qui le produit (`etat-manifeste`, `etat-juge-ancien`, `juge`), chaque fichier d'état que dans le dossier d'état de son job, jamais à travers un lien symbolique |
 
 Les jobs « Compilation et tests » et « Fuzzing » exécutent leurs commandes dans le conteneur du juge commun, par `isoler.sh <image> <copie de travail> -- <commande>` (le script du registre, au commit épinglé de `juge-v2` ; l'image commune porte les paquets du greffon), sur une copie fraîche de la base et de la PR pour chaque étape.
 

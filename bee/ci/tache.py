@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Trouve, dans le registre Bee, la tâche que désigne le manifeste d'une PR (manifests/<tâche>.yaml ou manifestes/).
 
-Le manifeste vient de la PR : c'est une donnée, lue avec yaml.safe_load et validée, jamais exécutée.
+Le manifeste vient de la PR : c'est une donnée, lue avec yaml.safe_load et validée, jamais exécutée ; c'est un fichier
+ordinaire (ni lien symbolique, ni dossier), vérifié avant d'être ouvert.
 La tâche vient du registre (branche main) : c'est elle, et non la PR, qui fixe la métrique visée et
 le droit de changer la sortie compressée.
 Les deux vocabulaires du registre sont lus (bee/ci/vocabulaire.py) : tasks/ ou taches/, clés et valeurs anglaises
@@ -23,6 +24,7 @@ import glob
 import os
 import re
 import shutil
+import stat
 import sys
 
 import yaml
@@ -45,8 +47,11 @@ def main():
     analyseur.add_argument("--sortie", default="tache.yaml")
     args = analyseur.parse_args()
 
-    if not os.path.exists(args.manifeste):
+    # Un manifeste est un fichier ordinaire : ni lien symbolique (même cassé), ni dossier, vérifié avant toute lecture.
+    if not os.path.lexists(args.manifeste):
         echouer("manifeste absent : la PR doit ajouter manifests/<tâche>.yaml ou manifestes/ (voir AGENTS.md du registre : bee manifeste)")
+    if not stat.S_ISREG(os.lstat(args.manifeste).st_mode):
+        echouer(f"le manifeste {os.path.basename(args.manifeste)} doit être un fichier ordinaire (ni lien symbolique, ni dossier)")
     try:
         with open(args.manifeste, encoding="utf-8") as f:
             manifeste = yaml.safe_load(f)
