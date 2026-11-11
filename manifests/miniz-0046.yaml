@@ -34,7 +34,7 @@ change: >
   unchanged: the four messages of juges.sh's shared block (« AMORÇAGE », « INTRODUCTION DU GREFFON », « Juges : »,
   « La base de la PR »), because bee-ci.yml holds an identical copy that test_verdict.py compares, and the workflow
   is outside the task's files (miniz-0050 changes bee-ci.yml); and bee/corpus/generer.py (« Corpus conforme… »),
-  out of the task's scope.
+  out of the task's scope. Two lines of bee/README.md follow the new texts (see doubts).
 tested:
   - "A token comparison of every changed file against master (Python tokenize, a C tokenizer, a small shell lexer that keeps expansions; adjacent C literals as one): once string literals are set aside, code, names, comments and interpolated expressions are identical in all 27 files; 524 literals changed (part a 128, part b 396), every printf %-specifier kept in order. Set aside and listed for review: 4 docstring first lines, the 32 help comment lines of the two lancer.sh (same line count, every changed line still a comment), and one coupled change outside a literal, the grep pattern 'pilote : terminé' → 'pilote: done'. Each changed literal was read: none is compared against anything."
   - "In bee/sandbox/sans-docker.sh, master f5440c3 and this branch: test_ab.py 10 tests OK, test_profil.py 4 OK, test_verdict.py 74 OK, test_juge.py 19 OK (7 meta-tests skipped: they need Docker). The new test_verdict.py against master's scripts fails 14 subtests, so its assertions bind the new texts."
@@ -54,10 +54,12 @@ doubts: >
   reach the « juge » artifact (journal.txt with the pinned juge-v2; juge.json's juge.motif from juge-v3 on,
   ruche-0136), never verdict.json: verdict.py does not copy them. vocabulaire.py's messages reach
   details.origine_metrique only in a local simulation: in CI, the manifest job writes the task copy only after
-  reading it with the same function, so an unreadable copy cannot reach verdict.py there. bee/README.md says
-  execution.c is unchanged since miniz-0031: only its messages changed (outputs and instruction counts identical,
-  above). The README quotes profil.py's labels « hors miniz » and « miniz.c (hors fonction) », which stay, and its
-  « beyond noise » and « within noise » match ab.py's new table. The help lines of the two
+  reading it with the same function, so an unreadable copy cannot reach verdict.py there. bee/README.md, English
+  since miniz-0045 (merged into this branch), is edited where it quotes what this PR changes: ab.py's table verdict
+  « DEGRADATION beyond noise » (its « within noise » already matched), and the line that called execution.c unchanged
+  since miniz-0031 now says only its messages changed (outputs and instruction counts identical, above). It keeps
+  its quotes of data that stays French: profil.py's labels « hors miniz » and « miniz.c (hors fonction) », and the
+  CI's « rebasez » messages (bee-ci.yml). The help lines of the two
   lancer.sh are comments translated because the scripts print them; the other comments stay. The check names of the
   differential tests (brut, vidages, sommes, empreintes) stay as identifiers, as in bee/README.md. The juges.sh block
   stays French until bee-ci.yml changes with it.

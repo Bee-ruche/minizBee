@@ -63,7 +63,7 @@ if [ "$moteur" = "auto" ]; then
   else
     moteur="gcc"
     echo "lancer.sh: $CLANG cannot link -fsanitize=fuzzer (libclang_rt runtime missing):"
-    echo "           falling back on gcc + ASan/UBSan with a driver of random mutations (without coverage)."
+    echo "           falling back to gcc + ASan/UBSan with a driver of random mutations (without coverage)."
   fi
   rm -rf "$essai"
 fi

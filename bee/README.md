@@ -181,7 +181,7 @@ python3 bee/bench/test_ab.py                                            # unit t
    Below 6 non-tied pairs, nothing is ever "beyond noise". The [min, max] intervals stay in the JSON for information (`minmax_disjoints`).
 5. `--instructions` also counts the instructions with `valgrind --tool=cachegrind`, once per scenario (n1, n6, n9, decompression), on the first 128 KiB of each file (about 3.3 MB). The count is reproducible to the instruction; a difference beyond 0.2% is reported.
 
-**Validation on this machine.** Base against itself, 10 repetitions: all gains between −1.4% and +0.5%, all "within noise", identical instructions. Slowdown injected for the test (about 4% at levels 1, 6 and 9): B wins no pair out of 10 at the three levels, hence "degradation beyond noise"; decompression, untouched, stays within noise. A full run takes about 2 min 30 s, Cachegrind included.
+**Validation on this machine.** Base against itself, 10 repetitions: all gains between −1.4% and +0.5%, all "within noise", identical instructions. Slowdown injected for the test (about 4% at levels 1, 6 and 9): B wins no pair out of 10 at the three levels, hence "DEGRADATION beyond noise"; decompression, untouched, stays within noise. A full run takes about 2 min 30 s, Cachegrind included.
 
 ## Profiling
 
@@ -239,7 +239,7 @@ Until 27 October 2026, the PR's code ran in the very process that judged it: mal
 
 | In the registry (`outils/juge/`, juge-v2 pinned by SHA, docs/common-judge.md) | Here (`bee/juge/`) |
 | --- | --- |
-| Common image (`Dockerfile.base`) and isolation (`isoler.sh`), launcher `chrono.c`, safe reading of the outputs, object analysis, seed, A/B statistics, report (`juge.py`), meta-tests on a toy project, reusable workflow `juge.yml` | `projet.py`, the **plugin**: sources, packages, build, inputs (corpus, random, zlib streams from the host), correctness rule, scenarios and metrics; `construire.sh` (build in the container); `execution.c` (the harness, unchanged since miniz-0031); `test_juge.py` (tests of the plugin and meta-tests of miniz) |
+| Common image (`Dockerfile.base`) and isolation (`isoler.sh`), launcher `chrono.c`, safe reading of the outputs, object analysis, seed, A/B statistics, report (`juge.py`), meta-tests on a toy project, reusable workflow `juge.yml` | `projet.py`, the **plugin**: sources, packages, build, inputs (corpus, random, zlib streams from the host), correctness rule, scenarios and metrics; `construire.sh` (build in the container); `execution.c` (the harness, unchanged since miniz-0031 except for its messages, in English since miniz-0046); `test_juge.py` (tests of the plugin and meta-tests of miniz) |
 
 ```bash
 python3 <registry>/outils/juge/juge.py --outillage . --source-a <base folder> --source-b <PR folder> [--repetitions 10] [--json juge.json]

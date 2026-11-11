@@ -646,7 +646,7 @@ static void cas_compress(void)
     controle("mz_compress2 level -2: same output as at level -1", lm == n_moins_1 && memcmp(sortie_m, reference, lm) == 0);
 
     lm = lz = sizeof(sortie_m);
-    IDEM("mz_compress large enough buffer", mz_compress(sortie_m, &lm, donnees, TAILLE), compress(sortie_z, &lz, donnees, TAILLE), MZ_OK);
+    IDEM("mz_compress buffer large enough", mz_compress(sortie_m, &lm, donnees, TAILLE), compress(sortie_z, &lz, donnees, TAILLE), MZ_OK);
     lm = lm - 1, lz = lz - 1;
     IDEM("mz_compress exact size - 1", mz_compress(sortie_m, &lm, donnees, TAILLE), compress(sortie_z, &lz, donnees, TAILLE), MZ_BUF_ERROR);
 
