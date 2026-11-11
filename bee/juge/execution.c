@@ -471,7 +471,7 @@ int main(int argc, char **argv)
     int i;
     if (argc < 4)
     {
-        fprintf(stderr, "usage: execution <mode> <input_dir> <output_dir> [--prefixe N]\n");
+        fprintf(stderr, "usage: execution <mode> <input_folder> <output_folder> [--prefixe N]\n");
         return 2;
     }
     umask(0); /* l'hôte doit pouvoir effacer les sorties (écrites par un autre utilisateur) */

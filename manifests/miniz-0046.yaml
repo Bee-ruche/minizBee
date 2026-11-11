@@ -12,28 +12,31 @@ change: >
   the common judge prints), execution.c (the harness's error messages), construire.sh and test_juge.py print.
   bee/ci/test_verdict.py asserts the new texts, as strictly as before (« not found in the registry » where the old
   test said « introuvable »). Registry names are the post-switch ones (bee manifest, bee check-fork). French typography
-  becomes English (« usage: », « code 1: »); « » quotes stay, as in the registry's English messages. Unchanged, by
-  scope: verdict.json keys and values, including the step labels that become etape_en_echec and the details texts
-  (miniz-0050); GITHUB_OUTPUT keys and values (tache=, metrique=aucune) and state files (succes, echec, oui); the
-  plugin's METHODE text (it goes into juge.json); the harness's mode names and its « liste » file; code comments and
+  becomes English (« usage: », « code 1: »); « » quotes stay, as in the registry's English messages. Wording follows
+  libyamlBee's PR 5 where the two forks print the same message. Unchanged, by scope: verdict.json keys and values,
+  including the step labels that become etape_en_echec, the details texts and verdict.py's own message for a missing
+  or unreadable task copy, which becomes details.origine_metrique (miniz-0050); GITHUB_OUTPUT keys and values
+  (tache=, metrique=aucune) and state files (succes, echec, oui); the plugin's METHODE text (it goes into juge.json); the harness's mode names and its « liste » file; code comments and
   docstrings, except the first line of the docstrings of tache.py and verifier_fork.py, which argparse prints as
   their --help description. Also unchanged: the four messages of juges.sh's shared block (its « AMORÇAGE »,
   « INTRODUCTION DU GREFFON », « Juges : » and « La base de la PR » lines), because bee-ci.yml holds an identical copy
   that test_verdict.py compares, and the workflow is outside the task's files (miniz-0050 changes bee-ci.yml).
 tested:
-  - "A token comparison of every changed file against master (Python tokenize, a C tokenizer, a small shell lexer): once string literals are set aside, code, names, comments and interpolated expressions are identical in all 13 files; 129 literals changed (2 docstring first lines), every printf %-specifier kept in order. Each changed literal was read: none is compared against anything."
+  - "A token comparison of every changed file against master (Python tokenize, a C tokenizer, a small shell lexer): once string literals are set aside, code, names, comments and interpolated expressions are identical in all 13 files; 128 literals changed (2 docstring first lines), every printf %-specifier kept in order. Each changed literal was read: none is compared against anything."
   - "In bee/sandbox/sans-docker.sh, before (master f5440c3) and after: test_ab.py 10 tests OK, test_profil.py 4 OK, test_verdict.py 74 OK, test_juge.py 19 OK (7 meta-tests skipped: they need Docker). The new test_verdict.py against master's scripts fails 14 subtests, so its assertions bind the new texts."
   - "Verdict JSON on real data, in the sandbox: the CI artifacts of the last PR merged into master (miniz-0051, run 42518180042, head 95d0e58) fed to master's verdict.py and to this branch's: both rebuild a verdict.json byte-identical to each other and equal to the CI's own; same stdout."
-  - "The common judge's verification without Docker (a script that calls juge-v2's own functions and this plugin, harness built by construire.sh, seed fixed), master tooling against this branch's, A = B = master: 914 outputs compared in the verification (129 inputs), 61 per scenario in one repetition and in the instruction count; Valgrind counts identical before and after (n1 171,451,924; n6 335,527,486; n9 483,765,894; decompression 26,939,977, A = B); every output file byte-identical (SHA-256). Only the build message and the plugin's SHA-256 differ (3c182b96… becomes 4aa4e58c…)."
+  - "The common judge's verification without Docker (a script that calls juge-v2's own functions and this plugin, harness built by construire.sh, seed fixed), master tooling against this branch's, A = B = master: 914 outputs compared in the verification (129 inputs), 61 per scenario in one repetition and in the instruction count; Valgrind counts identical before and after (n1 171,451,924; n6 335,527,486; n9 483,765,894; decompression 26,939,977, A = B); every output file byte-identical (SHA-256). Only the build message and the plugin's SHA-256 differ (3c182b96… becomes 4aa4e58c…). The work folder's path has the same length in both runs: the harness formats paths, and a folder name one character longer alone moves each count by a few hundred instructions."
   - "The differential step through etape.sh, before and after, on master: 3843 checks, 0 discrepancies, 488 fingerprints identical, api 192 cases and 106 checks, state file « succes » both times; the logs differ only by the translated lines."
 untested:
   - "The meta-tests against malicious variants (BEE_JUGE_INTEGRATION=1) need Docker, which the sandbox does not give: the fork's meta-juge job runs them on this PR."
   - "Part (b) (bee/bench, bee/tests, bee/fuzz, bee/sandbox, bee/commun: about 370 printed lines) is not in this PR."
 doubts: >
   The plugin's SHA-256 changes, as with any change to bee/juge/projet.py, so juge.greffon in later verdicts changes
-  and open fork PRs must rebase after the merge (the greffon job's rule). When a task is illegible,
-  details.origine_metrique keeps its prefix « illisible : » but now carries the English message after it (the text of
-  vocabulaire.py's or verdict.py's Illisible): free text no program reads (the registry reads details.base only).
+  and open fork PRs must rebase after the merge (the greffon job's rule). The plugin's refusal and error messages
+  reach the « juge » artifact (journal.txt with the pinned juge-v2; juge.json's juge.motif from juge-v3 on,
+  ruche-0136), never verdict.json: verdict.py does not copy them. vocabulaire.py's messages reach
+  details.origine_metrique only in a local simulation: in CI, the manifest job writes the task copy only after
+  reading it with the same function, so an unreadable copy cannot reach verdict.py there.
   bee/README.md says execution.c is unchanged since miniz-0031: after this PR only its messages changed (outputs and
   instruction counts identical, above); the sentence is for miniz-0045 or a follow-up to adjust. The juges.sh block
   stays French until bee-ci.yml changes with it.

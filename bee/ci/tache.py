@@ -65,7 +65,7 @@ def main():
         echouer("the manifest's key « task » (or « tache ») must be a miniz-NNNN id")
     nom = os.path.basename(args.manifeste)
     if nom != "CONTRIBUTION.yaml" and nom != tache + ".yaml":
-        echouer(f"the manifest {nom} names the task {tache}: it must be named manifests/{tache}.yaml (or manifestes/)")
+        echouer(f"the manifest {nom} names the task {tache}: it must be called manifests/{tache}.yaml (or manifestes/)")
 
     candidats = sorted(c for dossier in ("tasks", "taches")
                        for c in glob.glob(os.path.join(args.registre, dossier, "**", tache + ".yaml"), recursive=True))

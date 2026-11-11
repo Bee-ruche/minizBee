@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs « bee check-fork » (« verifier-fork » in French), the Bee registry's tool, under the names its --help announces.
+"""Runs the Bee registry's tool « bee check-fork » (« verifier-fork » in French), with the names its --help announces.
 
 Le registre passe ses noms en anglais en une bascule (docs/english-names.md du registre) : outils/ → tools/,
 verifier-fork → check-fork, --tache → --task, --tete → --head, --depot → --repo, --auteur → --author, --registre →
@@ -53,7 +53,7 @@ def main():
 
     outils = [c for c in ("tools/bee.py", "outils/bee.py") if os.path.isfile(os.path.join(args.registre, c))]
     if len(outils) != 1:
-        echouer(f"the registry must hold exactly one tool among tools/bee.py and outils/bee.py (found: {outils or 'none'})")
+        echouer(f"the registry must have exactly one tool among tools/bee.py and outils/bee.py (found: {outils or 'none'})")
     outil = os.path.join(args.registre, outils[0])
     env = {k: v for k, v in os.environ.items() if k not in GLOBALE.values()}
     env["PYTHON_COLORS"] = "0"  # une aide sans couleurs (argparse de Python 3.14), lue telle quelle
@@ -80,7 +80,7 @@ def main():
         except LookupError as e:
             refus.append(str(e))
     if len(retenues) != 1:
-        echouer(f"exactly one command among {', '.join(COMMANDES)} must be in the help of {outils[0]} "
+        echouer(f"exactly one command among {', '.join(COMMANDES)} is needed in the help of {outils[0]} "
                 f"(kept: {sorted(retenues) or 'none'}; set aside: {'; '.join(refus) or 'none'})")
     (commande, noms), = retenues.items()
     appel = [sys.executable, outil, globale, args.registre, commande]

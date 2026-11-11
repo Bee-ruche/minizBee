@@ -26,6 +26,6 @@ echo "== The base's tooling, the PR's sources"
 "$BEE/tests/lancer.sh" --source "$pr" ${options[@]+"${options[@]}"}
 
 if [ -n "${BASE_SHA:-}" ] && [ -n "$(git -C "$pr" diff --name-only "${BASE_SHA}...${TETE_SHA:-HEAD}" -- bee/)" ]; then
-  echo "== The PR changes bee/: its own tooling, on its own sources"
+  echo "== The PR modifies bee/: its own tooling, on its own sources"
   BEE_CONSTR="$pr/bee/construction/tests-pr" "$pr/bee/tests/lancer.sh" ${options[@]+"${options[@]}"}
 fi

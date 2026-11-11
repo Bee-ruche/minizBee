@@ -25,7 +25,7 @@
 set -euo pipefail
 
 if [ $# -ne 3 ]; then
-  echo "usage: $0 <base_dir> <pr_dir> <base_sha>" >&2
+  echo "usage: $0 <base_folder> <pr_folder> <base_sha>" >&2
   exit 2
 fi
 base="$1"

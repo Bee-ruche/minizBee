@@ -1085,7 +1085,7 @@ class JobManifeste(unittest.TestCase):
                 self.setUp()
                 code, sortie = self.lancer([("manifests/miniz-0050.yaml", texte)])
                 self.assertEqual((code, self.journal, self.sorties["sortie_compressee"]), (1, [], "identique"), sortie)
-                self.assertIn("mixes the two vocabularies", sortie)
+                self.assertIn("mixes both vocabularies", sortie)
 
     def test_tache_type_ou_metrique_illisible_echoue(self):
         """Le job échoue, sans appeler l'outil ni écrire la copie de la tâche : jamais un défaut."""

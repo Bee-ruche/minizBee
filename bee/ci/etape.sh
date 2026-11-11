@@ -8,7 +8,7 @@
 set -uo pipefail
 
 if [ $# -lt 3 ]; then
-  echo "usage: $0 <states_dir> <step> <command> [arguments...]" >&2
+  echo "usage: $0 <states_folder> <step> <command> [arguments...]" >&2
   exit 2
 fi
 dossier="$1"

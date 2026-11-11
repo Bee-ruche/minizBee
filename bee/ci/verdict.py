@@ -150,7 +150,7 @@ def metrique_principale(tache, etat_tache, manifeste, en_ci):
         metrique = metrique_de_la_tache(tache)
         return metrique, "tâche du registre" if metrique else "tâche du registre (metrique: null)"
     if en_ci or etat_tache != "absent":
-        raise Illisible(f"copy of the registry's task {etat_tache}: metric unreadable")
+        raise Illisible(f"copie de la tâche du registre {etat_tache} : métrique illisible")
     if manifeste is not None:
         manifeste = lire_manifeste(manifeste)
         if manifeste.get("metrique") in METRIQUES:
@@ -270,11 +270,11 @@ def main():
     analyseur = argparse.ArgumentParser(description="Assembles verdict.json for the Bee CI of the miniz fork.")
     analyseur.add_argument("--jobs", help="the workflow's toJSON(needs): the jobs' results (source of truth for « ci »)")
     analyseur.add_argument("--artefacts", help="folder of the downloaded etat-* artifacts")
-    analyseur.add_argument("--etats", help="folder of the <etape>.txt files, at its root (the verdict job's, or a local simulation's)")
+    analyseur.add_argument("--etats", help="folder of the <etape>.txt files, at its root (the verdict job's, or a local simulation)")
     analyseur.add_argument("--juge", help="folder of the common judge's « juge » artifact (default: <artefacts>/juge)")
     analyseur.add_argument("--ab", help="JSON report of the judge or of ab.py (default: juge.json at the root of --juge)")
     analyseur.add_argument("--manifeste", help="the PR's CONTRIBUTION.yaml (data; default: the one in the etat-manifeste artifact)")
-    analyseur.add_argument("--tache", help="the registry's task (default: tache.yaml in the etat-manifeste artifact)")
+    analyseur.add_argument("--tache", help="the registry's task (default: tache.yaml of the etat-manifeste artifact)")
     analyseur.add_argument("--depot", help="clone of the fork, to count the changed lines")
     analyseur.add_argument("--base")
     analyseur.add_argument("--tete")

@@ -26,7 +26,7 @@ infos="$(mktemp)"
 
 mapfile -t manifestes < <(git -C "$pr" diff --name-only --no-renames --diff-filter=AM "$BASE_SHA...$TETE_SHA" -- 'manifests/*' 'manifestes/*')
 if [ "${#manifestes[@]}" -gt 1 ]; then
-  echo "The PR adds or changes several manifests (${manifestes[*]}): one PR, one task." >&2
+  echo "The PR adds or modifies several manifests (${manifestes[*]}): one PR, one task." >&2
   exit 1
 fi
 manifeste="${manifestes[0]:-CONTRIBUTION.yaml}"
