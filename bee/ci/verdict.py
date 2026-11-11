@@ -150,7 +150,7 @@ def metrique_principale(tache, etat_tache, manifeste, en_ci):
         metrique = metrique_de_la_tache(tache)
         return metrique, "tâche du registre" if metrique else "tâche du registre (metrique: null)"
     if en_ci or etat_tache != "absent":
-        raise Illisible(f"copie de la tâche du registre {etat_tache} : métrique illisible")
+        raise Illisible(f"copy of the registry's task {etat_tache}: metric unreadable")
     if manifeste is not None:
         manifeste = lire_manifeste(manifeste)
         if manifeste.get("metrique") in METRIQUES:
@@ -267,15 +267,15 @@ def trouver_dans(artefacts, artefact, nom):
 
 
 def main():
-    analyseur = argparse.ArgumentParser(description="Assemble verdict.json pour la CI Bee du fork miniz.")
-    analyseur.add_argument("--jobs", help="toJSON(needs) du workflow : résultats des jobs (source de vérité de « ci »)")
-    analyseur.add_argument("--artefacts", help="dossier des artefacts etat-* téléchargés")
-    analyseur.add_argument("--etats", help="dossier des fichiers <etape>.txt, à sa racine (celui du job verdict, ou une simulation locale)")
-    analyseur.add_argument("--juge", help="dossier de l'artefact « juge » du juge commun (défaut : <artefacts>/juge)")
-    analyseur.add_argument("--ab", help="rapport JSON du juge ou d'ab.py (défaut : juge.json à la racine de --juge)")
-    analyseur.add_argument("--manifeste", help="CONTRIBUTION.yaml de la PR (donnée ; défaut : celui de l'artefact etat-manifeste)")
-    analyseur.add_argument("--tache", help="tâche du registre (défaut : tache.yaml de l'artefact etat-manifeste)")
-    analyseur.add_argument("--depot", help="clone du fork, pour compter les lignes modifiées")
+    analyseur = argparse.ArgumentParser(description="Assembles verdict.json for the Bee CI of the miniz fork.")
+    analyseur.add_argument("--jobs", help="the workflow's toJSON(needs): the jobs' results (source of truth for « ci »)")
+    analyseur.add_argument("--artefacts", help="folder of the downloaded etat-* artifacts")
+    analyseur.add_argument("--etats", help="folder of the <etape>.txt files, at its root (the verdict job's, or a local simulation's)")
+    analyseur.add_argument("--juge", help="folder of the common judge's « juge » artifact (default: <artefacts>/juge)")
+    analyseur.add_argument("--ab", help="JSON report of the judge or of ab.py (default: juge.json at the root of --juge)")
+    analyseur.add_argument("--manifeste", help="the PR's CONTRIBUTION.yaml (data; default: the one in the etat-manifeste artifact)")
+    analyseur.add_argument("--tache", help="the registry's task (default: tache.yaml in the etat-manifeste artifact)")
+    analyseur.add_argument("--depot", help="clone of the fork, to count the changed lines")
     analyseur.add_argument("--base")
     analyseur.add_argument("--tete")
     analyseur.add_argument("--sortie", default="verdict.json")
@@ -319,7 +319,7 @@ def main():
         # La tâche fixe la métrique, jamais la PR : sans elle, pas de verdict vert (sa copie vient du job manifeste).
         metrique, origine = None, f"illisible : {e}"
         etats["manifeste_et_taille"] = "echec"
-        print(f"::error::verdict.py : {e}", file=sys.stderr)
+        print(f"::error::verdict.py: {e}", file=sys.stderr)
 
     # Étape par étape : réussie seulement si son fichier d'état dit « succes » ET (en CI) si son job a réussi.
     resultat_etapes = {}
@@ -407,7 +407,7 @@ def main():
     resume = {k: verdict[k] for k in ("ci", "etape_en_echec", "gain", "metrique", "au_dela_du_bruit", "degradations",
                                       "lignes_modifiees", "amorcage") if k in verdict}
     if amorcage:
-        print("AMORÇAGE : les juges de cette exécution venaient de la PR elle-même (amorcage: true).", file=sys.stderr)
+        print("BOOTSTRAP: the judges of this run came from the PR itself (amorcage: true).", file=sys.stderr)
     print(json.dumps(resume, ensure_ascii=False))
     return 0
 

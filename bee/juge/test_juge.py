@@ -41,8 +41,8 @@ ICI = os.path.dirname(os.path.abspath(__file__))
 RACINE = os.path.dirname(os.path.dirname(ICI))
 JUGE_COMMUN = os.path.abspath(os.environ.get("BEE_JUGE_COMMUN") or os.path.join(os.path.dirname(RACINE), "registre", "outils", "juge"))
 if not os.path.isfile(os.path.join(JUGE_COMMUN, "juge.py")):
-    sys.exit(f"juge commun introuvable dans {JUGE_COMMUN} : BEE_JUGE_COMMUN=<registre>/outils/juge "
-             "(à l'étiquette épinglée par .github/workflows/bee-ci.yml)")
+    sys.exit(f"common judge not found in {JUGE_COMMUN}: BEE_JUGE_COMMUN=<registry>/outils/juge "
+             "(at the tag pinned by .github/workflows/bee-ci.yml)")
 sys.path.insert(0, JUGE_COMMUN)
 import juge as juge_commun  # noqa: E402
 import lecture  # noqa: E402
@@ -277,7 +277,7 @@ INCLUDE = '#include "miniz.h"\n'
 
 def remplacer(texte, ancien, nouveau):
     if texte.count(ancien) != 1:
-        raise AssertionError(f"marqueur introuvable ou ambigu dans miniz.c : {ancien[:60]!r}")
+        raise AssertionError(f"marker missing or ambiguous in miniz.c: {ancien[:60]!r}")
     return texte.replace(ancien, nouveau)
 
 
@@ -362,7 +362,7 @@ def travail_deplace(texte, corpus):
 
 
 @unittest.skipUnless(os.environ.get("BEE_JUGE_INTEGRATION") == "1" and shutil.which("docker"),
-                     "méta-tests : BEE_JUGE_INTEGRATION=1 et Docker requis")
+                     "meta-tests: BEE_JUGE_INTEGRATION=1 and Docker required")
 class TestJugeContreVariantes(unittest.TestCase):
     """Le juge commun complet, en conteneur, avec ce greffon, contre la base et des variantes malveillantes."""
 
@@ -394,7 +394,7 @@ class TestJugeContreVariantes(unittest.TestCase):
             commande += ["--reseau-construction", os.environ["BEE_JUGE_RESEAU"]]
         r = subprocess.run(commande, capture_output=True, text=True, timeout=3600)
         rapport = json.loads(r.stdout) if r.returncode == 0 else None
-        print(f"\n[{nom}] code {r.returncode} : {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ''}", file=sys.stderr)
+        print(f"\n[{nom}] code {r.returncode}: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ''}", file=sys.stderr)
         return r.returncode, rapport, r.stderr
 
     def types_suspects(self, rapport):
@@ -445,7 +445,7 @@ class TestJugeContreVariantes(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(rapport["juge"]["constructions_suspectes"], [])  # rien de visible : seul le décompte protège
         n6 = rapport["instructions"]["instructions_n6"]
-        self.assertLess(n6["gain"], 0.002, "le travail déplacé hors des compressions doit rester compté")
+        self.assertLess(n6["gain"], 0.002, "work moved out of the compressions must stay counted")
 
     def test_faux_resume(self):
         code, rapport, _ = self.juger("faux_resume", faux_resume)

@@ -547,11 +547,11 @@ class Juges(unittest.TestCase):
                 self.assertEqual(nom, "outillage-pr")  # le seul job sans la base : il ne lance que les tests de la PR
                 continue
             etapes = [e.get("name", "") for e in job["steps"]]
-            self.assertTrue(any(n.startswith("Juges") for n in etapes), f"job {nom} sans étape Juges")
+            self.assertTrue(any(n.startswith("Juges") for n in etapes), f"job {nom} has no Juges step")
             # Aucune étape n'utilise base/bee avant l'étape Juges.
             i_juges = next(i for i, n in enumerate(etapes) if n.startswith("Juges"))
             for e in job["steps"][:i_juges]:
-                self.assertNotIn("base/bee", e.get("run", ""), f"job {nom} : base/bee utilisé avant Juges")
+                self.assertNotIn("base/bee", e.get("run", ""), f"job {nom}: base/bee used before Juges")
 
     def charger_workflow(self):
         import yaml
@@ -1085,7 +1085,7 @@ class JobManifeste(unittest.TestCase):
                 self.setUp()
                 code, sortie = self.lancer([("manifests/miniz-0050.yaml", texte)])
                 self.assertEqual((code, self.journal, self.sorties["sortie_compressee"]), (1, [], "identique"), sortie)
-                self.assertIn("mêle les deux vocabulaires", sortie)
+                self.assertIn("mixes the two vocabularies", sortie)
 
     def test_tache_type_ou_metrique_illisible_echoue(self):
         """Le job échoue, sans appeler l'outil ni écrire la copie de la tâche : jamais un défaut."""
@@ -1107,11 +1107,11 @@ class JobManifeste(unittest.TestCase):
     def test_tache_introuvable_ou_dans_les_deux_dispositions(self):
         code, sortie = self.lancer([("manifestes/miniz-0050.yaml", MANIFESTE_FR)], taches=())
         self.assertEqual((code, self.journal), (1, []), sortie)
-        self.assertIn("introuvable", sortie)
+        self.assertIn("not found in the registry", sortie)
         self.setUp()
         code, sortie = self.lancer([("manifestes/miniz-0050.yaml", MANIFESTE_FR)], taches=(("taches", TACHE_FR), ("tasks", TACHE_EN)))
         self.assertEqual((code, self.journal), (1, []), sortie)
-        self.assertIn("plusieurs fois", sortie)
+        self.assertIn("several times", sortie)
 
     def test_manifeste_fichier_ordinaire(self):
         """Un manifeste est un fichier ordinaire : un lien symbolique (vers un manifeste valide du dépôt ou hors de lui,
@@ -1127,7 +1127,7 @@ class JobManifeste(unittest.TestCase):
                 liens = [(c, os.path.join(self.d, "dehors.yaml") if cible == "DEHORS" else cible) for c, cible in liens]
                 code, sortie = self.lancer(manifestes, liens=liens)
                 self.assertEqual((code, self.journal, self.copie, self.sorties), (1, [], None, {}), sortie)
-                self.assertIn("doit être un fichier ordinaire", sortie)
+                self.assertIn("must be a regular file", sortie)
         self.setUp()  # le parcours honnête, à côté : un fichier ordinaire passe
         code, sortie = self.lancer([("manifestes/miniz-0050.yaml", MANIFESTE_FR)])
         self.assertEqual((code, len(self.journal)), (0, 1), sortie)
@@ -1151,13 +1151,13 @@ class JobManifeste(unittest.TestCase):
                 self.assertEqual((r.returncode, os.path.exists(copie)), (attendu, attendu == 0), r.stderr)
                 self.assertNotIn("Traceback", r.stderr)
                 if attendu:
-                    self.assertIn("doit être un fichier ordinaire", r.stderr)
+                    self.assertIn("must be a regular file", r.stderr)
                     self.assertEqual(r.stdout, "sortie_compressee=identique\n")
 
     def test_deux_manifestes_refuses(self):
         code, sortie = self.lancer([("manifests/miniz-0050.yaml", MANIFESTE_EN), ("manifestes/miniz-0050.yaml", MANIFESTE_FR)])
         self.assertEqual((code, self.journal), (1, []), sortie)
-        self.assertIn("plusieurs manifestes", sortie)
+        self.assertIn("several manifests", sortie)
 
     def test_un_seul_outil(self):
         for outils in ((("outils", OUTIL_FR), ("tools", OUTIL_EN)), ()):
@@ -1165,7 +1165,7 @@ class JobManifeste(unittest.TestCase):
                 self.setUp()
                 code, sortie = self.lancer([("manifestes/miniz-0050.yaml", MANIFESTE_FR)], outils=outils)
                 self.assertEqual((code, self.journal), (1, []), sortie)
-                self.assertIn("exactement un outil", sortie)
+                self.assertIn("exactly one tool", sortie)
 
     def test_commande_et_options_demandees_a_l_aide(self):
         """Jamais deviné : une commande sans les options voulues (un relais qui refuse l'ancien nom, par exemple)

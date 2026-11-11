@@ -18,14 +18,14 @@ pr="$(cd "$1" && pwd)"
 options=()
 case "${SORTIE_COMPRESSEE:-identique}" in
   identique) ;;
-  peut_changer) options+=(--sans-empreintes); echo "La tâche autorise une sortie compressée différente : empreintes non contrôlées." ;;
-  *) echo "SORTIE_COMPRESSEE invalide : ${SORTIE_COMPRESSEE}" >&2; exit 2 ;;
+  peut_changer) options+=(--sans-empreintes); echo "The task allows a different compressed output: fingerprints not checked." ;;
+  *) echo "invalid SORTIE_COMPRESSEE: ${SORTIE_COMPRESSEE}" >&2; exit 2 ;;
 esac
 
-echo "== Outillage de la base, sources de la PR"
+echo "== The base's tooling, the PR's sources"
 "$BEE/tests/lancer.sh" --source "$pr" ${options[@]+"${options[@]}"}
 
 if [ -n "${BASE_SHA:-}" ] && [ -n "$(git -C "$pr" diff --name-only "${BASE_SHA}...${TETE_SHA:-HEAD}" -- bee/)" ]; then
-  echo "== La PR modifie bee/ : son propre outillage, sur ses propres sources"
+  echo "== The PR changes bee/: its own tooling, on its own sources"
   BEE_CONSTR="$pr/bee/construction/tests-pr" "$pr/bee/tests/lancer.sh" ${options[@]+"${options[@]}"}
 fi

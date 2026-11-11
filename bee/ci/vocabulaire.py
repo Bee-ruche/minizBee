@@ -39,7 +39,7 @@ def langue(niveaux, quoi):
     francais = sorted(k for d, carte in niveaux for k in d if k in carte)
     anglais = sorted(k for d, carte in niveaux for k in d if k in carte.values())
     if francais and anglais:
-        raise Illisible(f"{quoi} mêle les deux vocabulaires (clés françaises {francais}, anglaises {anglais}) : refusé")
+        raise Illisible(f"{quoi} mixes the two vocabularies (French keys {francais}, English keys {anglais}): refused")
     return "en" if anglais else ("fr" if francais else None)
 
 
@@ -51,10 +51,10 @@ def en_francais(d, carte, langue_document):
 def tache_en_francais(donnees):
     """La tâche avec ses clés internes (françaises). Ses valeurs restent dans son vocabulaire : voir valeur()."""
     if not isinstance(donnees, dict):
-        raise Illisible("la tâche ne contient pas un objet YAML")
-    langue_tache = langue([(donnees, CLES_TACHE)], "la tâche")
+        raise Illisible("the task does not hold a YAML object")
+    langue_tache = langue([(donnees, CLES_TACHE)], "the task")
     if langue_tache is None:
-        raise Illisible("la tâche n'a aucune clé connue, ni française ni anglaise : illisible")
+        raise Illisible("the task has no known key, neither French nor English: unreadable")
     return en_francais(donnees, CLES_TACHE, langue_tache), langue_tache
 
 
@@ -63,8 +63,8 @@ def valeur(tache, cle, valeurs, langue_tache):
     v = tache.get(cle)
     connues = {en: fr for fr, en in valeurs.items()} if langue_tache == "en" else {fr: fr for fr in valeurs}
     if not isinstance(v, str) or v not in connues:
-        raise Illisible(f"{cle} « {v} » illisible dans une tâche en {'anglais' if langue_tache == 'en' else 'français'} "
-                        f"(attendu : {', '.join(sorted(connues))})")
+        raise Illisible(f"{cle} « {v} » unreadable in a task in {'English' if langue_tache == 'en' else 'French'} "
+                        f"(expected: {', '.join(sorted(connues))})")
     return connues[v]
 
 
@@ -73,9 +73,9 @@ def metrique_de_la_tache(donnees):
     pas (metrique: null). Clé absente, ou métrique inconnue : Illisible (le verdict ne choisit jamais la sienne)."""
     tache, langue_tache = tache_en_francais(donnees)
     if "metrique" not in tache:
-        raise Illisible(f"clé « {'metric' if langue_tache == 'en' else 'metrique'} » absente de la tâche : métrique illisible")
+        raise Illisible(f"key « {'metric' if langue_tache == 'en' else 'metrique'} » missing from the task: metric unreadable")
     if tache["metrique"] is not None and tache["metrique"] not in METRIQUES:
-        raise Illisible(f"métrique « {tache['metrique']} » inconnue de minizBee (attendu : {', '.join(METRIQUES)} ou null)")
+        raise Illisible(f"metric « {tache['metrique']} » unknown to minizBee (expected: {', '.join(METRIQUES)} or null)")
     return tache["metrique"]
 
 
@@ -88,18 +88,18 @@ def lire_tache(donnees):
     sortie = valeur(tache, "sortie_compressee", SORTIES, langue_tache) if "sortie_compressee" in tache else "identique"
     type_tache = valeur(tache, "type", TYPES, langue_tache)
     if type_tache == "optimisation" and metrique is None:
-        raise Illisible("une tâche d'optimisation sans métrique (metric: null) : illisible, R4 n'aurait rien à juger")
+        raise Illisible("an optimization task without a metric (metric: null): unreadable, R4 would have nothing to judge")
     return {"type": type_tache, "metrique": metrique, "sortie_compressee": sortie}
 
 
 def lire_manifeste(donnees):
     """Le manifeste de la PR avec ses clés internes (françaises), à ses trois niveaux. Mêlé : Illisible."""
     if not isinstance(donnees, dict):
-        raise Illisible("le manifeste ne contient pas un objet YAML")
+        raise Illisible("the manifest does not hold a YAML object")
     niveaux = [(donnees, CLES_MANIFESTE)]
     niveaux += [(donnees[c], CLES_AGENT) for c in ("agent",) if isinstance(donnees.get(c), dict)]
     niveaux += [(donnees[c], CLES_MESURES) for c in ("mesures", "measurements") if isinstance(donnees.get(c), dict)]
-    langue_manifeste = langue(niveaux, "le manifeste")
+    langue_manifeste = langue(niveaux, "the manifest")
     manifeste = en_francais(donnees, CLES_MANIFESTE, langue_manifeste)
     for cle, carte in (("agent", CLES_AGENT), ("mesures", CLES_MESURES)):
         if isinstance(manifeste.get(cle), dict):
