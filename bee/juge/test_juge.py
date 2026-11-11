@@ -6,7 +6,7 @@
                                                     + méta-tests : le juge commun, avec CE greffon, contre des
                                                       variantes de miniz honnête et MALVEILLANTES (Docker requis)
   BEE_JUGE_COMMUN=<registre>/outils/juge            le juge commun, à l'étiquette épinglée par
-                                                    .github/workflows/bee-ci.yml (juge-v2) ; par défaut,
+                                                    .github/workflows/bee-ci.yml (juge-v3) ; par défaut,
                                                     ../registre/outils/juge à côté de ce dépôt
   BEE_JUGE_RESEAU=host                              réseau de « docker build » (machines sans pont Docker)
 
@@ -22,6 +22,10 @@ de tromper un juge qui exécuterait le code de la PR dans son propre processus :
   travail_deplace    le code fait son initialisation dans mz_compressBound, appelée par le harnais avant les
                      compressions (revue adverse du 27/10 : +1,7 à +27 % d'instructions « gagnées » tant que
                      seule une zone du harnais était comptée)
+  mesure_devinee     the code guesses from its own calls that it is measured (its first mz_compress2 is not at
+                     level 0), and then compresses at level 1 whatever level it is given: faster and worse, yet
+                     still correct, with sortie_compressee=peut_changer (juge-v3: refused, because a verification
+                     input mixed into n6 or n9 must give its verification output, byte for byte)
   honnete            miniz tel quel : accepté, rien de suspect, décomptes de A et B identiques
 """
 
@@ -104,6 +108,7 @@ class TestContrat(unittest.TestCase):
                          ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
                           "debit_decompression", "ratio_n6", "memoire_max_ko"])
         self.assertEqual(projet.VERIFICATION, {"sortie_compressee": "identique"})
+        self.assertIn("timed outputs of scenario n6", projet.METHODE["ratio_n6"])
 
     def test_options(self):
         projet, _ = juge_commun.charger_greffon(RACINE, {"sortie_compressee": "peut_changer"})
@@ -191,6 +196,28 @@ class TestIdentiqueAuJugeV2(unittest.TestCase):
                     self.assertEqual(zlib.decompress(e.donnees), fichiers[e.nom])
 
 
+def ecrire_sorties(dossier, fichiers):
+    """Writes {(side, relative path): bytes} under dossier/<side>/; returns the Sorties view the plugin gets."""
+    racines = {c: os.path.join(dossier, c) for c in "fz"}
+    for (cote, relatif), octets in fichiers.items():
+        chemin = os.path.join(racines[cote], relatif)
+        os.makedirs(os.path.dirname(chemin), exist_ok=True)
+        with open(chemin, "wb") as f:
+            f.write(octets)
+    return lecture.Sorties(racines)
+
+
+def sorties_de_verification(donnees):
+    """Verification outputs for an input f « k000 » and a valid stream z « z000 » of `donnees` (bee/juge/execution.c)."""
+    fichiers = {("f", f"c/k000.{niveau}"): zlib.compress(donnees, min(niveau, 9)) for niveau in greffon.NIVEAUX_UNIQUE}
+    fichiers.update({("f", f"s/k000.{niveau}"): zlib.compress(donnees, niveau) for niveau in greffon.NIVEAUX_FLUX})
+    fichiers[("f", "m/k000")] = zlib.compress(donnees, 6)
+    n = len(donnees)
+    fichiers.update({("z", "e/z000"): f"0 {n}\n".encode(), ("z", "d/z000"): donnees,
+                     ("z", "es/z000"): f"1 {n}\n".encode(), ("z", "ds/z000"): donnees})
+    return fichiers
+
+
 class TestVerification(unittest.TestCase):
     """La règle de justesse, sur des sorties écrites à la main (sans Docker)."""
 
@@ -204,23 +231,10 @@ class TestVerification(unittest.TestCase):
 
     def sorties(self, nom, modifier=None):
         """Sorties d'une variante pour une entrée f « k000 » et un flux z « z000 » (valide)."""
-        racines = {c: os.path.join(self.travail, nom, c) for c in "fz"}
-        fichiers = {}
-        for niveau in greffon.NIVEAUX_UNIQUE:
-            fichiers[("f", f"c/k000.{niveau}")] = zlib.compress(self.DONNEES, min(niveau, 9))
-        for niveau in greffon.NIVEAUX_FLUX:
-            fichiers[("f", f"s/k000.{niveau}")] = zlib.compress(self.DONNEES, niveau)
-        n = len(self.DONNEES)
-        fichiers.update({("z", "e/z000"): f"0 {n}\n".encode(), ("z", "d/z000"): self.DONNEES,
-                         ("z", "es/z000"): f"1 {n}\n".encode(), ("z", "ds/z000"): self.DONNEES})
+        fichiers = sorties_de_verification(self.DONNEES)
         if modifier:
             modifier(fichiers)
-        for (cote, relatif), octets in fichiers.items():
-            chemin = os.path.join(racines[cote], relatif)
-            os.makedirs(os.path.dirname(chemin), exist_ok=True)
-            with open(chemin, "wb") as f:
-                f.write(octets)
-        return lecture.Sorties(racines)
+        return ecrire_sorties(os.path.join(self.travail, nom), fichiers)
 
     def entrees(self):
         return [Entree("f", "k000", self.DONNEES, len(self.DONNEES), self.DONNEES),
@@ -228,7 +242,7 @@ class TestVerification(unittest.TestCase):
 
     def test_identique_accepte(self):
         b = self.sorties("B")
-        self.assertEqual(greffon.Projet({}).verifier(self.sorties("A"), b, self.entrees()), 12)
+        self.assertEqual(greffon.Projet({}).verifier(self.sorties("A"), b, self.entrees()), 13)
         juge_commun.exiger_couverture(b, self.entrees(), "essai")
 
     def test_sortie_compressee_differente(self):
@@ -237,7 +251,7 @@ class TestVerification(unittest.TestCase):
             greffon.Projet({}).verifier(self.sorties("A"), self.sorties("B", autre), self.entrees())
         # Si la tâche le permet, une autre sortie compressée qui redonne l'original est acceptée ; pas une fausse.
         peut_changer = greffon.Projet({"sortie_compressee": "peut_changer"})
-        self.assertEqual(peut_changer.verifier(self.sorties("A2"), self.sorties("B2", autre), self.entrees()), 12)
+        self.assertEqual(peut_changer.verifier(self.sorties("A2"), self.sorties("B2", autre), self.entrees()), 13)
         fausse = lambda f: f.__setitem__(("f", "c/k000.9"), zlib.compress(self.DONNEES[:-1], 9))  # noqa: E731
         with self.assertRaises(lecture.Refus):
             peut_changer.verifier(self.sorties("A3"), self.sorties("B3", fausse), self.entrees())
@@ -257,6 +271,91 @@ class TestVerification(unittest.TestCase):
         a = self.sorties("A", lambda f: f.__setitem__(("f", "c/k000.6"), zlib.compress(b"autre chose", 6)))
         with self.assertRaises(lecture.Erreur):
             greffon.Projet({}).verifier(a, self.sorties("B"), self.entrees())
+
+    def test_sortie_de_memoire_verifiee(self):
+        """juge-v3: verification also writes m/NAME, as the memoire scenario does, and checks it."""
+        b = self.sorties("B", lambda f: f.__setitem__(("f", "m/k000"), zlib.compress(self.DONNEES, 1)))
+        with self.assertRaises(lecture.Refus):
+            greffon.Projet({}).verifier(self.sorties("A"), b, self.entrees())
+
+
+class TestScenarios(unittest.TestCase):
+    """juge-v3: each scenario checks every output of its side by the rule of verification, whatever the input (the
+    common judge mixes verification inputs into the measured ones, invalid streams included), at the path where
+    verification writes it; n6 computes ratio_n6 from its timed outputs. Outputs written by hand (without Docker)."""
+
+    DONNEES = b"chaque sortie mesuree est verifiee " * 500
+    MESURE = {"utilisateur_s": 0.5, "systeme_s": 0.5, "maxrss_ko": 1234}
+
+    def setUp(self):
+        self.travail = tempfile.mkdtemp()
+        n = len(self.DONNEES)
+        flux = zlib.compress(self.DONNEES)
+        # e0000 measured (a perturbed file and its stream); e0001 a mixed-in verification stream, invalid (truncated).
+        self.entrees = [Entree("f", "e0000", self.DONNEES, n, self.DONNEES), Entree("z", "e0000", flux, n, self.DONNEES),
+                        Entree("z", "e0001", flux[:40], n, None)]
+        self.fichiers = {("f", "c/e0000.1"): zlib.compress(self.DONNEES, 1), ("f", "c/e0000.6"): zlib.compress(self.DONNEES, 6),
+                         ("f", "c/e0000.9"): zlib.compress(self.DONNEES, 9), ("f", "m/e0000"): zlib.compress(self.DONNEES, 6),
+                         ("z", "d/e0000"): self.DONNEES, ("z", "e/e0000"): f"0 {n}\n".encode(),
+                         ("z", "d/e0001"): b"", ("z", "e/e0001"): b"-3 0\n"}
+
+    def tearDown(self):
+        shutil.rmtree(self.travail)
+
+    def sorties(self, nom, s, modifier=None):
+        """Outputs of scenario s for one variant, under <side>/<s>/ as the common judge keeps them."""
+        fichiers = dict(self.fichiers)
+        if modifier:
+            modifier(fichiers)
+        return ecrire_sorties(os.path.join(self.travail, nom), {(c, f"{s}/{r}"): o for (c, r), o in fichiers.items()})
+
+    def test_chaque_sortie_verifiee(self):
+        projet = greffon.Projet({})
+        for s, cote in projet.SCENARIOS.items():
+            with self.subTest(s=s):
+                b = self.sorties(f"B-{s}", s)
+                valeurs, comparees = projet.scenario(s, self.sorties(f"A-{s}", s), b, self.entrees, self.MESURE)
+                self.assertEqual(comparees, len([e for e in self.entrees if e.cote == cote]))
+                juge_commun.exiger_couverture(b, [e for e in self.entrees if e.cote == cote], s)
+        self.assertEqual(valeurs, {"memoire_max_ko": 1234})
+
+    def test_ratio_n6_sur_les_sorties_chronometrees(self):
+        valeurs, _ = greffon.Projet({}).scenario("n6", self.sorties("A", "n6"), self.sorties("B", "n6"), self.entrees, self.MESURE)
+        self.assertEqual(valeurs["ratio_n6"], len(self.DONNEES) / len(zlib.compress(self.DONNEES, 6)))
+        self.assertEqual(valeurs["debit_compression_n6"], len(self.DONNEES) / 1e6)
+
+    def test_flux_invalide_mele_comme_en_verification(self):
+        """A stream in error mixed into the decompression scenario: B must give A's status and bytes, as in
+        verification (juge-v2's plugin compared measured outputs with the original only)."""
+        projet = greffon.Projet({})
+        valeurs, _ = projet.scenario("decompression", self.sorties("A", "decompression"), self.sorties("B", "decompression"),
+                                     self.entrees, self.MESURE)
+        self.assertEqual(valeurs["debit_decompression"], len(self.DONNEES) / 1e6)
+        for modifier in (lambda f: f.__setitem__(("z", "e/e0001"), b"0 40\n"), lambda f: f.pop(("z", "e/e0001")),
+                         lambda f: f.__setitem__(("z", "d/e0000"), self.DONNEES[:-1] + b"?")):
+            with self.subTest(modifier=modifier), self.assertRaises(lecture.Refus):
+                projet.scenario("decompression", self.sorties("A2", "decompression"), self.sorties("B2", "decompression", modifier),
+                                self.entrees, self.MESURE)
+
+    def test_compression_mesuree_differente(self):
+        b = self.sorties("B", "n9", lambda f: f.__setitem__(("f", "c/e0000.9"), zlib.compress(self.DONNEES, 1)))
+        with self.assertRaises(lecture.Refus):
+            greffon.Projet({}).scenario("n9", self.sorties("A", "n9"), b, self.entrees, self.MESURE)
+
+    def test_scenario_lit_les_chemins_de_la_verification(self):
+        """Each output a scenario reads sits at a path verification writes (bee/juge/execution.c), without its <s>/
+        prefix: the common judge compares a mixed-in verification input there, byte for byte."""
+        projet = greffon.Projet({})
+        verification = ecrire_sorties(os.path.join(self.travail, "V-B"), sorties_de_verification(self.DONNEES))
+        projet.verifier(ecrire_sorties(os.path.join(self.travail, "V-A"), sorties_de_verification(self.DONNEES)), verification,
+                        [self.entrees[0]._replace(nom="k000"), self.entrees[1]._replace(nom="z000")])
+        chemins = {(c, r.replace("k000", "NOM").replace("z000", "NOM")) for c, r in verification.lues}
+        for s in projet.SCENARIOS:
+            with self.subTest(s=s):
+                vue = self.sorties(f"B-{s}", s)
+                projet.scenario(s, self.sorties(f"A-{s}", s), vue, self.entrees[:2], self.MESURE)
+                lues = {(c, r.split("/", 1)[1].replace("e0000", "NOM")) for c, r in vue.lues}
+                self.assertTrue(lues and lues <= chemins, (s, lues - chemins))
 
 
 # ------------------------------------------------------------------ méta-tests (Docker)
@@ -312,6 +411,14 @@ def requete_valgrind(texte, corpus):
 def faux_resume(texte, corpus):
     texte = remplacer(texte, INCLUDE, INCLUDE + "#include <stdio.h>\n")
     return remplacer(texte, DEBUT_COMPRESS2, DEBUT_COMPRESS2 + '        fputs("==1== I   refs:        1\\n", stderr);\n')
+
+
+def mesure_devinee(texte, corpus):
+    """Guesses the mode from its calls: verification starts with mz_compress2 at level 0, a measured scenario never."""
+    texte = remplacer(texte, INCLUDE, INCLUDE + "static int bee_premier_niveau = -2;\n")
+    return remplacer(texte, DEBUT_COMPRESS2, DEBUT_COMPRESS2 +
+                     "        if (bee_premier_niveau == -2)\n            bee_premier_niveau = level;\n"
+                     "        if (bee_premier_niveau != 0 && level > 1)\n            level = 1;\n")
 
 
 def travail_deplace(texte, corpus):
@@ -375,7 +482,7 @@ class TestJugeContreVariantes(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.travail, ignore_errors=True)
 
-    def juger(self, nom, transformation=None, sans_instructions=False):
+    def juger(self, nom, transformation=None, sans_instructions=False, options=()):
         source_b = os.path.join(self.travail, nom)
         os.makedirs(source_b)
         for fichier in os.listdir(RACINE):
@@ -390,6 +497,8 @@ class TestJugeContreVariantes(unittest.TestCase):
                     "--source-b", source_b, "--repetitions", "2", "--chauffe", "0"]
         if sans_instructions:
             commande.append("--sans-instructions")
+        for option in options:
+            commande += ["--option", option]
         if os.environ.get("BEE_JUGE_RESEAU"):
             commande += ["--reseau-construction", os.environ["BEE_JUGE_RESEAU"]]
         r = subprocess.run(commande, capture_output=True, text=True, timeout=3600)
@@ -411,6 +520,11 @@ class TestJugeContreVariantes(unittest.TestCase):
         self.assertEqual(rapport["juge"]["commun"], f"juge-v{juge_commun.VERSION_COMMUNE}")
         self.assertEqual(rapport["juge"]["greffon"], juge_commun.charger_greffon(RACINE, {})[1])
         self.assertGreater(rapport["juge"]["verification"]["sorties_comparees"], 900)
+        # juge-v3: verification inputs mixed into every measurement, and no fixed metric read on verification alone.
+        self.assertGreater(rapport["juge"]["verification"]["entrees_melees"], 0)
+        self.assertEqual(rapport["juge"]["verification"]["fixes_sans_mesure"], [])
+        self.assertEqual(rapport["juge"]["verification"]["instructions_sans_melange"], [])
+        self.assertFalse(rapport["metriques"]["ratio_n6"]["verification_seulement"])
         self.assertEqual(set(rapport["instructions"]), {"instructions_n1", "instructions_n6", "instructions_n9", "instructions_decompression"})
         for m in rapport["instructions"].values():
             self.assertEqual(m["A"], m["B"])
@@ -446,6 +560,12 @@ class TestJugeContreVariantes(unittest.TestCase):
         self.assertEqual(rapport["juge"]["constructions_suspectes"], [])  # rien de visible : seul le décompte protège
         n6 = rapport["instructions"]["instructions_n6"]
         self.assertLess(n6["gain"], 0.002, "work moved out of the compressions must stay counted")
+
+    def test_mesure_devinee(self):
+        code, _, sortie = self.juger("mesure_devinee", mesure_devinee, sans_instructions=True,
+                                     options=["sortie_compressee=peut_changer"])
+        self.assertEqual(code, 1)
+        self.assertIn("REFUS", sortie)
 
     def test_faux_resume(self):
         code, rapport, _ = self.juger("faux_resume", faux_resume)

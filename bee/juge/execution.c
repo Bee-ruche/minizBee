@@ -1,28 +1,32 @@
-/* Harnais d'exécution du juge isolé Bee pour miniz (bee/README.md, section « Juge isolé »).
+/* Execution harness of the Bee common judge for miniz (bee/README.md, section "Common judge and plugin").
 
-   Il est compilé AVEC le miniz à juger, dans un conteneur sans réseau, et n'y tourne que là. Il ne juge
-   rien lui-même : il lit des entrées préparées par l'hôte, appelle miniz, et écrit les sorties brutes.
-   C'est l'hôte (bee/juge/juge.py), hors du conteneur, qui vérifie ces sorties avec sa propre zlib et
-   les compare à celles de la base. Le code de la PR partage ce processus : rien de ce que ce programme
-   affiche ou calcule n'est donc cru sur parole.
+   It is compiled WITH the miniz to judge, in a container without network, and runs only there. It judges
+   nothing itself: it reads inputs prepared by the host, calls miniz, and writes the raw outputs. The host
+   (the plugin bee/juge/projet.py, run by the registry's common judge), outside the container, checks
+   these outputs with its own zlib and compares them with the base's. The PR's code shares this process:
+   nothing this program prints or computes is taken on trust.
 
-   Usage : execution <mode> <dossier_entrees> <dossier_sorties> [--prefixe N]
-     <dossier_entrees>/liste : une ligne par entrée, « f NOM TAILLE » (fichier brut f/NOM) ou
-                               « z NOM TAILLE_ATTENDUE » (flux zlib z/NOM, TAILLE_ATTENDUE = taille du
-                               tampon de sortie donné à mz_uncompress).
-     modes :
-       verifier       pour chaque f : c/NOM.L (mz_compress2, L = 0 1 2 3 6 9 10) et s/NOM.L (mz_deflate
-                      en flux découpé, L = 1 6 9) ; pour chaque z : d/NOM et e/NOM (mz_uncompress : sortie
-                      et statut), ds/NOM et es/NOM (mz_inflate en flux découpé : sortie et statut)
-       n1, n6, n9     pour chaque f : c/NOM (mz_compress2 au niveau 1, 6 ou 9)
-       decompression  pour chaque z : d/NOM (mz_uncompress)
-       memoire        pour chaque f : m/NOM (mz_deflate niveau 6 par blocs de 64 Kio, lus au fil de l'eau,
-                      sans charger le fichier : la mémoire mesurée de l'extérieur est celle de miniz)
-     --prefixe N : ne garde que les N premiers octets de chaque fichier f (modes n1, n6, n9).
-   Pas de zone de mesure : le décompte d'instructions porte sur tout le processus. Une zone « mesurée »
-   laisserait au code de la PR des appels hors zone (mz_compressBound, par exemple) où déplacer son
-   travail (revue adverse du 27/10). Lecture et écriture des fichiers sont identiques pour A et B.
-   Code de sortie : 0 si toutes les sorties ont été écrites, 2 sinon. */
+   Usage (juge-v3 contract, docs/common-judge.md of the registry): execution, without arguments; descriptor 0
+   carries one fixed-length record, the line "<mode> <input_folder> <output_folder>" padded with spaces.
+     <input_folder>/liste: one line per input, "f NAME SIZE" (raw file f/NAME) or "z NAME EXPECTED_SIZE" (zlib
+                           stream z/NAME, EXPECTED_SIZE = size of the output buffer given to mz_uncompress).
+     modes, and the outputs each writes:
+       verifier       for each f: c/NAME.L (mz_compress2, L = 0 1 2 3 6 9 10), s/NAME.L (mz_deflate in chunked
+                      streaming, L = 1 6 9) and m/NAME (as in memoire); for each z: d/NAME and e/NAME
+                      (mz_uncompress: output and status), ds/NAME and es/NAME (mz_inflate in chunked streaming)
+       n1, n6, n9     for each f: c/NAME.1, c/NAME.6 or c/NAME.9 (mz_compress2 at level 1, 6 or 9)
+       decompression  for each z: d/NAME and e/NAME (mz_uncompress)
+       memoire        for each f: m/NAME (mz_deflate level 6 in blocks of 64 KiB, read as it goes, without
+                      loading the file: the memory measured from the outside is miniz's)
+   A scenario handles every input of its side as verification does: the same output, at the same path, so that
+   the judge can compare a verification input mixed into a measurement, byte for byte, with its output in
+   verification. The judged code cannot tell from its process whether it is checked or measured: before the
+   first call to miniz, the harness reads its parameters to the end of the pipe, copies them, then erases their
+   text, its arguments and its environment.
+   No measured zone: the instruction count covers the whole process. A "measured" zone would leave the PR's
+   code calls outside it (mz_compressBound, for example) to move its work into (adversarial review of 27/10).
+   Reading and writing the files are the same for A and B.
+   Exit code: 0 if all the outputs were written, 2 otherwise. */
 
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #include "miniz.h"
@@ -33,6 +37,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #define BLOC_FLUX (64 * 1024)
 #define NOM_MAX 64
@@ -43,10 +48,12 @@ typedef struct
     char nom[NOM_MAX];
     size_t taille;        /* f : taille du fichier ; z : taille du tampon de sortie */
     unsigned char *donnees;
-    size_t longueur;      /* octets lus (après --prefixe) */
+    size_t longueur;      /* octets lus */
 } entree;
 
-static const char *dossier_entrees, *dossier_sorties;
+extern char **environ;
+
+static char dossier_entrees[256], dossier_sorties[256];
 
 static void mourir(const char *message, const char *detail)
 {
@@ -115,7 +122,7 @@ static void creer_dossier(const char *sous_dossier)
 }
 
 /* Lit la liste ; charge les données des entrées f si `charger_f`, des entrées z si `charger_z`. */
-static entree *lire_liste(size_t *nombre, int charger_f, int charger_z, size_t prefixe)
+static entree *lire_liste(size_t *nombre, int charger_f, int charger_z)
 {
     char p[4096], ligne[256];
     FILE *f;
@@ -141,8 +148,6 @@ static entree *lire_liste(size_t *nombre, int charger_f, int charger_z, size_t p
         {
             size_t maximum = e.taille;
             char q[4096];
-            if (type == 'f' && prefixe && maximum > prefixe)
-                maximum = prefixe;
             if (type == 'z')
             {
                 struct stat st;
@@ -294,6 +299,8 @@ static void inflate_flux(const entree *e, size_t indice)
     free(tampon);
 }
 
+static int memoire(entree *liste, size_t n);
+
 static int verifier(entree *liste, size_t n)
 {
     size_t i, j;
@@ -333,7 +340,8 @@ static int verifier(entree *liste, size_t n)
             inflate_flux(e, i);
         }
     }
-    return 0;
+    /* m/NAME, as the memoire scenario writes it: a mixed-in input of that scenario is compared with it. */
+    return memoire(liste, n);
 }
 
 /* ------------------------------------------------------------------ scénarios mesurés */
@@ -341,6 +349,7 @@ static int verifier(entree *liste, size_t n)
 static int compresser(entree *liste, size_t n, int niveau)
 {
     size_t i;
+    char suffixe[8];
     unsigned char **sorties = (unsigned char **)allouer(n * sizeof(unsigned char *));
     mz_ulong *tailles = (mz_ulong *)allouer(n * sizeof(mz_ulong));
     int *codes = (int *)allouer(n * sizeof(int));
@@ -357,12 +366,13 @@ static int compresser(entree *liste, size_t n, int niveau)
         if (liste[i].type == 'f')
             codes[i] = mz_compress2(sorties[i], &tailles[i], liste[i].donnees, (mz_ulong)liste[i].longueur, niveau);
     creer_dossier("c");
+    snprintf(suffixe, sizeof(suffixe), ".%d", niveau);
     for (i = 0; i < n; i++)
         if (liste[i].type == 'f')
         {
             if (codes[i] != MZ_OK)
                 mourir("mz_compress2 failed", liste[i].nom);
-            ecrire_fichier("c", liste[i].nom, NULL, sorties[i], (size_t)tailles[i]);
+            ecrire_fichier("c", liste[i].nom, suffixe, sorties[i], (size_t)tailles[i]);
             free(sorties[i]);
         }
     free(sorties);
@@ -383,18 +393,22 @@ static int decompresser(entree *liste, size_t n)
         if (liste[i].type == 'z')
         {
             tailles[i] = (mz_ulong)liste[i].taille;
-            sorties[i] = (unsigned char *)allouer(liste[i].taille);
+            sorties[i] = (unsigned char *)allouer(liste[i].taille + 1);
         }
     }
     for (i = 0; i < n; i++)
         if (liste[i].type == 'z')
             codes[i] = mz_uncompress(sorties[i], &tailles[i], liste[i].donnees, (mz_ulong)liste[i].longueur);
     creer_dossier("d");
+    creer_dossier("e");
     for (i = 0; i < n; i++)
         if (liste[i].type == 'z')
         {
+            /* As in verification: a stream in error (a verification input mixed into the measurement) gives its
+               status and an empty output, never a stop. */
             if (codes[i] != MZ_OK)
-                mourir("mz_uncompress failed", liste[i].nom);
+                tailles[i] = 0;
+            ecrire_statut("e", liste[i].nom, codes[i], (size_t)tailles[i]);
             ecrire_fichier("d", liste[i].nom, NULL, sorties[i], (size_t)tailles[i]);
             free(sorties[i]);
         }
@@ -463,48 +477,62 @@ static int memoire(entree *liste, size_t n)
     return 0;
 }
 
+enum { VERIFIER, N1, N6, N9, DECOMPRESSION, MEMOIRE };
+
+/* Reads the parameters on descriptor 0 to the end of the pipe (one record of fixed length, the same in every
+   mode), keeps the folders and the mode's number, then erases their text, the arguments and the environment:
+   after that, no text in the process tells the mode. */
+static int parametres(int argc, char **argv)
+{
+    static const char *const modes[] = {"verifier", "n1", "n6", "n9", "decompression", "memoire"};
+    char texte[1024], lu[64], reste[2];
+    size_t n = 0, k;
+    ssize_t r;
+    int i, mode = -1;
+    char **e;
+    while (n < sizeof(texte) - 1 && ((r = read(0, texte + n, sizeof(texte) - 1 - n)) > 0 || (r < 0 && errno == EINTR)))
+        n += r > 0 ? (size_t)r : 0;
+    texte[n] = 0;
+    if (n < sizeof(texte) - 1 && argc == 1 && sscanf(texte, "%63s %255s %255s %1s", lu, dossier_entrees, dossier_sorties, reste) == 3)
+        for (k = 0; k < sizeof(modes) / sizeof(modes[0]); k++)
+            if (strcmp(lu, modes[k]) == 0)
+                mode = (int)k;
+    explicit_bzero(texte, sizeof(texte));
+    explicit_bzero(lu, sizeof(lu));
+    for (i = 0; i < argc; i++)
+        explicit_bzero(argv[i], strlen(argv[i]));
+    for (e = environ; e && *e; e++)
+        explicit_bzero(*e, strlen(*e));
+    if (environ)
+        environ[0] = NULL;
+    if (mode < 0)
+        mourir("usage", "execution, without arguments; parameters \"<mode> <input_folder> <output_folder>\" on descriptor 0, "
+               "mode verifier, n1, n6, n9, decompression or memoire");
+    return mode;
+}
+
 int main(int argc, char **argv)
 {
-    const char *mode;
-    size_t prefixe = 0, n;
+    size_t n;
     entree *liste;
-    int i;
-    if (argc < 4)
-    {
-        fprintf(stderr, "usage: execution <mode> <input_folder> <output_folder> [--prefixe N]\n");
-        return 2;
-    }
+    int mode;
     umask(0); /* l'hôte doit pouvoir effacer les sorties (écrites par un autre utilisateur) */
-    mode = argv[1];
-    dossier_entrees = argv[2];
-    dossier_sorties = argv[3];
-    for (i = 4; i < argc; i++)
+    mode = parametres(argc, argv);
+    if (mode == VERIFIER)
     {
-        if (strcmp(argv[i], "--prefixe") == 0 && i + 1 < argc)
-            prefixe = (size_t)strtoull(argv[++i], NULL, 10);
-        else
-            mourir("unknown option", argv[i]);
-    }
-    if (strcmp(mode, "verifier") == 0)
-    {
-        liste = lire_liste(&n, 1, 1, 0);
+        liste = lire_liste(&n, 1, 1);
         return verifier(liste, n);
     }
-    if (strcmp(mode, "n1") == 0 || strcmp(mode, "n6") == 0 || strcmp(mode, "n9") == 0)
+    if (mode == N1 || mode == N6 || mode == N9)
     {
-        liste = lire_liste(&n, 1, 0, prefixe);
-        return compresser(liste, n, mode[1] - '0');
+        liste = lire_liste(&n, 1, 0);
+        return compresser(liste, n, mode == N1 ? 1 : mode == N6 ? 6 : 9);
     }
-    if (strcmp(mode, "decompression") == 0)
+    if (mode == DECOMPRESSION)
     {
-        liste = lire_liste(&n, 0, 1, 0);
+        liste = lire_liste(&n, 0, 1);
         return decompresser(liste, n);
     }
-    if (strcmp(mode, "memoire") == 0)
-    {
-        liste = lire_liste(&n, 0, 0, 0);
-        return memoire(liste, n);
-    }
-    mourir("unknown mode", mode);
-    return 2;
+    liste = lire_liste(&n, 0, 0);
+    return memoire(liste, n);
 }
