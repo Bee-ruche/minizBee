@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profilage callgrind de miniz sur un sous-corpus, regroupé par fonction source.
+"""Callgrind profile of miniz on a sub-corpus, grouped by source function.
 
 Pour chaque scénario (n1, n6, n9, decompression), lance le banc sous
   valgrind --tool=callgrind --toggle-collect=bee_passe_compression|bee_passe_decompression
@@ -119,8 +119,8 @@ def main():
     analyseur.add_argument("--sortie", default=os.path.join(BEE, "construction", "profil"))
     analyseur.add_argument("--banc", default=os.path.join(BEE, "construction", "banc", "banc"))
     analyseur.add_argument("--corpus", default=os.path.join(BEE, "corpus", "donnees"))
-    analyseur.add_argument("--json", help="écrit le résultat regroupé dans ce fichier")
-    analyseur.add_argument("--reutiliser", action="store_true", help="réutilise les fichiers callgrind existants")
+    analyseur.add_argument("--json", help="writes the grouped result to this file")
+    analyseur.add_argument("--reutiliser", action="store_true", help="reuses the existing callgrind files")
     args = analyseur.parse_args()
 
     os.makedirs(args.sortie, exist_ok=True)
@@ -144,9 +144,9 @@ def main():
             groupes["hors miniz (libc : memset, memcpy…)"] = hors_miniz
         classement = sorted(groupes.items(), key=lambda x: -x[1])
         resultat[scenario] = {"total_ir": total, "fonctions": [{"fonction": n, "ir": c, "part": c / total} for n, c in classement]}
-        print(f"== {scenario} : {total:,} instructions (passes mesurées, {args.prefixe} premiers octets par fichier)")
+        print(f"== {scenario}: {total:,} instructions (measured passes, first {args.prefixe} bytes of each file)")
         for n, c in classement[:10]:
-            print(f"  {100 * c / total:6.2f} %  {c:>13,}  {n}")
+            print(f"  {100 * c / total:6.2f}%  {c:>13,}  {n}")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump(resultat, f, ensure_ascii=False, indent=2)

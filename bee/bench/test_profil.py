@@ -127,7 +127,7 @@ class Reperage(unittest.TestCase):
             64: "mz_exempleInit2",
         }
         for ligne, nom in attendu.items():
-            self.assertEqual(profil.nom_de(plages, ligne, "exemple.c"), nom, f"ligne {ligne}")
+            self.assertEqual(profil.nom_de(plages, ligne, "exemple.c"), nom, f"line {ligne}")
 
 
 class SansCommentaires(unittest.TestCase):
