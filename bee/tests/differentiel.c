@@ -60,7 +60,7 @@ static void echec(const char *controle, const char *fichier, const char *niveau,
     nb_echecs++;
     if (nb_echecs > 200)
         return; /* le décompte reste exact, seul l'affichage est limité */
-    fprintf(stderr, "ÉCHEC [%s] niveau %s, %s : ", controle, niveau, fichier);
+    fprintf(stderr, "FAILED [%s] level %s, %s: ", controle, niveau, fichier);
     va_start(ap, format);
     vfprintf(stderr, format, ap);
     va_end(ap);
@@ -72,7 +72,7 @@ static void *allouer(size_t n)
     void *p = malloc(n ? n : 1);
     if (!p)
     {
-        fprintf(stderr, "erreur : mémoire insuffisante (%zu octets)\n", n);
+        fprintf(stderr, "error: out of memory (%zu bytes)\n", n);
         exit(2);
     }
     return p;
@@ -90,7 +90,7 @@ static void tampon_ajouter(tampon *t, const unsigned char *p, size_t n)
         t->octets = (unsigned char *)realloc(t->octets, c);
         if (!t->octets)
         {
-            fprintf(stderr, "erreur : mémoire insuffisante\n");
+            fprintf(stderr, "error: out of memory\n");
             exit(2);
         }
         t->capacite = c;
@@ -112,10 +112,10 @@ static int verifier_identique(const char *controle, const char *fichier, const c
     if (i == n && taille_obtenue == taille_attendue)
         return 1;
     if (i < n)
-        echec(controle, fichier, niveau, "premier octet différent à la position %zu (taille obtenue %zu, attendue %zu)",
+        echec(controle, fichier, niveau, "first differing byte at position %zu (size obtained %zu, expected %zu)",
               i, taille_obtenue, taille_attendue);
     else
-        echec(controle, fichier, niveau, "taille différente : %zu octets au lieu de %zu", taille_obtenue, taille_attendue);
+        echec(controle, fichier, niveau, "different size: %zu bytes instead of %zu", taille_obtenue, taille_attendue);
     return 0;
 }
 
@@ -136,7 +136,7 @@ static int miniz_deflate_flux(const unsigned char *src, size_t n, int niveau, in
     sortie->taille = 0;
     if ((r = mz_deflateInit2(&s, niveau, MZ_DEFLATED, window_bits, 9, MZ_DEFAULT_STRATEGY)) != MZ_OK)
     {
-        snprintf(erreur, taille_erreur, "mz_deflateInit2 a renvoyé %d", r);
+        snprintf(erreur, taille_erreur, "mz_deflateInit2 returned %d", r);
         free(bloc);
         return -1;
     }
@@ -169,7 +169,7 @@ static int miniz_deflate_flux(const unsigned char *src, size_t n, int niveau, in
             }
             if (r != MZ_OK && r != MZ_BUF_ERROR)
             {
-                snprintf(erreur, taille_erreur, "mz_deflate a renvoyé %d (entrée consommée %zu sur %zu)", r,
+                snprintf(erreur, taille_erreur, "mz_deflate returned %d (input consumed %zu of %zu)", r,
                          pos + prendre - s.avail_in, n);
                 mz_deflateEnd(&s);
                 free(bloc);
@@ -179,7 +179,7 @@ static int miniz_deflate_flux(const unsigned char *src, size_t n, int niveau, in
             {
                 if (r == MZ_BUF_ERROR && s.avail_out != 0)
                 {
-                    snprintf(erreur, taille_erreur, "mz_deflate(MZ_FINISH) ne progresse plus sans renvoyer MZ_STREAM_END");
+                    snprintf(erreur, taille_erreur, "mz_deflate(MZ_FINISH) no longer progresses without returning MZ_STREAM_END");
                     mz_deflateEnd(&s);
                     free(bloc);
                     return -1;
@@ -191,7 +191,7 @@ static int miniz_deflate_flux(const unsigned char *src, size_t n, int niveau, in
                 break;
             if (r == MZ_BUF_ERROR && s.avail_in != 0)
             {
-                snprintf(erreur, taille_erreur, "mz_deflate ne consomme plus l'entrée (MZ_BUF_ERROR)");
+                snprintf(erreur, taille_erreur, "mz_deflate no longer consumes the input (MZ_BUF_ERROR)");
                 mz_deflateEnd(&s);
                 free(bloc);
                 return -1;
@@ -217,7 +217,7 @@ static int miniz_inflate_flux(const unsigned char *src, size_t n, int window_bit
     sortie->taille = 0;
     if ((r = mz_inflateInit2(&s, window_bits)) != MZ_OK)
     {
-        snprintf(erreur, taille_erreur, "mz_inflateInit2 a renvoyé %d", r);
+        snprintf(erreur, taille_erreur, "mz_inflateInit2 returned %d", r);
         free(bloc);
         return -1;
     }
@@ -242,7 +242,7 @@ static int miniz_inflate_flux(const unsigned char *src, size_t n, int window_bit
             break;
         if (r != MZ_OK && r != MZ_BUF_ERROR)
         {
-            snprintf(erreur, taille_erreur, "mz_inflate a renvoyé %d après %zu octets produits", r, sortie->taille);
+            snprintf(erreur, taille_erreur, "mz_inflate returned %d after %zu bytes produced", r, sortie->taille);
             mz_inflateEnd(&s);
             free(bloc);
             return -1;
@@ -251,14 +251,14 @@ static int miniz_inflate_flux(const unsigned char *src, size_t n, int window_bit
         {
             if (pos >= n && s.avail_in == 0)
             {
-                snprintf(erreur, taille_erreur, "flux tronqué : fin de l'entrée sans MZ_STREAM_END");
+                snprintf(erreur, taille_erreur, "truncated stream: end of the input without MZ_STREAM_END");
                 mz_inflateEnd(&s);
                 free(bloc);
                 return -1;
             }
             if (++sans_progres > 1000)
             {
-                snprintf(erreur, taille_erreur, "mz_inflate ne progresse plus (code %d)", r);
+                snprintf(erreur, taille_erreur, "mz_inflate no longer progresses (code %d)", r);
                 mz_inflateEnd(&s);
                 free(bloc);
                 return -1;
@@ -283,7 +283,7 @@ static int zlib_inflate_flux(const unsigned char *src, size_t n, int window_bits
     sortie->taille = 0;
     if ((r = inflateInit2(&s, window_bits)) != Z_OK)
     {
-        snprintf(erreur, taille_erreur, "inflateInit2 de zlib a renvoyé %d", r);
+        snprintf(erreur, taille_erreur, "zlib's inflateInit2 returned %d", r);
         return -1;
     }
     s.next_in = (Bytef *)src;
@@ -295,7 +295,7 @@ static int zlib_inflate_flux(const unsigned char *src, size_t n, int window_bits
         r = inflate(&s, Z_NO_FLUSH);
         if (r != Z_OK && r != Z_STREAM_END)
         {
-            snprintf(erreur, taille_erreur, "inflate de zlib a renvoyé %d (%s) après %lu octets produits", r,
+            snprintf(erreur, taille_erreur, "zlib's inflate returned %d (%s) after %lu bytes produced", r,
                      s.msg ? s.msg : "", (unsigned long)s.total_out);
             inflateEnd(&s);
             return -1;
@@ -303,7 +303,7 @@ static int zlib_inflate_flux(const unsigned char *src, size_t n, int window_bits
         tampon_ajouter(sortie, bloc, sizeof(bloc) - s.avail_out);
         if (r == Z_OK && s.avail_in == 0 && s.avail_out != 0)
         {
-            snprintf(erreur, taille_erreur, "flux tronqué pour zlib : fin de l'entrée sans Z_STREAM_END");
+            snprintf(erreur, taille_erreur, "truncated stream for zlib: end of the input without Z_STREAM_END");
             inflateEnd(&s);
             return -1;
         }
@@ -386,7 +386,7 @@ static const empreinte *chercher(const liste_empreintes *l, const char *niveau, 
 
 static void usage(void)
 {
-    fprintf(stderr, "usage : differentiel [--corpus DOSSIER] [--empreintes FICHIER] [--regenerer-empreintes] "
+    fprintf(stderr, "usage: differentiel [--corpus FOLDER] [--empreintes FILE] [--regenerer-empreintes] "
                     "[--sans-empreintes] [--rapide] [--verbeux]\n");
 }
 
@@ -425,7 +425,7 @@ int main(int argc, char **argv)
 
     if (bee_corpus_charger(dossier, &corpus) != 0)
         return 2;
-    printf("miniz %s, zlib %s (en-têtes %s), corpus : %zu fichiers, %zu octets\n", mz_version(), zlibVersion(),
+    printf("miniz %s, zlib %s (headers %s), corpus: %zu files, %zu bytes\n", mz_version(), zlibVersion(),
            ZLIB_VERSION, corpus.nombre, corpus.total);
 
     for (i = 0; i < corpus.nombre; i++)
@@ -454,9 +454,9 @@ int main(int argc, char **argv)
             }
             nb_controles += 2;
             if (a1 != a2 || a3 != a2)
-                echec("sommes", nom, "-", "mz_adler32 = %08lx (par morceaux %08lx), adler32 de zlib = %08lx", a1, a3, a2);
+                echec("sommes", nom, "-", "mz_adler32 = %08lx (in pieces %08lx), zlib's adler32 = %08lx", a1, a3, a2);
             if (c1 != c2 || c3 != c2)
-                echec("sommes", nom, "-", "mz_crc32 = %08lx (par morceaux %08lx), crc32 de zlib = %08lx", c1, c3, c2);
+                echec("sommes", nom, "-", "mz_crc32 = %08lx (in pieces %08lx), zlib's crc32 = %08lx", c1, c3, c2);
         }
 
         for (k = 0; k < NB_NIVEAUX; k++)
@@ -475,7 +475,7 @@ int main(int argc, char **argv)
             nb_controles++;
             if (r != MZ_OK)
             {
-                echec("miniz->zlib", nom, nom_niveau, "mz_compress2 a renvoyé %d (borne mz_compressBound = %lu)", r, borne);
+                echec("miniz->zlib", nom, nom_niveau, "mz_compress2 returned %d (bound mz_compressBound = %lu)", r, borne);
                 taille_c = 0;
             }
             else
@@ -485,13 +485,13 @@ int main(int argc, char **argv)
                 taille_zd = (uLongf)f->taille + 1;
                 r = uncompress(d, &taille_zd, c, (uLong)taille_c);
                 if (r != Z_OK)
-                    echec("miniz->zlib", nom, nom_niveau, "uncompress de zlib a renvoyé %d", r);
+                    echec("miniz->zlib", nom, nom_niveau, "zlib's uncompress returned %d", r);
                 else
                     verifier_identique("miniz->zlib", nom, nom_niveau, d, taille_zd, f->donnees, f->taille);
                 taille_d = (mz_ulong)f->taille + 1;
                 r = mz_uncompress(d, &taille_d, c, taille_c);
                 if (r != MZ_OK)
-                    echec("miniz->miniz", nom, nom_niveau, "mz_uncompress a renvoyé %d", r);
+                    echec("miniz->miniz", nom, nom_niveau, "mz_uncompress returned %d", r);
                 else
                     verifier_identique("miniz->miniz", nom, nom_niveau, d, taille_d, f->donnees, f->taille);
             }
@@ -503,13 +503,13 @@ int main(int argc, char **argv)
             /* [zlib->miniz] */
             r = compress2(z, &taille_z, f->donnees, (uLong)f->taille, niveau);
             if (r != Z_OK)
-                echec("zlib->miniz", nom, nom_niveau, "compress2 de zlib a renvoyé %d", r);
+                echec("zlib->miniz", nom, nom_niveau, "zlib's compress2 returned %d", r);
             else
             {
                 taille_d = (mz_ulong)f->taille + 1;
                 r = mz_uncompress(d, &taille_d, z, (mz_ulong)taille_z);
                 if (r != MZ_OK)
-                    echec("zlib->miniz", nom, nom_niveau, "mz_uncompress a renvoyé %d", r);
+                    echec("zlib->miniz", nom, nom_niveau, "mz_uncompress returned %d", r);
                 else
                     verifier_identique("zlib->miniz", nom, nom_niveau, d, taille_d, f->donnees, f->taille);
             }
@@ -528,17 +528,17 @@ int main(int argc, char **argv)
                     if (miniz_deflate_flux(f->donnees, n, niveau, MZ_DEFAULT_WINDOW_BITS, morceaux[m], morceaux[m], 0, 0, &flux,
                                            erreur, sizeof(erreur)) != 0)
                     {
-                        echec(controle, nom, nom_niveau, "compression : %s", erreur);
+                        echec(controle, nom, nom_niveau, "compression: %s", erreur);
                         continue;
                     }
                     nb_controles++;
                     if (taille_c && (flux.taille != taille_c || memcmp(flux.octets, c, taille_c) != 0))
                         echec(controle, nom, nom_niveau,
-                              "la sortie compressée en flux (%zu octets) diffère de celle de mz_compress2 (%lu octets)", flux.taille,
+                              "the streamed compressed output (%zu bytes) differs from mz_compress2's (%lu bytes)", flux.taille,
                               taille_c);
                     if (miniz_inflate_flux(flux.octets, flux.taille, MZ_DEFAULT_WINDOW_BITS, morceaux[m], morceaux[m], &retour,
                                            erreur, sizeof(erreur)) != 0)
-                        echec(controle, nom, nom_niveau, "décompression : %s", erreur);
+                        echec(controle, nom, nom_niveau, "decompression: %s", erreur);
                     else
                         verifier_identique(controle, nom, nom_niveau, retour.octets, retour.taille, f->donnees, f->taille);
                 }
@@ -547,19 +547,19 @@ int main(int argc, char **argv)
             /* [brut] */
             if (miniz_deflate_flux(f->donnees, f->taille, niveau, -MZ_DEFAULT_WINDOW_BITS, 4096, 4096, 0, 0, &flux, erreur,
                                    sizeof(erreur)) != 0)
-                echec("brut", nom, nom_niveau, "compression : %s", erreur);
+                echec("brut", nom, nom_niveau, "compression: %s", erreur);
             else
             {
                 nb_controles++;
                 if (taille_c >= 6 && (flux.taille != taille_c - 6 || memcmp(flux.octets, c + 2, taille_c - 6) != 0))
-                    echec("brut", nom, nom_niveau, "le flux brut (%zu octets) n'est pas le flux zlib (%lu octets) sans en-tête ni Adler-32",
+                    echec("brut", nom, nom_niveau, "the raw stream (%zu bytes) is not the zlib stream (%lu bytes) without its header and Adler-32",
                           flux.taille, taille_c);
                 if (zlib_inflate_flux(flux.octets, flux.taille, -MAX_WBITS, &retour, erreur, sizeof(erreur)) != 0)
                     echec("brut", nom, nom_niveau, "%s", erreur);
                 else
                     verifier_identique("brut", nom, nom_niveau, retour.octets, retour.taille, f->donnees, f->taille);
                 if (miniz_inflate_flux(flux.octets, flux.taille, -MZ_DEFAULT_WINDOW_BITS, 4096, 4096, &retour, erreur, sizeof(erreur)) != 0)
-                    echec("brut", nom, nom_niveau, "mz_inflate brut : %s", erreur);
+                    echec("brut", nom, nom_niveau, "raw mz_inflate: %s", erreur);
                 else
                     verifier_identique("brut", nom, nom_niveau, retour.octets, retour.taille, f->donnees, f->taille);
             }
@@ -571,7 +571,7 @@ int main(int argc, char **argv)
                 snprintf(nom_vidages, sizeof(nom_vidages), "%dv", niveau);
                 if (miniz_deflate_flux(f->donnees, f->taille, niveau, MZ_DEFAULT_WINDOW_BITS, 4096, 4096, 10007, 50021, &flux, erreur,
                                        sizeof(erreur)) != 0)
-                    echec("vidages", nom, nom_vidages, "compression : %s", erreur);
+                    echec("vidages", nom, nom_vidages, "compression: %s", erreur);
                 else
                 {
                     bee_sha256_hex(flux.octets, flux.taille, sha);
@@ -581,7 +581,7 @@ int main(int argc, char **argv)
                     else
                         verifier_identique("vidages", nom, nom_vidages, retour.octets, retour.taille, f->donnees, f->taille);
                     if (miniz_inflate_flux(flux.octets, flux.taille, MZ_DEFAULT_WINDOW_BITS, 1000, 1000, &retour, erreur, sizeof(erreur)) != 0)
-                        echec("vidages", nom, nom_vidages, "mz_inflate : %s", erreur);
+                        echec("vidages", nom, nom_vidages, "mz_inflate: %s", erreur);
                     else
                         verifier_identique("vidages", nom, nom_vidages, retour.octets, retour.taille, f->donnees, f->taille);
                 }
@@ -592,7 +592,7 @@ int main(int argc, char **argv)
             free(d);
         }
         if (verbeux)
-            printf("  %-45s %10zu octets : %s\n", nom, f->taille, nb_echecs > echecs_avant ? "ÉCARTS" : "ok");
+            printf("  %-45s %10zu bytes: %s\n", nom, f->taille, nb_echecs > echecs_avant ? "DISCREPANCIES" : "ok");
     }
 
     /* Déterminisme */
@@ -601,12 +601,12 @@ int main(int argc, char **argv)
         FILE *e = fopen(chemin_empreintes, "w");
         if (!e)
         {
-            fprintf(stderr, "erreur : impossible d'écrire %s\n", chemin_empreintes);
+            fprintf(stderr, "error: cannot write %s\n", chemin_empreintes);
             return 2;
         }
         if (nb_echecs)
         {
-            fprintf(stderr, "erreur : %ld écarts relevés, les empreintes ne sont pas régénérées\n", nb_echecs);
+            fprintf(stderr, "error: %ld discrepancies found, the fingerprints are not regenerated\n", nb_echecs);
             fclose(e);
             return 1;
         }
@@ -618,14 +618,14 @@ int main(int argc, char **argv)
             fprintf(e, "%s %lu %s %s\n", obtenues.elements[i].niveau, obtenues.elements[i].taille, obtenues.elements[i].sha,
                     obtenues.elements[i].fichier);
         fclose(e);
-        printf("Empreintes régénérées : %zu lignes dans %s\n", obtenues.nombre, chemin_empreintes);
+        printf("Fingerprints regenerated: %zu lines in %s\n", obtenues.nombre, chemin_empreintes);
     }
     else if (!sans_empreintes)
     {
         long differences = 0;
         if (lire_empreintes(chemin_empreintes, &reference) != 0)
         {
-            fprintf(stderr, "erreur : fichier d'empreintes introuvable : %s\n", chemin_empreintes);
+            fprintf(stderr, "error: fingerprint file not found: %s\n", chemin_empreintes);
             return 2;
         }
         for (i = 0; i < obtenues.nombre; i++)
@@ -635,13 +635,13 @@ int main(int argc, char **argv)
             nb_controles++;
             if (!r)
             {
-                echec("empreintes", o->fichier, o->niveau, "absent du fichier de référence (corpus modifié ?)");
+                echec("empreintes", o->fichier, o->niveau, "missing from the reference file (corpus changed?)");
                 differences++;
             }
             else if (strcmp(r->sha, o->sha) != 0)
             {
                 echec("empreintes", o->fichier, o->niveau,
-                      "la sortie compressée a changé (%lu octets au lieu de %lu ; SHA-256 %.16s… au lieu de %.16s…)", o->taille,
+                      "the compressed output has changed (%lu bytes instead of %lu; SHA-256 %.16s… instead of %.16s…)", o->taille,
                       r->taille, o->sha, r->sha);
                 differences++;
             }
@@ -649,22 +649,22 @@ int main(int argc, char **argv)
         for (i = 0; i < reference.nombre; i++)
             if (!chercher(&obtenues, reference.elements[i].niveau, reference.elements[i].fichier))
             {
-                echec("empreintes", reference.elements[i].fichier, reference.elements[i].niveau, "attendu mais non produit");
+                echec("empreintes", reference.elements[i].fichier, reference.elements[i].niveau, "expected but not produced");
                 differences++;
             }
         if (differences)
             fprintf(stderr,
-                    "\n%ld empreintes diffèrent : la sortie compressée n'est plus identique à celle de la version de base.\n"
-                    "C'est interdit sauf si la tâche l'autorise (sortie_compressee: peut_changer) ; relancez alors avec "
+                    "\n%ld fingerprints differ: the compressed output is no longer identical to the base version's.\n"
+                    "This is forbidden unless the task allows it (compressed_output: may_change); then run again with "
                     "--sans-empreintes.\n",
                     differences);
         else
-            printf("Déterminisme : %zu empreintes identiques à la référence.\n", obtenues.nombre);
+            printf("Determinism: %zu fingerprints identical to the reference.\n", obtenues.nombre);
     }
     else
-        printf("Déterminisme : contrôle des empreintes sauté (--sans-empreintes).\n");
+        printf("Determinism: fingerprint check skipped (--sans-empreintes).\n");
 
-    printf("%ld contrôles, %ld écarts, %ld s.\n", nb_controles, nb_echecs, (long)(time(NULL) - debut));
+    printf("%ld checks, %ld discrepancies, %ld s.\n", nb_controles, nb_echecs, (long)(time(NULL) - debut));
     free(flux.octets);
     free(retour.octets);
     liberer_empreintes(&obtenues);
@@ -672,9 +672,9 @@ int main(int argc, char **argv)
     bee_corpus_liberer(&corpus);
     if (nb_echecs)
     {
-        fprintf(stderr, "RÉSULTAT : ÉCHEC (%ld écarts).\n", nb_echecs);
+        fprintf(stderr, "RESULT: FAILED (%ld discrepancies).\n", nb_echecs);
         return 1;
     }
-    printf("RÉSULTAT : OK, miniz et zlib sont d'accord sur tout le corpus.\n");
+    printf("RESULT: OK, miniz and zlib agree on the whole corpus.\n");
     return 0;
 }
