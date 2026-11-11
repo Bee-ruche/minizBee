@@ -9,6 +9,10 @@
                                                     .github/workflows/bee-ci.yml (juge-v3) ; par défaut,
                                                     ../registre/outils/juge à côté de ce dépôt
   BEE_JUGE_RESEAU=host                              réseau de « docker build » (machines sans pont Docker)
+  bee/sandbox/sans-docker.sh env BEE_HARNAIS_SANDBOX=1 python3 bee/juge/test_juge.py
+                                                    + the harness built by construire.sh and run here, without
+                                                      Docker: ONLY in the sandbox (it also checks it has no network
+                                                      interface but lo); never on the CI machine
 
 Le greffon et le harnais testés sont ceux de CE dépôt (la PR, quand la CI lance ces tests) ; le juge
 commun est celui du registre. Les variantes malveillantes sont écrites ici, comme des transformations du
@@ -466,6 +470,165 @@ def travail_deplace(texte, corpus):
         }
         bee_pool[bee_push++] = bee_c;
 """)
+
+
+def en_sandbox():
+    """The network namespace of bee/sandbox/sans-docker.sh: no interface but lo (a CI runner has others)."""
+    try:
+        with open("/proc/net/dev", encoding="ascii") as f:
+            return {ligne.split(":")[0].strip() for ligne in f.read().splitlines()[2:]} == {"lo"}
+    except OSError:
+        return False
+
+
+@unittest.skipUnless(os.environ.get("BEE_HARNAIS_SANDBOX") == "1" and en_sandbox() and shutil.which("cc"),
+                     "harness tests: inside bee/sandbox/sans-docker.sh, with BEE_HARNAIS_SANDBOX=1 (they run miniz here)")
+class TestHarnaisEnSandbox(unittest.TestCase):
+    """The harness built as the common judge builds it (bee/juge/construire.sh, the base's headers in base/), run in
+    the sandbox, without Docker (juge-v3 contract, miniz-0048): malformed records exit 2; the judged code finds no
+    arguments, no environment and nothing left on descriptor 0, and the same output folders, created up front, in
+    every mode; each scenario's outputs are verification's, at the same paths."""
+
+    MODES = ("verifier", "n1", "n6", "n9", "decompression", "memoire")
+    DONNEES = b"le harnais efface ses parametres " * 2000
+
+    @classmethod
+    def setUpClass(cls):
+        cls.travail = tempfile.mkdtemp(prefix="bee-harnais-")
+        cls.sorties = os.path.join(cls.travail, "sorties")  # the same path at each run: the spy lists it
+        cls.entrees = os.path.join(cls.travail, "entrees")
+        os.makedirs(os.path.join(cls.entrees, "f"))
+        os.makedirs(os.path.join(cls.entrees, "z"))
+        flux = zlib.compress(cls.DONNEES, 6)
+        fichiers = {("f", "e0000"): cls.DONNEES, ("f", "e0001"): b"", ("z", "e0002"): flux, ("z", "e0003"): flux[:30]}
+        with open(os.path.join(cls.entrees, "liste"), "w", encoding="ascii") as liste:
+            for (cote, nom), octets in fichiers.items():
+                with open(os.path.join(cls.entrees, cote, nom), "wb") as f:
+                    f.write(octets)
+                liste.write(f"{cote} {nom} {len(cls.DONNEES) if cote == 'z' else len(octets)}\n")
+        cls.honnete = cls.construire("honnete", None)
+        cls.espion = cls.construire("espion", cls.espionner)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.travail, ignore_errors=True)
+
+    @classmethod
+    def espionner(cls, texte):
+        """miniz.c whose first mz_deflateInit2 or mz_inflateInit2 (every mode reaches one) reports what it sees."""
+        espion = f"""#include <dirent.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+extern char **environ;
+static void bee_espion(void)
+{{
+    static int vu = 0;
+    char b[4096], noms[256] = "";
+    int fd, k, cmdline = 0, env = 0;
+    ssize_t n;
+    DIR *d;
+    struct dirent *e;
+    if (vu++)
+        return;
+    fd = open("/proc/self/cmdline", O_RDONLY);
+    n = fd >= 0 ? read(fd, b, sizeof(b)) : -1;
+    for (k = 0; k < n; k++)
+        cmdline += b[k] != 0;
+    while (environ && environ[env])
+        env++;
+    d = opendir("{cls.sorties}");
+    while (d && (e = readdir(d)))
+        if (e->d_name[0] != '.' && strlen(noms) + strlen(e->d_name) + 2 < sizeof(noms))
+        {{
+            strcat(noms, " ");
+            strcat(noms, e->d_name);
+        }}
+    fprintf(stderr, "BEE_ESPION cmdline=%d environ=%d stdin=%zd dossiers=%s\\n", cmdline, env, read(0, b, sizeof(b)), noms);
+}}
+"""
+        texte = remplacer(texte, INCLUDE, INCLUDE + espion)
+        for signature in ("    int mz_deflateInit2(mz_streamp pStream, int level, int method, int window_bits, int mem_level, int strategy)\n    {\n",
+                          "    int mz_inflateInit2(mz_streamp pStream, int window_bits)\n    {\n"):
+            texte = remplacer(texte, signature, signature + "        bee_espion();\n")
+        return texte
+
+    @classmethod
+    def construire(cls, nom, transformation):
+        racine = os.path.join(cls.travail, nom)
+        sources, outillage, sortie = (os.path.join(racine, d) for d in ("sources", "outillage", "sortie"))
+        os.makedirs(sources)
+        os.makedirs(os.path.join(outillage, "base"))
+        for fichier in os.listdir(RACINE):
+            if fichier.startswith("miniz") and fichier.endswith((".c", ".h")):
+                shutil.copyfile(os.path.join(RACINE, fichier), os.path.join(sources, fichier))
+                if fichier.endswith(".h"):
+                    shutil.copyfile(os.path.join(RACINE, fichier), os.path.join(outillage, "base", fichier))
+        for dossier in greffon.Projet.OUTILLAGE:
+            shutil.copytree(os.path.join(RACINE, dossier), os.path.join(outillage, dossier))
+        if transformation:
+            with open(os.path.join(sources, "miniz.c"), encoding="utf-8") as f:
+                texte = transformation(f.read())
+            with open(os.path.join(sources, "miniz.c"), "w", encoding="utf-8") as f:
+                f.write(texte)
+        subprocess.run(["sh", os.path.join(outillage, greffon.Projet.CONSTRUIRE), sources, outillage, sortie], check=True,
+                       capture_output=True)
+        return os.path.join(sortie, "execution")
+
+    def lancer(self, programme, mode=None, enregistrement=None, arguments=()):
+        """Runs the harness in a fresh output folder, with the record on descriptor 0 and chrono's fixed environment."""
+        shutil.rmtree(self.sorties, ignore_errors=True)
+        os.makedirs(self.sorties)
+        if enregistrement is None:
+            enregistrement = f"{mode} {self.entrees} {self.sorties}".ljust(255).encode() + b"\n"
+        return subprocess.run([programme, *arguments], input=enregistrement, capture_output=True,
+                              env={"HOME": "/tmp", "LC_ALL": "C", "PATH": "/usr/bin:/bin"})
+
+    def arbre(self):
+        resultat = {}
+        for racine, _, noms in os.walk(self.sorties):
+            for nom in noms:
+                with open(os.path.join(racine, nom), "rb") as f:
+                    resultat[os.path.relpath(os.path.join(racine, nom), self.sorties)] = f.read()
+        return resultat
+
+    def test_enregistrements_mal_formes(self):
+        bon = f"verifier {self.entrees} {self.sorties}"
+        for enregistrement, arguments in ((f"{bon} en-trop".ljust(255).encode() + b"\n", ()),
+                                          (f"inconnu {self.entrees} {self.sorties}".ljust(255).encode() + b"\n", ()),
+                                          (b"", ()), (b"x" * 4096, ()), (bon.ljust(255).encode() + b"\n", ("verifier",))):
+            with self.subTest(enregistrement=enregistrement[:40], arguments=arguments):
+                r = self.lancer(self.honnete, enregistrement=enregistrement, arguments=arguments)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn(b"execution: usage", r.stderr)
+        self.assertEqual(self.lancer(self.honnete, "verifier").returncode, 0)
+
+    def test_rien_ne_dit_le_mode(self):
+        """After the erasure: /proc/self/cmdline empty, no environment, descriptor 0 at its end, and the same output
+        folders, all created before the first call to miniz, whatever the mode."""
+        vus = {}
+        for mode in self.MODES:
+            r = self.lancer(self.espion, mode)
+            self.assertEqual(r.returncode, 0, (mode, r.stderr))
+            vus[mode] = [l for l in r.stderr.decode().splitlines() if l.startswith("BEE_ESPION")]
+        for mode in self.MODES:
+            self.assertEqual(len(vus[mode]), 1, mode)
+            self.assertEqual(sorted(vus[mode][0].split("dossiers=")[1].split()), ["c", "d", "ds", "e", "es", "m", "s"], mode)
+            self.assertEqual(vus[mode][0].split(" dossiers=")[0], "BEE_ESPION cmdline=0 environ=0 stdin=0", mode)
+
+    def test_scenarios_aux_chemins_de_la_verification(self):
+        self.assertEqual(self.lancer(self.honnete, "verifier").returncode, 0)
+        verification = self.arbre()
+        self.assertEqual(len(verification), 2 * 11 + 2 * 4)
+        for mode in self.MODES[1:]:
+            with self.subTest(mode=mode):
+                r = self.lancer(self.honnete, mode)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                sorties = self.arbre()
+                self.assertTrue(sorties)
+                self.assertEqual(sorties, {p: verification[p] for p in sorties}, "same path, same bytes")
+                self.assertEqual(sorted(os.listdir(self.sorties)), ["c", "d", "ds", "e", "es", "m", "s"])
+        self.assertEqual(verification["e/e0003"], b"-3 0\n")  # a stream in error: its status, never a stop
 
 
 @unittest.skipUnless(os.environ.get("BEE_JUGE_INTEGRATION") == "1" and shutil.which("docker"),

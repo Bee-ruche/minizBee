@@ -22,7 +22,8 @@
    the judge can compare a verification input mixed into a measurement, byte for byte, with its output in
    verification. The judged code cannot tell from its process whether it is checked or measured: before the
    first call to miniz, the harness reads its parameters to the end of the pipe, copies them, then erases their
-   text, its arguments and its environment.
+   text, its arguments and its environment; then the output folders are created up front, the same in every mode
+   (c, s, d, e, ds, es, m), before the list is read.
    No measured zone: the instruction count covers the whole process. A "measured" zone would leave the PR's
    code calls outside it (mz_compressBound, for example) to move its work into (adversarial review of 27/10).
    Reading and writing the files are the same for A and B.
@@ -111,14 +112,21 @@ static void ecrire_statut(const char *sous_dossier, const char *nom, int code, s
     ecrire_fichier(sous_dossier, nom, NULL, texte, (size_t)n);
 }
 
-static void creer_dossier(const char *sous_dossier)
+/* The output folders are created up front, the same in every mode, before the list is read and before any call to
+   miniz: the state of the output folder does not depend on the mode. */
+static void creer_dossiers(void)
 {
-    char p[4096];
-    int n = snprintf(p, sizeof(p), "%s/%s", dossier_sorties, sous_dossier);
-    if (n < 0 || (size_t)n >= sizeof(p))
-        mourir("path too long", sous_dossier);
-    if (mkdir(p, 0755) != 0 && errno != EEXIST)
-        mourir("cannot create the output folder", p);
+    static const char *const dossiers[] = {"c", "s", "d", "e", "ds", "es", "m"};
+    size_t i;
+    for (i = 0; i < sizeof(dossiers) / sizeof(dossiers[0]); i++)
+    {
+        char p[4096];
+        int n = snprintf(p, sizeof(p), "%s/%s", dossier_sorties, dossiers[i]);
+        if (n < 0 || (size_t)n >= sizeof(p))
+            mourir("path too long", dossiers[i]);
+        if (mkdir(p, 0755) != 0 && errno != EEXIST)
+            mourir("cannot create the output folder", p);
+    }
 }
 
 /* Lit la liste ; charge les données des entrées f si `charger_f`, des entrées z si `charger_z`. */
@@ -304,9 +312,6 @@ static int memoire(entree *liste, size_t n);
 static int verifier(entree *liste, size_t n)
 {
     size_t i, j;
-    const char *dossiers[] = {"c", "s", "d", "e", "ds", "es"};
-    for (i = 0; i < sizeof(dossiers) / sizeof(dossiers[0]); i++)
-        creer_dossier(dossiers[i]);
     for (i = 0; i < n; i++)
     {
         entree *e = &liste[i];
@@ -365,7 +370,6 @@ static int compresser(entree *liste, size_t n, int niveau)
     for (i = 0; i < n; i++)
         if (liste[i].type == 'f')
             codes[i] = mz_compress2(sorties[i], &tailles[i], liste[i].donnees, (mz_ulong)liste[i].longueur, niveau);
-    creer_dossier("c");
     snprintf(suffixe, sizeof(suffixe), ".%d", niveau);
     for (i = 0; i < n; i++)
         if (liste[i].type == 'f')
@@ -399,8 +403,6 @@ static int decompresser(entree *liste, size_t n)
     for (i = 0; i < n; i++)
         if (liste[i].type == 'z')
             codes[i] = mz_uncompress(sorties[i], &tailles[i], liste[i].donnees, (mz_ulong)liste[i].longueur);
-    creer_dossier("d");
-    creer_dossier("e");
     for (i = 0; i < n; i++)
         if (liste[i].type == 'z')
         {
@@ -424,7 +426,6 @@ static int memoire(entree *liste, size_t n)
 {
     size_t i;
     unsigned char *bloc = (unsigned char *)allouer(BLOC_FLUX), *sortie = (unsigned char *)allouer(BLOC_FLUX);
-    creer_dossier("m");
     for (i = 0; i < n; i++)
     {
         char p[4096];
@@ -518,6 +519,7 @@ int main(int argc, char **argv)
     int mode;
     umask(0); /* l'hôte doit pouvoir effacer les sorties (écrites par un autre utilisateur) */
     mode = parametres(argc, argv);
+    creer_dossiers();
     if (mode == VERIFIER)
     {
         liste = lire_liste(&n, 1, 1);
