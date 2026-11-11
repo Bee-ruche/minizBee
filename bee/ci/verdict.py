@@ -28,8 +28,8 @@ Sortie (--sortie, défaut verdict.json), avec au minimum :
   lignes_modifiees  lignes modifiées hors bee/**, tests/**, manifests/**, manifestes/** et CONTRIBUTION.yaml (pour bee enregistrer-verdict)
   amorcage          true si les juges ou le greffon venaient de la PR elle-même (bee/ci/juges.sh)
   base_juge         le commit A réellement extrait par le juge commun (son greffon et ses sources), la règle qui
-                    l'a choisi (point_de_depart, introduction, ou un refus) et le point de départ de la PR,
-                    d'après les sorties du job greffon ; null hors CI
+                    l'a choisi (base_de_la_pr since juge-v3; point_de_depart or introduction under juge-v2; or a
+                    refusal) et le point de départ de la PR, d'après les sorties du job greffon ; null hors CI
   juge              section du juge commun : version (3 depuis juge-v1), commun (« juge-vN »), projet, greffon
                     (SHA-256 de bee/juge/projet.py), graine, sorties comparées et constructions_suspectes
                     (liste vide si l'analyse des objets n'a rien trouvé) ; null si le juge n'a pas tourné
@@ -214,7 +214,8 @@ def code_du_juge(jobs, dossier_juge):
     return str(code).strip() if code is not None else None
 
 
-REGLES_BASE_JUGE = {"point_de_depart", "introduction", "refus_point_de_depart", "refus_rebase", "refus_introduction_miniz"}
+REGLES_BASE_JUGE = {"base_de_la_pr", "point_de_depart", "introduction", "refus_point_de_depart", "refus_rebase",
+                    "refus_introduction_miniz"}
 SHA = re.compile(r"[0-9a-f]{40}")
 
 
@@ -234,13 +235,16 @@ def base_juge(jobs, base):
 
 
 def base_juge_acceptee(a, amorcage):
-    """A est-il celui que le job greffon a le droit de choisir ? point_de_depart : A est le point de départ
-    lui-même ; introduction : seulement en amorçage (bee/ci/juges.sh) ; tout autre cas, ou un commit ou un
-    point de départ illisible : non (revue adverse de miniz-0032)."""
+    """A est-il celui que le job greffon a le droit de choisir ? base_de_la_pr (juge-v3): A is the PR's base, the
+    event's, once the greffon job has checked that the starting point has the same bee/ and miniz*; point_de_depart
+    (juge-v2) : A est le point de départ lui-même ; introduction : seulement en amorçage (bee/ci/juges.sh) ; tout
+    autre cas, ou un commit ou un point de départ illisible : non (revue adverse de miniz-0032)."""
     if a is None:
         return True  # hors CI : rien à vérifier
     if a["commit"] is None or a["depart"] is None:
         return False
+    if a["regle"] == "base_de_la_pr":
+        return a["commit"] == a["base"]
     if a["regle"] == "point_de_depart":
         return a["commit"] == a["depart"]
     if a["regle"] == "introduction":

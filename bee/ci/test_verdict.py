@@ -67,10 +67,12 @@ def rapport_ab(gain_n6=0.03, signe_n6=True, degradation_n1=False):
 
 class Verdict(unittest.TestCase):
     def executer(self, etats, jobs=None, ab=None, tache=TACHE_SANS_METRIQUE, nom_rapport="juge.json", code=None, ancien=None,
-                 manifeste=None):
+                 manifeste=None, base=None):
         with tempfile.TemporaryDirectory() as d:
             artefacts, propres = ecrire_etats(d, etats)
             commande = [sys.executable, VERDICT, "--artefacts", artefacts, "--etats", propres, "--sortie", os.path.join(d, "verdict.json")]
+            if base is not None:
+                commande += ["--base", base]
             if jobs is not None:
                 with open(os.path.join(d, "jobs.json"), "w") as f:
                     json.dump(jobs, f)
@@ -351,6 +353,23 @@ class Verdict(unittest.TestCase):
                 self.assertEqual(v["ci"], "rouge")
                 self.assertEqual(v["etape_en_echec"], "Greffon du juge commun")
 
+    def test_base_de_la_pr_juge_v3(self):
+        """juge-v3: A is the PR's base, the event's (the greffon job checked that its starting point has the same bee/
+        and miniz*); accepted only if A is the verdict's base, never another commit."""
+        base, autre = "b" * 40, "e" * 40
+        greffon = {"result": "success", "outputs": {"base_juge": base, "regle": "base_de_la_pr", "depart": DEPART}}
+        v = self.executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, greffon=greffon), rapport_ab(), base=base)
+        self.assertEqual(v["ci"], "verte")
+        self.assertEqual(v["base_juge"], {"commit": base, "regle": "base_de_la_pr", "depart": DEPART, "base": base})
+        for sorties, base_du_verdict in (({"base_juge": autre, "regle": "base_de_la_pr", "depart": DEPART}, base),
+                                         ({"base_juge": DEPART, "regle": "base_de_la_pr", "depart": DEPART}, base),
+                                         ({"base_juge": base, "regle": "base_de_la_pr"}, base),
+                                         ({"base_juge": base, "regle": "base_de_la_pr", "depart": DEPART}, None)):
+            with self.subTest(sorties=sorties, base=base_du_verdict):
+                v = self.executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, greffon={"result": "success", "outputs": sorties}),
+                                  rapport_ab(), base=base_du_verdict)
+                self.assertEqual((v["ci"], v["etape_en_echec"]), ("rouge", "Greffon du juge commun"))
+
     def test_introduction_seulement_en_amorcage(self):
         autre = "e" * 40
         jobs = dict(JOBS_OK, greffon={"result": "success", "outputs": {"base_juge": autre, "regle": "introduction", "depart": DEPART}})
@@ -567,9 +586,23 @@ class Juges(unittest.TestCase):
         self.assertNotIn("JUGE_COMMUN_REF", workflow["env"])
         juge = workflow["jobs"]["juge"]
         self.assertEqual(juge["uses"], f"Bee-ruche/registre/.github/workflows/juge.yml@{sha}")
-        # Greffon lu dans la base : le commit vient du job greffon, jamais de la tête de la PR directement.
-        self.assertEqual(juge["with"]["base_sha"], "${{ needs.greffon.outputs.base_juge }}")
+        # juge-v3: the event's base and head (juge.yml refuses any other), only when the base's plugin is written for it.
+        self.assertEqual((juge["with"]["base_sha"], juge["with"]["tete_sha"]),
+                         ("${{ github.event.pull_request.base.sha }}", "${{ github.event.pull_request.head.sha }}"))
         self.assertIn("greffon", juge["needs"])
+        self.assertIn("needs.greffon.outputs.contrat == 'juge-v3'", juge["if"])
+        # Transition: juge-v2 judges a base that pins it, from the starting point the greffon job chose.
+        transition, v2 = workflow["jobs"]["juge-v2"], workflow["env"]["JUGE_V2_SHA"]
+        self.assertEqual(transition["uses"], f"Bee-ruche/registre/.github/workflows/juge.yml@{v2}")
+        self.assertEqual(transition["with"]["base_sha"], "${{ needs.greffon.outputs.base_juge }}")
+        self.assertIn("needs.greffon.outputs.contrat == 'juge-v2'", transition["if"])
+        self.assertEqual({k: v for k, v in transition["with"].items() if k != "base_sha"},
+                         {k: v for k, v in juge["with"].items() if k != "base_sha"})
+        with open(WORKFLOW, encoding="utf-8") as f:
+            texte = f.read()
+        self.assertIn(f'  JUGE_COMMUN_SHA: "{sha}"  # juge-v3\n', texte)
+        self.assertIn(f"juge.yml@{sha} # juge-v3\n", texte)
+        self.assertIn(f"juge.yml@{v2} # juge-v2\n", texte)
         # Le commit du corpus est déclaré à juge.yml (juge-v2), qui le récupère avant la PR : celui du greffon en est
         # (l'ancien et le nouveau, le temps d'une PR qui le change, car le greffon qui juge est celui de la base).
         with open(os.path.join(os.path.dirname(ICI), "juge", "projet.py"), encoding="utf-8") as f:
@@ -577,7 +610,7 @@ class Juges(unittest.TestCase):
         self.assertIn(commit, juge["with"]["historique"].split())
         extractions = [e for job in workflow["jobs"].values() for e in job.get("steps", [])
                        if e.get("with", {}).get("path") == "juge-commun"]
-        self.assertEqual(len(extractions), 3)  # compilation et tests, fuzzing, méta-tests
+        self.assertEqual(len(extractions), 4)  # compilation et tests, fuzzing, méta-tests, verdict (rapport.py)
         for e in extractions:
             self.assertEqual((e["with"]["repository"], e["with"]["ref"]), ("${{ env.REGISTRE }}", "${{ env.JUGE_COMMUN_SHA }}"))
         self.assertEqual(workflow["env"]["REGISTRE"], "Bee-ruche/registre")
@@ -670,6 +703,7 @@ class Greffon(unittest.TestCase):
         self.ecrire("miniz.c", "int x;\n")
         self.ecrire("bee/juge/projet.py", "# greffon\n")
         self.depart = self.commit("depart")
+        self.env_workflow = {k: workflow["env"][k] for k in ("JUGE_COMMUN_SHA", "JUGE_V2_SHA")}
 
     def tearDown(self):
         import shutil
@@ -694,14 +728,19 @@ class Greffon(unittest.TestCase):
         self.git("commit", "-q", "-m", message)
         return self.git("rev-parse", "HEAD")
 
-    def lancer(self, base, tete, cote):
+    def lancer(self, base, tete, cote, epingle="JUGE_COMMUN_SHA"):
+        """The step, its base pinning `epingle` (a key of the workflow's env, or a SHA) in its own bee-ci.yml."""
+        sha = self.env_workflow.get(epingle, epingle)
+        os.makedirs(os.path.join(self.d, "base", ".github", "workflows"), exist_ok=True)
+        with open(os.path.join(self.d, "base", ".github", "workflows", "bee-ci.yml"), "w") as f:
+            f.write(f'env:\n  JUGE_COMMUN_SHA: "{sha}"  # juge-vN\n')
         etats = os.path.join(self.d, "etats")
         os.makedirs(etats, exist_ok=True)
         with open(os.path.join(etats, "greffon.txt"), "w") as f:
             f.write(cote + "\n")
         sortie = os.path.join(self.d, "sortie")
         open(sortie, "w").close()
-        env = dict(os.environ, ETATS=etats, BASE_SHA=base, TETE_SHA=tete, GITHUB_OUTPUT=sortie)
+        env = dict(os.environ, ETATS=etats, BASE_SHA=base, TETE_SHA=tete, GITHUB_OUTPUT=sortie, **self.env_workflow)
         r = subprocess.run(["bash", "-e", "-c", self.script], cwd=self.d, capture_output=True, text=True, env=env)
         with open(sortie) as f:
             self.sorties = dict(l.split("=", 1) for l in f.read().split())
@@ -715,8 +754,25 @@ class Greffon(unittest.TestCase):
         self.git("checkout", "-q", "master")
         self.ecrire("readme.md", "doc\n")  # la base avance sans rien de ce que le juge lit dans A
         base = self.commit("base")
-        self.assertEqual(self.lancer(base, tete, "base")[:3], (0, self.depart, "succes"))
-        self.assertEqual((self.sorties["regle"], self.sorties["depart"]), ("point_de_depart", self.depart))
+        # juge-v3: A is the event's base, whose bee/ and miniz* are the starting point's.
+        self.assertEqual(self.lancer(base, tete, "base")[:3], (0, base, "succes"))
+        self.assertEqual((self.sorties["regle"], self.sorties["depart"], self.sorties["contrat"]), ("base_de_la_pr", self.depart, "juge-v3"))
+        # Transition, a base that still pins juge-v2: A is the starting point, as before.
+        self.assertEqual(self.lancer(base, tete, "base", "JUGE_V2_SHA")[:3], (0, self.depart, "succes"))
+        self.assertEqual((self.sorties["regle"], self.sorties["depart"], self.sorties["contrat"]), ("point_de_depart", self.depart, "juge-v2"))
+
+    def test_rouge_si_la_base_n_epingle_ni_juge_v3_ni_juge_v2(self):
+        self.git("checkout", "-q", "-b", "pr")
+        self.ecrire("miniz.c", "int y;\n")
+        tete = self.commit("pr")
+        for epingle in ("1" * 40, ""):
+            with self.subTest(epingle=epingle):
+                code, base_juge, etat, sortie = self.lancer(self.depart, tete, "base", epingle)
+                self.assertEqual((code, base_juge, etat, self.sorties.get("contrat")), (1, None, "echec", None))
+                self.assertIn("::error::The base pins neither juge-v3", sortie)
+        # juge-v3 always reads the base's plugin: a PR that brings its own is not judged by it.
+        code, base_juge, etat, _ = self.lancer(self.depart, tete, "pr")
+        self.assertEqual((code, base_juge, etat), (1, None, "echec"))
 
     def test_rouge_si_miniz_a_change_sur_la_base(self):
         self.git("checkout", "-q", "-b", "pr")
@@ -816,20 +872,109 @@ class Greffon(unittest.TestCase):
         self.git("checkout", "-q", "-b", "pr")
         self.ecrire("bee/juge/projet.py", "# greffon de la PR, qui accepte tout\n")
         tete = self.commit("pr")
-        self.assertEqual(self.lancer(self.depart, tete, "base")[1], self.depart)
+        for epingle in ("JUGE_COMMUN_SHA", "JUGE_V2_SHA"):
+            self.assertEqual(self.lancer(self.depart, tete, "base", epingle)[1], self.depart)
 
     def test_introduction(self):
         self.git("checkout", "-q", "-b", "pr")
         self.ecrire("bee/juge/projet.py", "# nouveau greffon\n")
         tete = self.commit("pr")
-        self.assertEqual(self.lancer(self.depart, tete, "pr")[:3], (0, tete, "succes"))
+        self.assertEqual(self.lancer(self.depart, tete, "pr", "JUGE_V2_SHA")[:3], (0, tete, "succes"))
         self.assertEqual(self.sorties["regle"], "introduction")
         self.ecrire("miniz_tinfl.c", "int w;\n")  # l'introduction ne doit pas toucher miniz
         tete = self.commit("pr + miniz")
-        code, base_juge, etat, sortie = self.lancer(self.depart, tete, "pr")
+        code, base_juge, etat, sortie = self.lancer(self.depart, tete, "pr", "JUGE_V2_SHA")
         self.assertEqual((code, base_juge, etat), (1, None, "echec"))
         self.assertEqual(self.sorties["regle"], "refus_introduction_miniz")
         self.assertIn("::error::", sortie)
+
+
+class JobVerdictJugeV3(unittest.TestCase):
+    """The verdict job's steps for juge-v3 (miniz-0048), run from bee-ci.yml: the report checked against the judging
+    job's outputs (rapport.py --verifier, here a stand-in that records its arguments), and the transition, where
+    verdict.py reads as « juge » the judging job that ran."""
+
+    def setUp(self):
+        import yaml
+        with open(WORKFLOW, encoding="utf-8") as f:
+            self.etapes = {e.get("name", ""): e for e in yaml.safe_load(f)["jobs"]["verdict"]["steps"]}
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.d)
+
+    def etape(self, debut):
+        return next(e for n, e in self.etapes.items() if n.startswith(debut))
+
+    def verifier_rapport(self, code_rapport):
+        """Runs the check step with a rapport.py that exits `code_rapport`; returns (its arguments, juge_isole.txt)."""
+        dossier = os.path.join(self.d, "juge-commun", "outils", "juge")
+        os.makedirs(dossier, exist_ok=True)
+        with open(os.path.join(dossier, "rapport.py"), "w") as f:
+            f.write("import json, sys\nopen('arguments.json', 'w').write(json.dumps(sys.argv[1:] + [open(sys.argv[3]).read()]))\n"
+                    f"sys.exit({code_rapport})\n")
+        etats = os.path.join(self.d, "etats")
+        os.makedirs(etats, exist_ok=True)
+        if os.path.exists(os.path.join(etats, "juge_isole.txt")):
+            os.remove(os.path.join(etats, "juge_isole.txt"))
+        env = dict(os.environ, SORTIES_JUGE='{"code": "0", "empreinte": "ab"}', BASE_SHA="b" * 40, TETE_SHA="c" * 40, ETATS=etats)
+        r = subprocess.run(["bash", "-e", "-c", self.etape("Common judge's report checked")["run"]], cwd=self.d, env=env,
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(os.path.join(self.d, "arguments.json")) as f:
+            arguments = json.load(f)
+        etat = None
+        if os.path.exists(os.path.join(etats, "juge_isole.txt")):
+            with open(os.path.join(etats, "juge_isole.txt")) as f:
+                etat = f.read().strip()
+        return arguments, etat, r.stderr
+
+    def test_rapport_verifie_contre_les_sorties_du_job_juge(self):
+        etape = self.etape("Common judge's report checked")
+        self.assertEqual(etape["if"], "needs.greffon.outputs.contrat == 'juge-v3'")
+        self.assertEqual(etape["env"]["SORTIES_JUGE"], "${{ toJSON(needs.juge.outputs) }}")
+        noms = list(self.etapes)
+        self.assertLess(noms.index(etape["name"]), noms.index("Assembler verdict.json"))
+        self.assertLess(noms.index(next(n for n in noms if n.startswith("Rapport du juge commun"))), noms.index(etape["name"]))
+        arguments, etat, _ = self.verifier_rapport(0)
+        self.assertEqual(arguments, ["artefacts/juge/juge.json", "--verifier", "sorties-juge.json", "--base", "b" * 40,
+                                     "--tete", "c" * 40, '{"code": "0", "empreinte": "ab"}'])
+        self.assertIsNone(etat)
+        for code in (1, 2):
+            with self.subTest(code=code):
+                _, etat, erreur = self.verifier_rapport(code)
+                self.assertEqual(etat, "echec")
+                self.assertIn("::error::The common judge's report is not the one its job published", erreur)
+
+    def test_rapport_refuse_rend_le_verdict_rouge(self):
+        """A juge_isole « echec » in the verdict job's own states turns a code 0 red (verdict.py)."""
+        etats = {e: "succes" for e in ETAPES}
+        etats["juge_isole"] = "echec"
+        v = Verdict().executer(etats, JOBS_OK, rapport_ab())
+        self.assertEqual((v["ci"], v["etape_en_echec"]), ("rouge", "Juge commun (vérification de l'extérieur et mesures)"))
+
+    def jobs_lus(self, jobs, contrat):
+        etape = self.etape("Assembler verdict.json")
+        self.assertEqual(etape["env"]["CONTRAT"], "${{ needs.greffon.outputs.contrat }}")
+        script = etape["run"].split("\nFIN\n", 1)[0] + "\nFIN\ncat resultats-jobs.json"  # up to verdict.py, excluded
+        r = subprocess.run(["bash", "-e", "-c", script], cwd=self.d,
+                           env=dict(os.environ, RESULTATS_JOBS=json.dumps(jobs), CONTRAT=contrat), capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_transition_le_job_qui_a_juge_est_lu_comme_juge(self):
+        v3 = {"result": "success", "outputs": {"code": "0", "empreinte": "ab"}}
+        v2 = {"result": "success", "outputs": {"code": "0"}}
+        sautes = {"result": "skipped", "outputs": {}}
+        jobs = dict(JOBS_OK, juge=v3, **{"juge-v2": sautes})
+        self.assertEqual(self.jobs_lus(jobs, "juge-v3"), dict(JOBS_OK, juge=v3))
+        self.assertEqual(self.jobs_lus(dict(jobs, juge=sautes, **{"juge-v2": v2}), "juge-v2"), dict(JOBS_OK, juge=v2))
+        # The greffon job failed (no contract): the juge-v2 job, skipped, is read as « juge », and the verdict is red.
+        lus = self.jobs_lus(dict(jobs, greffon={"result": "failure", "outputs": {}}), "")
+        self.assertEqual(lus["juge"], sautes)
+        v = Verdict().executer({e: "succes" for e in ETAPES}, dict(lus, greffon=GREFFON_OK), rapport_ab())
+        self.assertEqual(v["ci"], "rouge")
 
 
 # --- miniz-0049 : le registre et les manifestes dans les deux vocabulaires (français, anglais), avant la bascule. ---
