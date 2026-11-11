@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prépare les graines des deux harnais de fuzzing à partir du corpus de référence.
+"""Prepares the seeds of the two fuzzing harnesses from the reference corpus.
 
 - fuzz_compression : préfixe de 3 octets (niveau, stratégie, tampons) + tranche d'un fichier du corpus.
 - fuzz_inflate : préfixe de 2 octets (format, tampons) + flux zlib ou Deflate brut de la tranche,
@@ -30,7 +30,7 @@ def main():
             fichiers.append(os.path.join(base, nom))
     fichiers.sort()
     if not fichiers:
-        raise SystemExit("graines : corpus vide (python3 bee/corpus/generer.py)")
+        raise SystemExit("graines: empty corpus (python3 bee/corpus/generer.py)")
 
     dossiers = {h: os.path.join(args.sortie, h) for h in ("fuzz_inflate", "fuzz_compression")}
     for d in dossiers.values():
@@ -48,7 +48,7 @@ def main():
         with open(os.path.join(dossiers["fuzz_inflate"], f"graine-{i:03d}"), "wb") as f:
             f.write(bytes([brut, i % 8]) + flux)
         nombre += 1
-    print(f"graines : {nombre} par harnais dans {args.sortie}")
+    print(f"graines: {nombre} per harness in {args.sortie}")
 
 
 if __name__ == "__main__":

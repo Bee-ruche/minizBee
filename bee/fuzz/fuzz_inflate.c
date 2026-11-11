@@ -35,7 +35,7 @@ static unsigned char sortie_miniz[LIMITE_SORTIE + 1], sortie_flux[LIMITE_SORTIE 
 
 static void ecart(const char *quoi, size_t a, size_t b)
 {
-    fprintf(stderr, "fuzz_inflate : ÉCART %s (%zu / %zu octets)\n", quoi, a, b);
+    fprintf(stderr, "fuzz_inflate: DISCREPANCY %s (%zu / %zu bytes)\n", quoi, a, b);
     abort();
 }
 
@@ -136,8 +136,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *donnees, size_t taille)
     ok_zlib = inflate_zlib(donnees, taille, brut, &t_zlib);
 
     if (ok_une && ok_flux && (t_une != t_flux || memcmp(sortie_miniz, sortie_flux, t_une) != 0))
-        ecart("miniz en une fois et miniz en flux produisent des sorties différentes", t_une, t_flux);
+        ecart("one-shot miniz and streamed miniz produce different outputs", t_une, t_flux);
     if (ok_une && ok_zlib && (t_une != t_zlib || memcmp(sortie_miniz, sortie_zlib, t_une) != 0))
-        ecart("miniz et zlib réussissent tous deux mais produisent des sorties différentes", t_une, t_zlib);
+        ecart("miniz and zlib both succeed but produce different outputs", t_une, t_zlib);
     return 0;
 }
