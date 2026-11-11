@@ -82,7 +82,7 @@ static const char *nom(int code)
         case MZ_BUF_ERROR: return "BUF_ERROR";
         case MZ_VERSION_ERROR: return "VERSION_ERROR";
         case MZ_PARAM_ERROR: return "PARAM_ERROR";
-        default: return "inconnu";
+        default: return "unknown";
     }
 }
 
@@ -113,7 +113,7 @@ static void codes(const char *cas, int m, int attendu_m, int z, int attendu_z, c
 {
     if ((attendu_m != attendu_z) != (ecart != NULL))
     {
-        fprintf(stderr, "erreur interne [%s] : un écart toléré, et lui seul, renvoie à la liste des écarts\n", cas);
+        fprintf(stderr, "internal error [%s]: a tolerated discrepancy, and it alone, refers to the list of discrepancies\n", cas);
         exit(2);
     }
     nb_cas++;
@@ -121,12 +121,12 @@ static void codes(const char *cas, int m, int attendu_m, int z, int attendu_z, c
     if (m != attendu_m)
     {
         nb_echecs++;
-        fprintf(stderr, "ÉCHEC [%s] miniz rend %s (%d), attendu %s ; zlib rend %s\n", cas, nom(m), m, nom(attendu_m), nom(z));
+        fprintf(stderr, "FAILED [%s] miniz returns %s (%d), expected %s; zlib returns %s\n", cas, nom(m), m, nom(attendu_m), nom(z));
     }
     if (z != attendu_z)
     {
         nb_avertissements++;
-        fprintf(stderr, "AVERTISSEMENT [%s] zlib %s rend %s (%d), attendu %s (zlib 1.3)\n", cas, zlibVersion(), nom(z), z,
+        fprintf(stderr, "WARNING [%s] zlib %s returns %s (%d), expected %s (zlib 1.3)\n", cas, zlibVersion(), nom(z), z,
                 nom(attendu_z));
     }
     if (verbeux)
@@ -146,18 +146,18 @@ static void controle(const char *cas, int condition)
     if (!condition)
     {
         nb_echecs++;
-        fprintf(stderr, "ÉCHEC [%s]\n", cas);
+        fprintf(stderr, "FAILED [%s]\n", cas);
     }
     else if (verbeux)
     {
         aligner(cas);
-        printf(" vérifié\n");
+        printf(" checked\n");
     }
 }
 
 static void erreur_env(const char *quoi)
 {
-    fprintf(stderr, "erreur : %s a échoué alors que l'appel est valide (environnement ?)\n", quoi);
+    fprintf(stderr, "error: %s failed although the call is valid (environment?)\n", quoi);
     exit(2);
 }
 
@@ -303,7 +303,7 @@ static void cas_constantes(void)
     size_t i;
     /* Les cas suivants comparent les codes numériquement : les constantes doivent coïncider. */
     for (i = 0; i < sizeof(c) / sizeof(c[0]); i++)
-        controle(cas_f("constante %s égale à celle de zlib", c[i].nom), c[i].m == c[i].z);
+        controle(cas_f("constant %s equal to zlib's", c[i].nom), c[i].m == c[i].z);
 }
 
 /* ------------------------------------------------------------------ initialisation */
@@ -316,35 +316,35 @@ static void cas_init_compression(void)
         int niveau, methode, fenetre, memoire, strategie, attendu_m, attendu_z;
         const char *ecart;
     } t[] = {
-        { "niveau -1 (défaut)", -1, 8, 15, 8, 0, MZ_OK, Z_OK, NULL },
-        { "niveau 0", 0, 8, 15, 8, 0, MZ_OK, Z_OK, NULL },
-        { "niveau 1", 1, 8, 15, 8, 0, MZ_OK, Z_OK, NULL },
-        { "niveau 9", 9, 8, 15, 8, 0, MZ_OK, Z_OK, NULL },
-        { "niveau 10", 10, 8, 15, 8, 0, MZ_OK, Z_STREAM_ERROR, "E3" },
-        { "niveau 11", 11, 8, 15, 8, 0, MZ_OK, Z_STREAM_ERROR, "E3" },
-        { "niveau -2", -2, 8, 15, 8, 0, MZ_OK, Z_STREAM_ERROR, "E3" },
-        { "méthode 7", 6, 7, 15, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "fenêtre -15 (Deflate brut)", 6, 8, -15, 8, 0, MZ_OK, Z_OK, NULL },
-        { "fenêtre 14", 6, 8, 14, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 9", 6, 8, 9, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 8", 6, 8, 8, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre -9", 6, 8, -9, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 31 (gzip)", 6, 8, 31, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 7", 6, 8, 7, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "fenêtre -8", 6, 8, -8, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "fenêtre 0", 6, 8, 0, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "fenêtre 16", 6, 8, 16, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "fenêtre -16", 6, 8, -16, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "level -1 (default)", -1, 8, 15, 8, 0, MZ_OK, Z_OK, NULL },
+        { "level 0", 0, 8, 15, 8, 0, MZ_OK, Z_OK, NULL },
+        { "level 1", 1, 8, 15, 8, 0, MZ_OK, Z_OK, NULL },
+        { "level 9", 9, 8, 15, 8, 0, MZ_OK, Z_OK, NULL },
+        { "level 10", 10, 8, 15, 8, 0, MZ_OK, Z_STREAM_ERROR, "E3" },
+        { "level 11", 11, 8, 15, 8, 0, MZ_OK, Z_STREAM_ERROR, "E3" },
+        { "level -2", -2, 8, 15, 8, 0, MZ_OK, Z_STREAM_ERROR, "E3" },
+        { "method 7", 6, 7, 15, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window -15 (raw Deflate)", 6, 8, -15, 8, 0, MZ_OK, Z_OK, NULL },
+        { "window 14", 6, 8, 14, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 9", 6, 8, 9, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 8", 6, 8, 8, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window -9", 6, 8, -9, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 31 (gzip)", 6, 8, 31, 8, 0, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 7", 6, 8, 7, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window -8", 6, 8, -8, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window 0", 6, 8, 0, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window 16", 6, 8, 16, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window -16", 6, 8, -16, 8, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
         { "mem_level 1", 6, 8, 15, 1, 0, MZ_OK, Z_OK, NULL },
         { "mem_level 9", 6, 8, 15, 9, 0, MZ_OK, Z_OK, NULL },
         { "mem_level 0", 6, 8, 15, 0, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
         { "mem_level 10", 6, 8, 15, 10, 0, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "stratégie MZ_FILTERED", 6, 8, 15, 8, MZ_FILTERED, MZ_OK, Z_OK, NULL },
-        { "stratégie MZ_HUFFMAN_ONLY", 6, 8, 15, 8, MZ_HUFFMAN_ONLY, MZ_OK, Z_OK, NULL },
-        { "stratégie MZ_RLE", 6, 8, 15, 8, MZ_RLE, MZ_OK, Z_OK, NULL },
-        { "stratégie MZ_FIXED", 6, 8, 15, 8, MZ_FIXED, MZ_OK, Z_OK, NULL },
-        { "stratégie 5", 6, 8, 15, 8, 5, MZ_OK, Z_STREAM_ERROR, "E3" },
-        { "stratégie -1", 6, 8, 15, 8, -1, MZ_OK, Z_STREAM_ERROR, "E3" },
+        { "strategy MZ_FILTERED", 6, 8, 15, 8, MZ_FILTERED, MZ_OK, Z_OK, NULL },
+        { "strategy MZ_HUFFMAN_ONLY", 6, 8, 15, 8, MZ_HUFFMAN_ONLY, MZ_OK, Z_OK, NULL },
+        { "strategy MZ_RLE", 6, 8, 15, 8, MZ_RLE, MZ_OK, Z_OK, NULL },
+        { "strategy MZ_FIXED", 6, 8, 15, 8, MZ_FIXED, MZ_OK, Z_OK, NULL },
+        { "strategy 5", 6, 8, 15, 8, 5, MZ_OK, Z_STREAM_ERROR, "E3" },
+        { "strategy -1", 6, 8, 15, 8, -1, MZ_OK, Z_STREAM_ERROR, "E3" },
     };
     size_t i;
     for (i = 0; i < sizeof(t) / sizeof(t[0]); i++)
@@ -362,14 +362,14 @@ static void cas_init_compression(void)
             /* Un paramètre accepté doit donner un flux valide. */
             mz_tampons(&m, donnees, 20000, sortie_m, sizeof(sortie_m));
             cm = mz_deflate(&m, MZ_FINISH);
-            controle(cas_f("mz_deflateInit2 %s : flux de miniz relu par zlib", t[i].cas),
+            controle(cas_f("mz_deflateInit2 %s: miniz's stream read back by zlib", t[i].cas),
                      cm == MZ_STREAM_END && relu_par_zlib(sortie_m, m.total_out, t[i].fenetre, donnees, 20000));
             mz_deflateEnd(&m);
         }
         if (cz == Z_OK)
             deflateEnd(&z);
     }
-    IDEM("mz_deflateInit2 flux nul", mz_deflateInit2(NULL, 6, MZ_DEFLATED, 15, 8, 0), deflateInit2(NULL, 6, Z_DEFLATED, 15, 8, 0),
+    IDEM("mz_deflateInit2 null stream", mz_deflateInit2(NULL, 6, MZ_DEFLATED, 15, 8, 0), deflateInit2(NULL, 6, Z_DEFLATED, 15, 8, 0),
          MZ_STREAM_ERROR);
 }
 
@@ -381,19 +381,19 @@ static void cas_init_decompression(void)
         int fenetre, attendu_m, attendu_z;
         const char *ecart;
     } t[] = {
-        { "fenêtre 15", 15, MZ_OK, Z_OK, NULL },
-        { "fenêtre -15 (Deflate brut)", -15, MZ_OK, Z_OK, NULL },
-        { "fenêtre 8", 8, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 14", 14, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre -8", -8, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 0 (taille lue dans l'en-tête)", 0, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 16 (gzip)", 16, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 31 (gzip)", 31, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 47 (détection automatique)", 47, MZ_PARAM_ERROR, Z_OK, "E2" },
-        { "fenêtre 7", 7, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "fenêtre -7", -7, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "fenêtre -16", -16, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
-        { "fenêtre 48", 48, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window 15", 15, MZ_OK, Z_OK, NULL },
+        { "window -15 (raw Deflate)", -15, MZ_OK, Z_OK, NULL },
+        { "window 8", 8, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 14", 14, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window -8", -8, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 0 (size read from the header)", 0, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 16 (gzip)", 16, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 31 (gzip)", 31, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 47 (automatic detection)", 47, MZ_PARAM_ERROR, Z_OK, "E2" },
+        { "window 7", 7, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window -7", -7, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window -16", -16, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
+        { "window 48", 48, MZ_PARAM_ERROR, Z_STREAM_ERROR, "E1" },
     };
     size_t i;
     for (i = 0; i < sizeof(t) / sizeof(t[0]); i++)
@@ -412,14 +412,14 @@ static void cas_init_decompression(void)
             size_t n = t[i].fenetre > 0 ? n_flux_zlib : n_flux_brut;
             mz_tampons(&m, src, n, sortie_m, sizeof(sortie_m));
             cm = mz_inflate(&m, MZ_FINISH);
-            controle(cas_f("mz_inflateInit2 %s : flux de zlib décompressé", t[i].cas),
+            controle(cas_f("mz_inflateInit2 %s: zlib's stream decompressed", t[i].cas),
                      cm == MZ_STREAM_END && m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
             mz_inflateEnd(&m);
         }
         if (cz == Z_OK)
             inflateEnd(&z);
     }
-    IDEM("mz_inflateInit2 flux nul", mz_inflateInit2(NULL, 15), inflateInit2(NULL, 15), MZ_STREAM_ERROR);
+    IDEM("mz_inflateInit2 null stream", mz_inflateInit2(NULL, 15), inflateInit2(NULL, 15), MZ_STREAM_ERROR);
 }
 
 /* ------------------------------------------------------------------ allocateurs */
@@ -471,9 +471,9 @@ static void cas_allocateurs(void)
     memset(&z, 0, sizeof(z));
     m.zalloc = mz_allouer, m.zfree = mz_liberer, m.opaque = &compte;
     z.zalloc = z_allouer, z.zfree = z_liberer, z.opaque = &compte;
-    IDEM("mz_deflateInit2 allocation refusée", mz_deflateInit2(&m, 6, MZ_DEFLATED, 15, 8, 0), deflateInit2(&z, 6, Z_DEFLATED, 15, 8, 0),
+    IDEM("mz_deflateInit2 allocation refused", mz_deflateInit2(&m, 6, MZ_DEFLATED, 15, 8, 0), deflateInit2(&z, 6, Z_DEFLATED, 15, 8, 0),
          MZ_MEM_ERROR);
-    IDEM("mz_inflateInit2 allocation refusée", mz_inflateInit2(&m, 15), inflateInit2(&z, 15), MZ_MEM_ERROR);
+    IDEM("mz_inflateInit2 allocation refused", mz_inflateInit2(&m, 15), inflateInit2(&z, 15), MZ_MEM_ERROR);
 
     /* Allocateur de l'appelant : opaque transmis, chaque allocation libérée par mz_*End. */
     compte.refuser = 0;
@@ -483,7 +483,7 @@ static void cas_allocateurs(void)
     mz_tampons(&m, donnees, TAILLE, sortie_m, sizeof(sortie_m));
     cz = mz_deflate(&m, MZ_FINISH);
     mz_deflateEnd(&m);
-    controle("compression avec l'allocateur de l'appelant : opaque transmis, tout libéré",
+    controle("compression with the caller's allocator: opaque passed on, everything freed",
              cm == MZ_OK && cz == MZ_STREAM_END && compte.allocations > 0 && compte.allocations == compte.liberations &&
                  !compte.mauvais_opaque);
     memset(&compte, 0, sizeof(compte));
@@ -493,7 +493,7 @@ static void cas_allocateurs(void)
     mz_tampons(&m, flux_zlib, n_flux_zlib, sortie_m, sizeof(sortie_m));
     cz = mz_inflate(&m, MZ_FINISH);
     mz_inflateEnd(&m);
-    controle("décompression avec l'allocateur de l'appelant : opaque transmis, tout libéré",
+    controle("decompression with the caller's allocator: opaque passed on, everything freed",
              cm == MZ_OK && cz == MZ_STREAM_END && compte.allocations > 0 && compte.allocations == compte.liberations &&
                  !compte.mauvais_opaque);
 }
@@ -515,20 +515,20 @@ static void cas_deflate(void)
     z_ouvrir_def(&z, 6, 15);
     mz_tampons(&m, donnees, TAILLE, NULL, 100);
     z_tampons(&z, donnees, TAILLE, NULL, 100);
-    IDEM("mz_deflate flux nul", mz_deflate(NULL, MZ_NO_FLUSH), deflate(NULL, Z_NO_FLUSH), MZ_STREAM_ERROR);
-    IDEM("mz_deflate sans next_out", mz_deflate(&m, MZ_NO_FLUSH), deflate(&z, Z_NO_FLUSH), MZ_STREAM_ERROR);
+    IDEM("mz_deflate null stream", mz_deflate(NULL, MZ_NO_FLUSH), deflate(NULL, Z_NO_FLUSH), MZ_STREAM_ERROR);
+    IDEM("mz_deflate without next_out", mz_deflate(&m, MZ_NO_FLUSH), deflate(&z, Z_NO_FLUSH), MZ_STREAM_ERROR);
     m.avail_out = z.avail_out = 0;
-    IDEM("mz_deflate sans next_out, avail_out = 0", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_ERROR);
+    IDEM("mz_deflate without next_out, avail_out = 0", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_ERROR);
     m.next_out = sortie_m, z.next_out = sortie_z;
     IDEM("mz_deflate avail_out = 0", mz_deflate(&m, MZ_NO_FLUSH), deflate(&z, Z_NO_FLUSH), MZ_BUF_ERROR);
     IDEM("mz_deflate avail_out = 0, MZ_FINISH", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_BUF_ERROR);
     m.avail_out = z.avail_out = sizeof(sortie_m);
-    IDEM("mz_deflate vidage -1", mz_deflate(&m, -1), deflate(&z, -1), MZ_STREAM_ERROR);
-    IDEM("mz_deflate vidage 6", mz_deflate(&m, 6), deflate(&z, 6), MZ_STREAM_ERROR);
-    controle("mz_deflate après les appels refusés : rien consommé ni produit",
+    IDEM("mz_deflate flush -1", mz_deflate(&m, -1), deflate(&z, -1), MZ_STREAM_ERROR);
+    IDEM("mz_deflate flush 6", mz_deflate(&m, 6), deflate(&z, 6), MZ_STREAM_ERROR);
+    controle("mz_deflate after the refused calls: nothing consumed or produced",
              m.total_in == 0 && m.total_out == 0 && m.avail_in == TAILLE && m.next_in == donnees);
-    IDEM("mz_deflate MZ_FINISH après les appels refusés", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_END);
-    controle("mz_deflate après les appels refusés : sortie identique à mz_compress2",
+    IDEM("mz_deflate MZ_FINISH after the refused calls", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_END);
+    controle("mz_deflate after the refused calls: output identical to mz_compress2's",
              m.total_out == n_ref && memcmp(sortie_m, reference, n_ref) == 0);
     mz_deflateEnd(&m);
     deflateEnd(&z);
@@ -537,9 +537,9 @@ static void cas_deflate(void)
     z_ouvrir_def(&z, 6, 15);
     mz_tampons(&m, donnees, TAILLE, sortie_m, sizeof(sortie_m));
     z_tampons(&z, donnees, TAILLE, sortie_z, sizeof(sortie_z));
-    ECART("mz_deflate vidage MZ_BLOCK", mz_deflate(&m, MZ_BLOCK), MZ_STREAM_ERROR, deflate(&z, Z_BLOCK), Z_OK, "E4");
-    controle("mz_deflate après MZ_BLOCK refusé : rien consommé ni produit", m.total_in == 0 && m.total_out == 0);
-    ECART("mz_deflateEnd sur un flux inachevé", mz_deflateEnd(&m), MZ_OK, deflateEnd(&z), Z_DATA_ERROR, "E10");
+    ECART("mz_deflate flush MZ_BLOCK", mz_deflate(&m, MZ_BLOCK), MZ_STREAM_ERROR, deflate(&z, Z_BLOCK), Z_OK, "E4");
+    controle("mz_deflate after the refused MZ_BLOCK: nothing consumed or produced", m.total_in == 0 && m.total_out == 0);
+    ECART("mz_deflateEnd on an unfinished stream", mz_deflateEnd(&m), MZ_OK, deflateEnd(&z), Z_DATA_ERROR, "E10");
 
     /* Vidage au milieu de l'entrée ; miniz traite MZ_PARTIAL_FLUSH comme MZ_SYNC_FLUSH (même sortie). */
     for (i = 0; i < 3; i++)
@@ -550,14 +550,14 @@ static void cas_deflate(void)
         z_ouvrir_def(&z, 6, 15);
         mz_tampons(&m, donnees, TAILLE / 2, sortie_m, sizeof(sortie_m));
         z_tampons(&z, donnees, TAILLE / 2, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("mz_deflate %s au milieu de l'entrée", noms[i]), mz_deflate(&m, vidages[i]), deflate(&z, vidages[i]), MZ_OK);
+        IDEM(cas_f("mz_deflate %s in the middle of the input", noms[i]), mz_deflate(&m, vidages[i]), deflate(&z, vidages[i]), MZ_OK);
         m.avail_in = z.avail_in = TAILLE - TAILLE / 2;
-        IDEM(cas_f("mz_deflate %s, puis MZ_FINISH", noms[i]), mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_END);
-        controle(cas_f("mz_deflate %s : flux de miniz relu par zlib", noms[i]), relu_par_zlib(sortie_m, m.total_out, 15, donnees, TAILLE));
+        IDEM(cas_f("mz_deflate %s, then MZ_FINISH", noms[i]), mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_END);
+        controle(cas_f("mz_deflate %s: miniz's stream read back by zlib", noms[i]), relu_par_zlib(sortie_m, m.total_out, 15, donnees, TAILLE));
         if (vidages[i] == MZ_SYNC_FLUSH)
             memcpy(reference, sortie_m, n_sync = m.total_out);
         else if (vidages[i] == MZ_PARTIAL_FLUSH)
-            controle("mz_deflate MZ_PARTIAL_FLUSH : même sortie que MZ_SYNC_FLUSH", m.total_out == n_sync && !memcmp(sortie_m, reference, n_sync));
+            controle("mz_deflate MZ_PARTIAL_FLUSH: same output as MZ_SYNC_FLUSH", m.total_out == n_sync && !memcmp(sortie_m, reference, n_sync));
         mz_deflateEnd(&m);
         deflateEnd(&z);
     }
@@ -567,31 +567,31 @@ static void cas_deflate(void)
     z_ouvrir_def(&z, 6, 15);
     mz_tampons(&m, donnees, 0, sortie_m, sizeof(sortie_m));
     z_tampons(&z, donnees, 0, sortie_z, sizeof(sortie_z));
-    ECART("mz_deflate premier appel sans entrée ni vidage", mz_deflate(&m, MZ_NO_FLUSH), MZ_BUF_ERROR, deflate(&z, Z_NO_FLUSH), Z_OK, "E5");
-    IDEM("mz_deflate deuxième appel sans entrée ni vidage", mz_deflate(&m, MZ_NO_FLUSH), deflate(&z, Z_NO_FLUSH), MZ_BUF_ERROR);
-    IDEM("mz_deflate MZ_SYNC_FLUSH sans entrée", mz_deflate(&m, MZ_SYNC_FLUSH), deflate(&z, Z_SYNC_FLUSH), MZ_OK);
+    ECART("mz_deflate first call without input or flush", mz_deflate(&m, MZ_NO_FLUSH), MZ_BUF_ERROR, deflate(&z, Z_NO_FLUSH), Z_OK, "E5");
+    IDEM("mz_deflate second call without input or flush", mz_deflate(&m, MZ_NO_FLUSH), deflate(&z, Z_NO_FLUSH), MZ_BUF_ERROR);
+    IDEM("mz_deflate MZ_SYNC_FLUSH without input", mz_deflate(&m, MZ_SYNC_FLUSH), deflate(&z, Z_SYNC_FLUSH), MZ_OK);
     avant = m.total_out;
-    ECART("mz_deflate MZ_SYNC_FLUSH répété sans entrée", mz_deflate(&m, MZ_SYNC_FLUSH), MZ_OK, deflate(&z, Z_SYNC_FLUSH), Z_BUF_ERROR,
+    ECART("mz_deflate MZ_SYNC_FLUSH repeated without input", mz_deflate(&m, MZ_SYNC_FLUSH), MZ_OK, deflate(&z, Z_SYNC_FLUSH), Z_BUF_ERROR,
           "E6");
-    controle("mz_deflate MZ_SYNC_FLUSH répété sans entrée : un nouveau bloc vide émis", m.total_out > avant);
-    IDEM("mz_deflate MZ_FULL_FLUSH sans entrée", mz_deflate(&m, MZ_FULL_FLUSH), deflate(&z, Z_FULL_FLUSH), MZ_OK);
-    IDEM("mz_deflate MZ_FINISH sans entrée", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_END);
-    controle("mz_deflate sans entrée : flux vide de miniz relu par zlib", relu_par_zlib(sortie_m, m.total_out, 15, donnees, 0));
-    IDEM("mz_deflate après la fin : MZ_FINISH", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_END);
-    ECART("mz_deflate après la fin : MZ_NO_FLUSH", mz_deflate(&m, MZ_NO_FLUSH), MZ_BUF_ERROR, deflate(&z, Z_NO_FLUSH), Z_STREAM_ERROR,
+    controle("mz_deflate MZ_SYNC_FLUSH repeated without input: a new empty block emitted", m.total_out > avant);
+    IDEM("mz_deflate MZ_FULL_FLUSH without input", mz_deflate(&m, MZ_FULL_FLUSH), deflate(&z, Z_FULL_FLUSH), MZ_OK);
+    IDEM("mz_deflate MZ_FINISH without input", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_END);
+    controle("mz_deflate without input: miniz's empty stream read back by zlib", relu_par_zlib(sortie_m, m.total_out, 15, donnees, 0));
+    IDEM("mz_deflate after the end: MZ_FINISH", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_END);
+    ECART("mz_deflate after the end: MZ_NO_FLUSH", mz_deflate(&m, MZ_NO_FLUSH), MZ_BUF_ERROR, deflate(&z, Z_NO_FLUSH), Z_STREAM_ERROR,
           "E7");
-    ECART("mz_deflate après la fin : MZ_SYNC_FLUSH", mz_deflate(&m, MZ_SYNC_FLUSH), MZ_BUF_ERROR, deflate(&z, Z_SYNC_FLUSH),
+    ECART("mz_deflate after the end: MZ_SYNC_FLUSH", mz_deflate(&m, MZ_SYNC_FLUSH), MZ_BUF_ERROR, deflate(&z, Z_SYNC_FLUSH),
           Z_STREAM_ERROR, "E7");
     m.avail_in = z.avail_in = 10;
-    ECART("mz_deflate après la fin : MZ_FINISH avec une nouvelle entrée", mz_deflate(&m, MZ_FINISH), MZ_STREAM_END,
+    ECART("mz_deflate after the end: MZ_FINISH with a new input", mz_deflate(&m, MZ_FINISH), MZ_STREAM_END,
           deflate(&z, Z_FINISH), Z_BUF_ERROR, "E7");
-    controle("mz_deflate après la fin : nouvelle entrée non consommée", m.avail_in == 10 && m.total_in == 0);
+    controle("mz_deflate after the end: new input not consumed", m.avail_in == 10 && m.total_in == 0);
     m.avail_out = z.avail_out = 0;
-    IDEM("mz_deflate après la fin : avail_out = 0", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_BUF_ERROR);
-    IDEM("mz_deflateEnd après la fin", mz_deflateEnd(&m), deflateEnd(&z), MZ_OK);
-    IDEM("mz_deflate après mz_deflateEnd", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_ERROR);
-    ECART("mz_deflateEnd deux fois", mz_deflateEnd(&m), MZ_OK, deflateEnd(&z), Z_STREAM_ERROR, "E10");
-    IDEM("mz_deflateEnd flux nul", mz_deflateEnd(NULL), deflateEnd(NULL), MZ_STREAM_ERROR);
+    IDEM("mz_deflate after the end: avail_out = 0", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_BUF_ERROR);
+    IDEM("mz_deflateEnd after the end", mz_deflateEnd(&m), deflateEnd(&z), MZ_OK);
+    IDEM("mz_deflate after mz_deflateEnd", mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH), MZ_STREAM_ERROR);
+    ECART("mz_deflateEnd twice", mz_deflateEnd(&m), MZ_OK, deflateEnd(&z), Z_STREAM_ERROR, "E10");
+    IDEM("mz_deflateEnd null stream", mz_deflateEnd(NULL), deflateEnd(NULL), MZ_STREAM_ERROR);
 }
 
 /* ------------------------------------------------------------------ mz_compress2, mz_compress */
@@ -603,61 +603,61 @@ static void cas_compress(void)
     size_t i;
 
     lm = mz_compressBound(TAILLE), lz = compressBound(TAILLE);
-    IDEM("mz_compress2 tampon de mz_compressBound", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6),
+    IDEM("mz_compress2 buffer of mz_compressBound", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6),
          compress2(sortie_z, &lz, donnees, TAILLE, 6), MZ_OK);
     exact_m = lm, exact_z = lz;
-    IDEM("mz_compress2 tampon de taille exacte", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), compress2(sortie_z, &lz, donnees, TAILLE, 6),
+    IDEM("mz_compress2 buffer of the exact size", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), compress2(sortie_z, &lz, donnees, TAILLE, 6),
          MZ_OK);
-    controle("mz_compress2 tampon de taille exacte : taille rendue", lm == exact_m);
+    controle("mz_compress2 buffer of the exact size: size returned", lm == exact_m);
     lm = exact_m - 1, lz = exact_z - 1;
-    IDEM("mz_compress2 taille exacte - 1", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), compress2(sortie_z, &lz, donnees, TAILLE, 6),
+    IDEM("mz_compress2 exact size - 1", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), compress2(sortie_z, &lz, donnees, TAILLE, 6),
          MZ_BUF_ERROR);
     lm = exact_m / 2, lz = exact_z / 2;
-    IDEM("mz_compress2 moitié de la taille exacte", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6),
+    IDEM("mz_compress2 half the exact size", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6),
          compress2(sortie_z, &lz, donnees, TAILLE, 6), MZ_BUF_ERROR);
     lm = lz = 1;
-    IDEM("mz_compress2 tampon de 1 octet", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), compress2(sortie_z, &lz, donnees, TAILLE, 6),
+    IDEM("mz_compress2 buffer of 1 byte", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), compress2(sortie_z, &lz, donnees, TAILLE, 6),
          MZ_BUF_ERROR);
     lm = lz = 0;
-    IDEM("mz_compress2 tampon de 0 octet", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), compress2(sortie_z, &lz, donnees, TAILLE, 6),
+    IDEM("mz_compress2 buffer of 0 bytes", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), compress2(sortie_z, &lz, donnees, TAILLE, 6),
          MZ_BUF_ERROR);
     lm = lz = 0;
-    IDEM("mz_compress2 sans tampon de sortie", mz_compress2(NULL, &lm, donnees, TAILLE, 6), compress2(NULL, &lz, donnees, TAILLE, 6),
+    IDEM("mz_compress2 without output buffer", mz_compress2(NULL, &lm, donnees, TAILLE, 6), compress2(NULL, &lz, donnees, TAILLE, 6),
          MZ_STREAM_ERROR);
 
     lm = lz = sizeof(sortie_m);
-    IDEM("mz_compress2 entrée vide", mz_compress2(sortie_m, &lm, donnees, 0, 6), compress2(sortie_z, &lz, donnees, 0, 6), MZ_OK);
-    controle("mz_compress2 entrée vide : flux relu par zlib", relu_par_zlib(sortie_m, lm, 15, donnees, 0));
+    IDEM("mz_compress2 empty input", mz_compress2(sortie_m, &lm, donnees, 0, 6), compress2(sortie_z, &lz, donnees, 0, 6), MZ_OK);
+    controle("mz_compress2 empty input: stream read back by zlib", relu_par_zlib(sortie_m, lm, 15, donnees, 0));
     lm = lm - 1, lz = lz - 1;
-    IDEM("mz_compress2 entrée vide, taille exacte - 1", mz_compress2(sortie_m, &lm, donnees, 0, 6), compress2(sortie_z, &lz, donnees, 0, 6),
+    IDEM("mz_compress2 empty input, exact size - 1", mz_compress2(sortie_m, &lm, donnees, 0, 6), compress2(sortie_z, &lz, donnees, 0, 6),
          MZ_BUF_ERROR);
 
     n_moins_1 = lz = sizeof(reference);
-    IDEM("mz_compress2 niveau -1", mz_compress2(reference, &n_moins_1, donnees, TAILLE, -1), compress2(sortie_z, &lz, donnees, TAILLE, -1),
+    IDEM("mz_compress2 level -1", mz_compress2(reference, &n_moins_1, donnees, TAILLE, -1), compress2(sortie_z, &lz, donnees, TAILLE, -1),
          MZ_OK);
     for (i = 0; i < sizeof(niveaux_hors_zlib) / sizeof(niveaux_hors_zlib[0]); i++)
     {
         int niveau = niveaux_hors_zlib[i];
         lm = lz = sizeof(sortie_m);
-        ECART(cas_f("mz_compress2 niveau %d", niveau), mz_compress2(sortie_m, &lm, donnees, TAILLE, niveau), MZ_OK,
+        ECART(cas_f("mz_compress2 level %d", niveau), mz_compress2(sortie_m, &lm, donnees, TAILLE, niveau), MZ_OK,
               compress2(sortie_z, &lz, donnees, TAILLE, niveau), Z_STREAM_ERROR, "E3");
-        controle(cas_f("mz_compress2 niveau %d : flux relu par zlib", niveau), relu_par_zlib(sortie_m, lm, 15, donnees, TAILLE));
+        controle(cas_f("mz_compress2 level %d: stream read back by zlib", niveau), relu_par_zlib(sortie_m, lm, 15, donnees, TAILLE));
     }
-    controle("mz_compress2 niveau -2 : même sortie qu'au niveau -1", lm == n_moins_1 && memcmp(sortie_m, reference, lm) == 0);
+    controle("mz_compress2 level -2: same output as at level -1", lm == n_moins_1 && memcmp(sortie_m, reference, lm) == 0);
 
     lm = lz = sizeof(sortie_m);
-    IDEM("mz_compress tampon suffisant", mz_compress(sortie_m, &lm, donnees, TAILLE), compress(sortie_z, &lz, donnees, TAILLE), MZ_OK);
+    IDEM("mz_compress buffer large enough", mz_compress(sortie_m, &lm, donnees, TAILLE), compress(sortie_z, &lz, donnees, TAILLE), MZ_OK);
     lm = lm - 1, lz = lz - 1;
-    IDEM("mz_compress taille exacte - 1", mz_compress(sortie_m, &lm, donnees, TAILLE), compress(sortie_z, &lz, donnees, TAILLE), MZ_BUF_ERROR);
+    IDEM("mz_compress exact size - 1", mz_compress(sortie_m, &lm, donnees, TAILLE), compress(sortie_z, &lz, donnees, TAILLE), MZ_BUF_ERROR);
 
     if (sizeof(mz_ulong) > 4)
     {
         /* Longueur de sortie annoncée de 2^32 octets : miniz refuse avant tout accès ; zlib n'écrit que le
            flux produit, qui tient dans le tampon réel (mz_compressBound). */
         lm = lz = (mz_ulong)0xFFFFFFFFu + 1u;
-        ECART("mz_compress2 longueur de sortie de 2^32 octets", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), MZ_PARAM_ERROR,
+        ECART("mz_compress2 output length of 2^32 bytes", mz_compress2(sortie_m, &lm, donnees, TAILLE, 6), MZ_PARAM_ERROR,
               compress2(sortie_z, &lz, donnees, TAILLE, 6), Z_OK, "E11");
-        controle("mz_compress2 longueur de 2^32 octets : longueur inchangée", lm == (mz_ulong)0xFFFFFFFFu + 1u);
+        controle("mz_compress2 length of 2^32 bytes: length unchanged", lm == (mz_ulong)0xFFFFFFFFu + 1u);
     }
 }
 
@@ -672,54 +672,54 @@ static void cas_uncompress(void)
     size_t i;
 
     lm = lz = TAILLE;
-    IDEM("mz_uncompress taille exacte", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib), uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib),
+    IDEM("mz_uncompress exact size", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib), uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib),
          MZ_OK);
-    controle("mz_uncompress taille exacte : sortie et taille", lm == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
+    controle("mz_uncompress exact size: output and size", lm == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
     lm = lz = TAILLE + 100;
-    IDEM("mz_uncompress tampon plus grand", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib),
+    IDEM("mz_uncompress larger buffer", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib),
          uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib), MZ_OK);
-    controle("mz_uncompress tampon plus grand : taille rendue égale à celle de zlib", lm == TAILLE && lz == TAILLE);
+    controle("mz_uncompress larger buffer: size returned equal to zlib's", lm == TAILLE && lz == TAILLE);
     lm = lz = TAILLE - 1;
-    IDEM("mz_uncompress taille exacte - 1", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib),
+    IDEM("mz_uncompress exact size - 1", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib),
          uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib), MZ_BUF_ERROR);
     lm = lz = TAILLE / 2;
-    IDEM("mz_uncompress moitié de la taille", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib),
+    IDEM("mz_uncompress half the size", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib),
          uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib), MZ_BUF_ERROR);
     lm = lz = 1;
-    IDEM("mz_uncompress tampon de 1 octet", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib),
+    IDEM("mz_uncompress buffer of 1 byte", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib),
          uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib), MZ_BUF_ERROR);
     lm = lz = 0;
-    ECART("mz_uncompress tampon de 0 octet", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib), MZ_BUF_ERROR,
+    ECART("mz_uncompress buffer of 0 bytes", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib), MZ_BUF_ERROR,
           uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib), Z_DATA_ERROR, "E12");
 
     /* Flux d'une entrée vide. */
     if (compress2(vide, &n_vide, donnees, 0, 6) != Z_OK)
         erreur_env("compress2");
     lm = lz = 0;
-    IDEM("mz_uncompress flux vide, tampon de 0 octet", mz_uncompress(sortie_m, &lm, vide, n_vide), uncompress(sortie_z, &lz, vide, n_vide),
+    IDEM("mz_uncompress empty stream, buffer of 0 bytes", mz_uncompress(sortie_m, &lm, vide, n_vide), uncompress(sortie_z, &lz, vide, n_vide),
          MZ_OK);
-    controle("mz_uncompress flux vide : taille 0", lm == 0);
+    controle("mz_uncompress empty stream: size 0", lm == 0);
 
     /* Données après la fin du flux : ignorées, et mz_uncompress2 rend les octets consommés. */
     memcpy(copie, flux_zlib, n_flux_zlib);
     memset(copie + n_flux_zlib, 0xA5, 16);
     lm = lz = TAILLE, sm = sz = n_flux_zlib + 16;
-    IDEM("mz_uncompress2 données après la fin du flux", mz_uncompress2(sortie_m, &lm, copie, &sm), uncompress2(sortie_z, &lz, copie, &sz),
+    IDEM("mz_uncompress2 data after the end of the stream", mz_uncompress2(sortie_m, &lm, copie, &sm), uncompress2(sortie_z, &lz, copie, &sz),
          MZ_OK);
-    controle("mz_uncompress2 données après la fin du flux : octets consommés égaux à ceux de zlib", sm == n_flux_zlib && sm == sz);
+    controle("mz_uncompress2 data after the end of the stream: bytes consumed equal to zlib's", sm == n_flux_zlib && sm == sz);
     lm = lz = TAILLE, sm = sz = n_flux_zlib;
-    IDEM("mz_uncompress2 taille exacte", mz_uncompress2(sortie_m, &lm, flux_zlib, &sm), uncompress2(sortie_z, &lz, flux_zlib, &sz), MZ_OK);
-    controle("mz_uncompress2 taille exacte : octets consommés", sm == n_flux_zlib && sz == n_flux_zlib);
+    IDEM("mz_uncompress2 exact size", mz_uncompress2(sortie_m, &lm, flux_zlib, &sm), uncompress2(sortie_z, &lz, flux_zlib, &sz), MZ_OK);
+    controle("mz_uncompress2 exact size: bytes consumed", sm == n_flux_zlib && sz == n_flux_zlib);
 
     /* Entrée tronquée, avec une sortie d'un octet de plus que nécessaire (voir [E12] pour une sortie pile). */
     for (i = 0; i < sizeof(troncatures) / sizeof(troncatures[0]); i++)
     {
         lm = lz = TAILLE + 1;
-        IDEM(cas_f("mz_uncompress entrée tronquée à %lu octets sur %lu", troncatures[i], n_flux_zlib),
+        IDEM(cas_f("mz_uncompress input truncated to %lu bytes of %lu", troncatures[i], n_flux_zlib),
              mz_uncompress(sortie_m, &lm, flux_zlib, troncatures[i]), uncompress(sortie_z, &lz, flux_zlib, troncatures[i]), MZ_DATA_ERROR);
     }
     lm = lz = TAILLE;
-    ECART("mz_uncompress Adler-32 tronqué, sortie remplie pile", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib - 4), MZ_DATA_ERROR,
+    ECART("mz_uncompress truncated Adler-32, output filled exactly", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib - 4), MZ_DATA_ERROR,
           uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib - 4), Z_BUF_ERROR, "E12");
     /* Bloc stocké tronqué : en-tête zlib (2 octets) et du bloc (5 octets), puis 1000 octets de données ;
        la sortie de 1000 octets se remplit pile quand l'entrée s'épuise. */
@@ -727,43 +727,43 @@ static void cas_uncompress(void)
         (flux_stocke[3] | flux_stocke[4] << 8) >= 1000)
     {
         lm = lz = 1000;
-        ECART("mz_uncompress bloc stocké tronqué, sortie remplie pile", mz_uncompress(sortie_m, &lm, flux_stocke, 7 + 1000), MZ_DATA_ERROR,
+        ECART("mz_uncompress truncated stored block, output filled exactly", mz_uncompress(sortie_m, &lm, flux_stocke, 7 + 1000), MZ_DATA_ERROR,
               uncompress(sortie_z, &lz, flux_stocke, 7 + 1000), Z_BUF_ERROR, "E12");
     }
     else
     {
         nb_avertissements++;
-        fprintf(stderr, "AVERTISSEMENT : zlib %s ne commence pas le niveau 0 par un bloc stocké ; cas sauté\n", zlibVersion());
+        fprintf(stderr, "WARNING: zlib %s does not start level 0 with a stored block; case skipped\n", zlibVersion());
     }
     lm = lz = 100;
-    IDEM("mz_uncompress entrée tronquée et sortie trop petite", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib / 2),
+    IDEM("mz_uncompress truncated input and output too small", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib / 2),
          uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib / 2), MZ_BUF_ERROR);
 
     /* Entrée altérée. */
     memcpy(copie, flux_zlib, n_flux_zlib);
     copie[1] ^= 1;
     lm = lz = TAILLE;
-    IDEM("mz_uncompress somme de l'en-tête fausse", mz_uncompress(sortie_m, &lm, copie, n_flux_zlib),
+    IDEM("mz_uncompress wrong header checksum", mz_uncompress(sortie_m, &lm, copie, n_flux_zlib),
          uncompress(sortie_z, &lz, copie, n_flux_zlib), MZ_DATA_ERROR);
     memcpy(copie, flux_zlib, n_flux_zlib);
     copie[n_flux_zlib - 1] ^= 1;
     lm = lz = TAILLE;
-    IDEM("mz_uncompress Adler-32 faux", mz_uncompress(sortie_m, &lm, copie, n_flux_zlib), uncompress(sortie_z, &lz, copie, n_flux_zlib),
+    IDEM("mz_uncompress wrong Adler-32", mz_uncompress(sortie_m, &lm, copie, n_flux_zlib), uncompress(sortie_z, &lz, copie, n_flux_zlib),
          MZ_DATA_ERROR);
     /* En-tête 78 20 : bit FDICT, suivi de l'identifiant (4 octets) d'un dictionnaire. */
     copie[0] = 0x78, copie[1] = 0x20, copie[2] = 0x12, copie[3] = 0x34, copie[4] = 0x56, copie[5] = 0x78;
     memcpy(copie + 6, flux_zlib + 2, n_flux_zlib - 2);
     lm = lz = TAILLE;
-    IDEM("mz_uncompress en-tête avec dictionnaire prédéfini", mz_uncompress(sortie_m, &lm, copie, n_flux_zlib + 4),
+    IDEM("mz_uncompress header with a preset dictionary", mz_uncompress(sortie_m, &lm, copie, n_flux_zlib + 4),
          uncompress(sortie_z, &lz, copie, n_flux_zlib + 4), MZ_DATA_ERROR);
 
     if (sizeof(mz_ulong) > 4)
     {
         /* Comme pour mz_compress2 : zlib n'écrit que les TAILLE octets décompressés. */
         lm = lz = (mz_ulong)0xFFFFFFFFu + 1u;
-        ECART("mz_uncompress longueur de sortie de 2^32 octets", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib), MZ_PARAM_ERROR,
+        ECART("mz_uncompress output length of 2^32 bytes", mz_uncompress(sortie_m, &lm, flux_zlib, n_flux_zlib), MZ_PARAM_ERROR,
               uncompress(sortie_z, &lz, flux_zlib, n_flux_zlib), Z_OK, "E11");
-        controle("mz_uncompress longueur de 2^32 octets : longueur inchangée", lm == (mz_ulong)0xFFFFFFFFu + 1u);
+        controle("mz_uncompress length of 2^32 bytes: length unchanged", lm == (mz_ulong)0xFFFFFFFFu + 1u);
     }
 }
 
@@ -777,7 +777,7 @@ static void cas_deflate_reset(void)
     } v[] = { { 6, 15 }, { 1, 15 }, { 9, -15 } };
     size_t i;
 
-    IDEM("mz_deflateReset flux nul", mz_deflateReset(NULL), deflateReset(NULL), MZ_STREAM_ERROR);
+    IDEM("mz_deflateReset null stream", mz_deflateReset(NULL), deflateReset(NULL), MZ_STREAM_ERROR);
     for (i = 0; i < sizeof(v) / sizeof(v[0]); i++)
     {
         mz_stream m;
@@ -797,15 +797,15 @@ static void cas_deflate_reset(void)
         z_ouvrir_def(&z, niveau, fenetre);
         mz_tampons(&m, donnees, TAILLE, sortie_m, sizeof(sortie_m));
         z_tampons(&z, donnees, TAILLE, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("niveau %d fenêtre %d : mz_deflate MZ_FINISH", niveau, fenetre), mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH),
+        IDEM(cas_f("level %d window %d: mz_deflate MZ_FINISH", niveau, fenetre), mz_deflate(&m, MZ_FINISH), deflate(&z, Z_FINISH),
              MZ_STREAM_END);
-        IDEM(cas_f("niveau %d fenêtre %d : mz_deflateReset après la fin", niveau, fenetre), mz_deflateReset(&m), deflateReset(&z), MZ_OK);
-        controle(cas_f("niveau %d fenêtre %d : total_in et total_out remis à zéro", niveau, fenetre), m.total_in == 0 && m.total_out == 0);
+        IDEM(cas_f("level %d window %d: mz_deflateReset after the end", niveau, fenetre), mz_deflateReset(&m), deflateReset(&z), MZ_OK);
+        controle(cas_f("level %d window %d: total_in and total_out reset to zero", niveau, fenetre), m.total_in == 0 && m.total_out == 0);
         mz_tampons(&m, donnees, TAILLE, sortie_m, sizeof(sortie_m));
         z_tampons(&z, donnees, TAILLE, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("niveau %d fenêtre %d : MZ_FINISH après mz_deflateReset", niveau, fenetre), mz_deflate(&m, MZ_FINISH),
+        IDEM(cas_f("level %d window %d: MZ_FINISH after mz_deflateReset", niveau, fenetre), mz_deflate(&m, MZ_FINISH),
              deflate(&z, Z_FINISH), MZ_STREAM_END);
-        controle(cas_f("niveau %d fenêtre %d : sortie après mz_deflateReset identique à un flux neuf", niveau, fenetre),
+        controle(cas_f("level %d window %d: output after mz_deflateReset identical to a new stream's", niveau, fenetre),
                  m.total_out == n_ref && memcmp(sortie_m, reference, n_ref) == 0);
 
         /* Remise à zéro en cours de flux, sortie à moitié vidée. */
@@ -813,14 +813,14 @@ static void cas_deflate_reset(void)
         z_tampons(&z, donnees, TAILLE / 2, sortie_z, 64);
         mz_deflateReset(&m);
         deflateReset(&z);
-        IDEM(cas_f("niveau %d fenêtre %d : mz_deflate sortie de 64 octets", niveau, fenetre), mz_deflate(&m, MZ_NO_FLUSH),
+        IDEM(cas_f("level %d window %d: mz_deflate output of 64 bytes", niveau, fenetre), mz_deflate(&m, MZ_NO_FLUSH),
              deflate(&z, Z_NO_FLUSH), MZ_OK);
-        IDEM(cas_f("niveau %d fenêtre %d : mz_deflateReset en cours de flux", niveau, fenetre), mz_deflateReset(&m), deflateReset(&z), MZ_OK);
+        IDEM(cas_f("level %d window %d: mz_deflateReset in the middle of the stream", niveau, fenetre), mz_deflateReset(&m), deflateReset(&z), MZ_OK);
         mz_tampons(&m, donnees, TAILLE, sortie_m, sizeof(sortie_m));
         z_tampons(&z, donnees, TAILLE, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("niveau %d fenêtre %d : MZ_FINISH après remise à zéro en cours", niveau, fenetre), mz_deflate(&m, MZ_FINISH),
+        IDEM(cas_f("level %d window %d: MZ_FINISH after a reset in the middle", niveau, fenetre), mz_deflate(&m, MZ_FINISH),
              deflate(&z, Z_FINISH), MZ_STREAM_END);
-        controle(cas_f("niveau %d fenêtre %d : sortie après remise à zéro en cours identique à un flux neuf", niveau, fenetre),
+        controle(cas_f("level %d window %d: output after a reset in the middle identical to a new stream's", niveau, fenetre),
                  m.total_out == n_ref && memcmp(sortie_m, reference, n_ref) == 0);
         mz_deflateEnd(&m);
         deflateEnd(&z);
@@ -834,7 +834,7 @@ static void cas_inflate_reset(void)
     static const int fenetres[] = { 15, -15 };
     size_t i;
 
-    IDEM("mz_inflateReset flux nul", mz_inflateReset(NULL), inflateReset(NULL), MZ_STREAM_ERROR);
+    IDEM("mz_inflateReset null stream", mz_inflateReset(NULL), inflateReset(NULL), MZ_STREAM_ERROR);
     for (i = 0; i < sizeof(fenetres) / sizeof(fenetres[0]); i++)
     {
         mz_stream m;
@@ -845,28 +845,28 @@ static void cas_inflate_reset(void)
 
         mz_ouvrir_inf(&m, fenetre);
         z_ouvrir_inf(&z, fenetre);
-        IDEM(cas_f("fenêtre %d : mz_inflate en flux", fenetre), mz_inflate_flux(&m, src, n, sortie_m, sizeof(sortie_m)),
+        IDEM(cas_f("window %d: streamed mz_inflate", fenetre), mz_inflate_flux(&m, src, n, sortie_m, sizeof(sortie_m)),
              z_inflate_flux(&z, src, n, sortie_z, sizeof(sortie_z)), MZ_STREAM_END);
-        IDEM(cas_f("fenêtre %d : mz_inflateReset après la fin", fenetre), mz_inflateReset(&m), inflateReset(&z), MZ_OK);
-        controle(cas_f("fenêtre %d : total_in et total_out remis à zéro", fenetre), m.total_in == 0 && m.total_out == 0);
+        IDEM(cas_f("window %d: mz_inflateReset after the end", fenetre), mz_inflateReset(&m), inflateReset(&z), MZ_OK);
+        controle(cas_f("window %d: total_in and total_out reset to zero", fenetre), m.total_in == 0 && m.total_out == 0);
         memset(sortie_m, 0, TAILLE);
-        IDEM(cas_f("fenêtre %d : mz_inflate en flux après mz_inflateReset", fenetre), mz_inflate_flux(&m, src, n, sortie_m, sizeof(sortie_m)),
+        IDEM(cas_f("window %d: streamed mz_inflate after mz_inflateReset", fenetre), mz_inflate_flux(&m, src, n, sortie_m, sizeof(sortie_m)),
              z_inflate_flux(&z, src, n, sortie_z, sizeof(sortie_z)), MZ_STREAM_END);
-        controle(cas_f("fenêtre %d : sortie après mz_inflateReset", fenetre), m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
+        controle(cas_f("window %d: output after mz_inflateReset", fenetre), m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
 
         /* Remise à zéro en cours de flux. */
         mz_inflateReset(&m);
         inflateReset(&z);
         mz_tampons(&m, src, 1000, sortie_m, sizeof(sortie_m));
         z_tampons(&z, src, 1000, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("fenêtre %d : mz_inflate des 1000 premiers octets", fenetre), mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_OK);
-        IDEM(cas_f("fenêtre %d : mz_inflateReset en cours de flux", fenetre), mz_inflateReset(&m), inflateReset(&z), MZ_OK);
+        IDEM(cas_f("window %d: mz_inflate of the first 1000 bytes", fenetre), mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_OK);
+        IDEM(cas_f("window %d: mz_inflateReset in the middle of the stream", fenetre), mz_inflateReset(&m), inflateReset(&z), MZ_OK);
         /* Premier appel après la remise à zéro : MZ_FINISH en une fois redevient possible. */
         mz_tampons(&m, src, n, sortie_m, sizeof(sortie_m));
         z_tampons(&z, src, n, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("fenêtre %d : MZ_FINISH en une fois après remise à zéro en cours", fenetre), mz_inflate(&m, MZ_FINISH),
+        IDEM(cas_f("window %d: one-shot MZ_FINISH after a reset in the middle", fenetre), mz_inflate(&m, MZ_FINISH),
              inflate(&z, Z_FINISH), MZ_STREAM_END);
-        controle(cas_f("fenêtre %d : sortie après remise à zéro en cours", fenetre),
+        controle(cas_f("window %d: output after a reset in the middle", fenetre),
                  m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
 
         /* Sortie trop petite pour MZ_FINISH en une fois [E8] : seule une remise à zéro relance le flux. */
@@ -874,14 +874,14 @@ static void cas_inflate_reset(void)
         inflateReset(&z);
         mz_tampons(&m, src, n, sortie_m, TAILLE / 2);
         z_tampons(&z, src, n, sortie_z, TAILLE / 2);
-        IDEM(cas_f("fenêtre %d : MZ_FINISH en une fois, sortie trop petite", fenetre), mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH),
+        IDEM(cas_f("window %d: one-shot MZ_FINISH, output too small", fenetre), mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH),
              MZ_BUF_ERROR);
-        IDEM(cas_f("fenêtre %d : mz_inflateReset après MZ_BUF_ERROR", fenetre), mz_inflateReset(&m), inflateReset(&z), MZ_OK);
+        IDEM(cas_f("window %d: mz_inflateReset after MZ_BUF_ERROR", fenetre), mz_inflateReset(&m), inflateReset(&z), MZ_OK);
         mz_tampons(&m, src, n, sortie_m, sizeof(sortie_m));
         z_tampons(&z, src, n, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("fenêtre %d : MZ_FINISH en une fois après mz_inflateReset", fenetre), mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH),
+        IDEM(cas_f("window %d: one-shot MZ_FINISH after mz_inflateReset", fenetre), mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH),
              MZ_STREAM_END);
-        controle(cas_f("fenêtre %d : sortie après remise à zéro sur MZ_BUF_ERROR", fenetre),
+        controle(cas_f("window %d: output after a reset on MZ_BUF_ERROR", fenetre),
                  m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
 
         /* Après une erreur de données. Fenêtre 15 : somme de l'en-tête fausse ; -15 : type de bloc 3 (réservé). */
@@ -894,13 +894,13 @@ static void cas_inflate_reset(void)
         inflateReset(&z);
         mz_tampons(&m, copie, n, sortie_m, sizeof(sortie_m));
         z_tampons(&z, copie, n, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("fenêtre %d : mz_inflate données invalides", fenetre), mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_DATA_ERROR);
-        IDEM(cas_f("fenêtre %d : mz_inflate rappelé après l'erreur", fenetre), mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH),
+        IDEM(cas_f("window %d: mz_inflate invalid data", fenetre), mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_DATA_ERROR);
+        IDEM(cas_f("window %d: mz_inflate called again after the error", fenetre), mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH),
              MZ_DATA_ERROR);
-        IDEM(cas_f("fenêtre %d : mz_inflateReset après MZ_DATA_ERROR", fenetre), mz_inflateReset(&m), inflateReset(&z), MZ_OK);
-        IDEM(cas_f("fenêtre %d : mz_inflate en flux après remise à zéro sur erreur", fenetre),
+        IDEM(cas_f("window %d: mz_inflateReset after MZ_DATA_ERROR", fenetre), mz_inflateReset(&m), inflateReset(&z), MZ_OK);
+        IDEM(cas_f("window %d: streamed mz_inflate after a reset on error", fenetre),
              mz_inflate_flux(&m, src, n, sortie_m, sizeof(sortie_m)), z_inflate_flux(&z, src, n, sortie_z, sizeof(sortie_z)), MZ_STREAM_END);
-        controle(cas_f("fenêtre %d : sortie après remise à zéro sur erreur", fenetre),
+        controle(cas_f("window %d: output after a reset on error", fenetre),
                  m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
         mz_inflateEnd(&m);
         inflateEnd(&z);
@@ -917,23 +917,23 @@ static void cas_inflate(void)
     z_stream z;
     size_t i;
 
-    IDEM("mz_inflate flux nul", mz_inflate(NULL, MZ_NO_FLUSH), inflate(NULL, Z_NO_FLUSH), MZ_STREAM_ERROR);
+    IDEM("mz_inflate null stream", mz_inflate(NULL, MZ_NO_FLUSH), inflate(NULL, Z_NO_FLUSH), MZ_STREAM_ERROR);
 
     mz_ouvrir_inf(&m, 15);
     z_ouvrir_inf(&z, 15);
     mz_tampons(&m, flux_zlib, 0, sortie_m, sizeof(sortie_m));
     z_tampons(&z, flux_zlib, 0, sortie_z, sizeof(sortie_z));
-    IDEM("mz_inflate sans entrée", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_BUF_ERROR);
+    IDEM("mz_inflate without input", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_BUF_ERROR);
     mz_tampons(&m, flux_zlib, n_flux_zlib, sortie_m, 0);
     z_tampons(&z, flux_zlib, n_flux_zlib, sortie_z, 0);
     IDEM("mz_inflate avail_out = 0", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_OK);
     m.avail_out = z.avail_out = sizeof(sortie_m);
-    IDEM("mz_inflate avail_out = 0, puis sortie suffisante", mz_inflate_flux(&m, m.next_in, m.avail_in, sortie_m, sizeof(sortie_m)),
+    IDEM("mz_inflate avail_out = 0, then a large enough output", mz_inflate_flux(&m, m.next_in, m.avail_in, sortie_m, sizeof(sortie_m)),
          z_inflate_flux(&z, z.next_in, z.avail_in, sortie_z, sizeof(sortie_z)), MZ_STREAM_END);
-    controle("mz_inflate avail_out = 0, puis sortie suffisante : sortie", m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
-    IDEM("mz_inflate après la fin, sans entrée", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_STREAM_END);
-    IDEM("mz_inflate après la fin, MZ_FINISH", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_STREAM_END);
-    ECART("mz_inflate après la fin, sans MZ_FINISH après un MZ_FINISH", mz_inflate(&m, MZ_NO_FLUSH), MZ_STREAM_ERROR,
+    controle("mz_inflate avail_out = 0, then a large enough output: output", m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
+    IDEM("mz_inflate after the end, without input", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_STREAM_END);
+    IDEM("mz_inflate after the end, MZ_FINISH", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_STREAM_END);
+    ECART("mz_inflate after the end, without MZ_FINISH after an MZ_FINISH", mz_inflate(&m, MZ_NO_FLUSH), MZ_STREAM_ERROR,
           inflate(&z, Z_NO_FLUSH), Z_STREAM_END, "E8");
     mz_inflateEnd(&m);
     inflateEnd(&z);
@@ -945,8 +945,8 @@ static void cas_inflate(void)
         z_ouvrir_inf(&z, 15);
         mz_tampons(&m, flux_zlib, n_flux_zlib, sortie_m, sizeof(sortie_m));
         z_tampons(&z, flux_zlib, n_flux_zlib, sortie_z, sizeof(sortie_z));
-        ECART(cas_f("mz_inflate vidage %d", vidage), mz_inflate(&m, vidage), MZ_STREAM_ERROR, inflate(&z, vidage), attendu_zlib[i], "E4");
-        controle(cas_f("mz_inflate vidage %d refusé : flux toujours utilisable", vidage),
+        ECART(cas_f("mz_inflate flush %d", vidage), mz_inflate(&m, vidage), MZ_STREAM_ERROR, inflate(&z, vidage), attendu_zlib[i], "E4");
+        controle(cas_f("mz_inflate flush %d refused: stream still usable", vidage),
                  m.total_in == 0 && mz_inflate(&m, MZ_FINISH) == MZ_STREAM_END && m.total_out == TAILLE &&
                      memcmp(sortie_m, donnees, TAILLE) == 0);
         mz_inflateEnd(&m);
@@ -960,7 +960,7 @@ static void cas_inflate(void)
         z_ouvrir_inf(&z, 15);
         mz_tampons(&m, flux_zlib, n_flux_zlib, sortie_m, sizeof(sortie_m));
         z_tampons(&z, flux_zlib, n_flux_zlib, sortie_z, sizeof(sortie_z));
-        IDEM(cas_f("mz_inflate vidage %d", vidage), mz_inflate(&m, vidage), inflate(&z, vidage), MZ_STREAM_END);
+        IDEM(cas_f("mz_inflate flush %d", vidage), mz_inflate(&m, vidage), inflate(&z, vidage), MZ_STREAM_END);
         mz_inflateEnd(&m);
         inflateEnd(&z);
     }
@@ -970,15 +970,15 @@ static void cas_inflate(void)
     {
         const unsigned char *src = i ? flux_stocke : flux_zlib;
         size_t n = i ? n_flux_stocke : n_flux_zlib;
-        const char *genre = i ? "blocs stockés" : "niveau 6";
+        const char *genre = i ? "stored blocks" : "level 6";
         mz_ouvrir_inf(&m, 15);
         z_ouvrir_inf(&z, 15);
         mz_tampons(&m, src, n, sortie_m, TAILLE / 2);
         z_tampons(&z, src, n, sortie_z, TAILLE / 2);
-        IDEM(cas_f("mz_inflate MZ_FINISH au premier appel, sortie trop petite (%s)", genre), mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH),
+        IDEM(cas_f("mz_inflate MZ_FINISH at the first call, output too small (%s)", genre), mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH),
              MZ_BUF_ERROR);
         m.avail_out = z.avail_out = sizeof(sortie_m) - TAILLE / 2;
-        ECART(cas_f("mz_inflate MZ_FINISH rappelé avec une sortie suffisante (%s)", genre), mz_inflate(&m, MZ_FINISH), MZ_DATA_ERROR,
+        ECART(cas_f("mz_inflate MZ_FINISH called again with a large enough output (%s)", genre), mz_inflate(&m, MZ_FINISH), MZ_DATA_ERROR,
               inflate(&z, Z_FINISH), Z_STREAM_END, "E8");
         mz_inflateEnd(&m);
         inflateEnd(&z);
@@ -989,15 +989,15 @@ static void cas_inflate(void)
     z_ouvrir_inf(&z, 15);
     mz_tampons(&m, flux_zlib, 100, sortie_m, sizeof(sortie_m));
     z_tampons(&z, flux_zlib, 100, sortie_z, sizeof(sortie_z));
-    IDEM("mz_inflate 100 premiers octets en flux", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_OK);
+    IDEM("mz_inflate first 100 bytes streamed", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_OK);
     mz_tampons(&m, flux_zlib + m.total_in, n_flux_zlib - m.total_in, sortie_m + m.total_out, TAILLE / 2 - m.total_out);
     z_tampons(&z, flux_zlib + z.total_in, n_flux_zlib - z.total_in, sortie_z + z.total_out, TAILLE / 2 - z.total_out);
-    IDEM("mz_inflate MZ_FINISH ensuite, sortie trop petite", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_BUF_ERROR);
+    IDEM("mz_inflate MZ_FINISH next, output too small", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_BUF_ERROR);
     m.avail_out = (unsigned int)(sizeof(sortie_m) - m.total_out);
     z.avail_out = (uInt)(sizeof(sortie_z) - z.total_out);
-    ECART("mz_inflate sans MZ_FINISH après un MZ_FINISH", mz_inflate(&m, MZ_NO_FLUSH), MZ_STREAM_ERROR, inflate(&z, Z_NO_FLUSH),
+    ECART("mz_inflate without MZ_FINISH after an MZ_FINISH", mz_inflate(&m, MZ_NO_FLUSH), MZ_STREAM_ERROR, inflate(&z, Z_NO_FLUSH),
           Z_STREAM_END, "E8");
-    controle("mz_inflate MZ_FINISH rappelé avec une sortie suffisante : sortie",
+    controle("mz_inflate MZ_FINISH called again with a large enough output: output",
              mz_inflate_finir(&m) == MZ_STREAM_END && m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
     mz_inflateEnd(&m);
     inflateEnd(&z);
@@ -1007,13 +1007,13 @@ static void cas_inflate(void)
     z_ouvrir_inf(&z, 15);
     mz_tampons(&m, flux_zlib, 100, sortie_m, sizeof(sortie_m));
     z_tampons(&z, flux_zlib, 100, sortie_z, sizeof(sortie_z));
-    IDEM("mz_inflate 100 premiers octets en flux, puis", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_OK);
+    IDEM("mz_inflate first 100 bytes streamed, then", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_OK);
     mz_tampons(&m, flux_zlib + m.total_in, n_flux_zlib - m.total_in, sortie_m + m.total_out, TAILLE - 1 - m.total_out);
     z_tampons(&z, flux_zlib + z.total_in, n_flux_zlib - z.total_in, sortie_z + z.total_out, TAILLE - 1 - z.total_out);
-    IDEM("mz_inflate MZ_FINISH, sortie trop courte d'un octet", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_BUF_ERROR);
+    IDEM("mz_inflate MZ_FINISH, output one byte too short", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_BUF_ERROR);
     m.avail_out = z.avail_out = 1;
-    IDEM("mz_inflate MZ_FINISH avec l'octet manquant", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_STREAM_END);
-    controle("mz_inflate MZ_FINISH avec l'octet manquant : sortie", m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
+    IDEM("mz_inflate MZ_FINISH with the missing byte", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_STREAM_END);
+    controle("mz_inflate MZ_FINISH with the missing byte: output", m.total_out == TAILLE && memcmp(sortie_m, donnees, TAILLE) == 0);
     mz_inflateEnd(&m);
     inflateEnd(&z);
 
@@ -1024,8 +1024,8 @@ static void cas_inflate(void)
     z_ouvrir_inf(&z, 15);
     mz_tampons(&m, copie, n_flux_zlib + 16, sortie_m, sizeof(sortie_m));
     z_tampons(&z, copie, n_flux_zlib + 16, sortie_z, sizeof(sortie_z));
-    IDEM("mz_inflate données après la fin du flux", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_STREAM_END);
-    controle("mz_inflate données après la fin du flux : octets laissés égaux à ceux de zlib", m.avail_in == 16 && m.avail_in == z.avail_in);
+    IDEM("mz_inflate data after the end of the stream", mz_inflate(&m, MZ_NO_FLUSH), inflate(&z, Z_NO_FLUSH), MZ_STREAM_END);
+    controle("mz_inflate data after the end of the stream: bytes left equal to zlib's", m.avail_in == 16 && m.avail_in == z.avail_in);
     mz_inflateEnd(&m);
     inflateEnd(&z);
 
@@ -1034,7 +1034,7 @@ static void cas_inflate(void)
     copie[n_flux_zlib - 1] ^= 1;
     mz_ouvrir_inf(&m, 15);
     z_ouvrir_inf(&z, 15);
-    IDEM("mz_inflate Adler-32 faux, en flux", mz_inflate_flux(&m, copie, n_flux_zlib, sortie_m, sizeof(sortie_m)),
+    IDEM("mz_inflate wrong Adler-32, streamed", mz_inflate_flux(&m, copie, n_flux_zlib, sortie_m, sizeof(sortie_m)),
          z_inflate_flux(&z, copie, n_flux_zlib, sortie_z, sizeof(sortie_z)), MZ_DATA_ERROR);
     mz_inflateEnd(&m);
     inflateEnd(&z);
@@ -1046,12 +1046,12 @@ static void cas_inflate(void)
     z_ouvrir_inf(&z, 15);
     mz_tampons(&m, copie, n_flux_zlib + 4, sortie_m, sizeof(sortie_m));
     z_tampons(&z, copie, n_flux_zlib + 4, sortie_z, sizeof(sortie_z));
-    ECART("mz_inflate en-tête avec dictionnaire prédéfini", mz_inflate(&m, MZ_NO_FLUSH), MZ_DATA_ERROR, inflate(&z, Z_NO_FLUSH), Z_NEED_DICT,
+    ECART("mz_inflate header with a preset dictionary", mz_inflate(&m, MZ_NO_FLUSH), MZ_DATA_ERROR, inflate(&z, Z_NO_FLUSH), Z_NEED_DICT,
           "E9");
-    IDEM("mz_inflateEnd après une erreur", mz_inflateEnd(&m), inflateEnd(&z), MZ_OK);
-    IDEM("mz_inflate après mz_inflateEnd", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_STREAM_ERROR);
-    ECART("mz_inflateEnd deux fois", mz_inflateEnd(&m), MZ_OK, inflateEnd(&z), Z_STREAM_ERROR, "E10");
-    IDEM("mz_inflateEnd flux nul", mz_inflateEnd(NULL), inflateEnd(NULL), MZ_STREAM_ERROR);
+    IDEM("mz_inflateEnd after an error", mz_inflateEnd(&m), inflateEnd(&z), MZ_OK);
+    IDEM("mz_inflate after mz_inflateEnd", mz_inflate(&m, MZ_FINISH), inflate(&z, Z_FINISH), MZ_STREAM_ERROR);
+    ECART("mz_inflateEnd twice", mz_inflateEnd(&m), MZ_OK, inflateEnd(&z), Z_STREAM_ERROR, "E10");
+    IDEM("mz_inflateEnd null stream", mz_inflateEnd(NULL), inflateEnd(NULL), MZ_STREAM_ERROR);
 }
 
 /* ------------------------------------------------------------------ mz_error, valeur initiale des sommes */
@@ -1062,12 +1062,12 @@ static void cas_error(void)
                                   MZ_DATA_ERROR, MZ_MEM_ERROR, MZ_BUF_ERROR, MZ_VERSION_ERROR, MZ_PARAM_ERROR };
     size_t i;
     for (i = 0; i < sizeof(connus) / sizeof(connus[0]); i++)
-        controle(cas_f("mz_error(%s) décrit le code", nom(connus[i])), mz_error(connus[i]) != NULL);
-    controle("mz_error(MZ_OK) est vide, comme zError(Z_OK)", mz_error(MZ_OK) && !strcmp(mz_error(MZ_OK), zError(Z_OK)));
-    controle("mz_error(code inconnu) rend NULL", mz_error(12345) == NULL);
+        controle(cas_f("mz_error(%s) describes the code", nom(connus[i])), mz_error(connus[i]) != NULL);
+    controle("mz_error(MZ_OK) is empty, like zError(Z_OK)", mz_error(MZ_OK) && !strcmp(mz_error(MZ_OK), zError(Z_OK)));
+    controle("mz_error(unknown code) returns NULL", mz_error(12345) == NULL);
     /* Valeur initiale des sommes, selon l'idiome de zlib.h (pointeur nul, longueur 0). */
-    controle("mz_adler32(0, NULL, 0) égal à adler32(0, Z_NULL, 0)", mz_adler32(0, NULL, 0) == adler32(0, Z_NULL, 0));
-    controle("mz_crc32(0, NULL, 0) égal à crc32(0, Z_NULL, 0)", mz_crc32(0, NULL, 0) == crc32(0, Z_NULL, 0));
+    controle("mz_adler32(0, NULL, 0) equal to adler32(0, Z_NULL, 0)", mz_adler32(0, NULL, 0) == adler32(0, Z_NULL, 0));
+    controle("mz_crc32(0, NULL, 0) equal to crc32(0, Z_NULL, 0)", mz_crc32(0, NULL, 0) == crc32(0, Z_NULL, 0));
 }
 
 int main(int argc, char **argv)
@@ -1079,11 +1079,11 @@ int main(int argc, char **argv)
             verbeux = 1;
         else
         {
-            fprintf(stderr, "usage : %s [--verbeux]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--verbeux]\n", argv[0]);
             return 2;
         }
     }
-    printf("miniz %s, zlib %s : cas limites de l'API compatible zlib\n", mz_version(), zlibVersion());
+    printf("miniz %s, zlib %s: edge cases of the zlib-compatible API\n", mz_version(), zlibVersion());
 
     generer_donnees();
     {
@@ -1096,7 +1096,7 @@ int main(int argc, char **argv)
         z_ouvrir_def(&z, 6, -15);
         z_tampons(&z, donnees, TAILLE, flux_brut, sizeof(flux_brut));
         if (deflate(&z, Z_FINISH) != Z_STREAM_END)
-            erreur_env("deflate brut");
+            erreur_env("raw deflate");
         n_flux_brut = z.total_out;
         deflateEnd(&z);
     }
@@ -1113,14 +1113,14 @@ int main(int argc, char **argv)
     cas_inflate();
     cas_error();
 
-    printf("%ld cas comparés à zlib (dont %ld écarts tolérés, listés en tête de bee/tests/api.c), %ld contrôles, %ld échecs, "
-           "%ld avertissements.\n",
+    printf("%ld cases compared with zlib (%ld of them tolerated discrepancies, listed at the top of bee/tests/api.c), %ld checks, %ld failures, "
+           "%ld warnings.\n",
            nb_cas, nb_ecarts, nb_controles, nb_echecs, nb_avertissements);
     if (nb_echecs)
     {
-        fprintf(stderr, "RÉSULTAT : ÉCHEC (%ld).\n", nb_echecs);
+        fprintf(stderr, "RESULT: FAILED (%ld).\n", nb_echecs);
         return 1;
     }
-    printf("RÉSULTAT : OK, codes de retour de miniz conformes aux attendus.\n");
+    printf("RESULT: OK, miniz's return codes match the expected ones.\n");
     return 0;
 }

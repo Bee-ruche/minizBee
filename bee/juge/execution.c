@@ -50,7 +50,7 @@ static const char *dossier_entrees, *dossier_sorties;
 
 static void mourir(const char *message, const char *detail)
 {
-    fprintf(stderr, "execution : %s%s%s\n", message, detail ? " : " : "", detail ? detail : "");
+    fprintf(stderr, "execution: %s%s%s\n", message, detail ? ": " : "", detail ? detail : "");
     exit(2);
 }
 
@@ -58,7 +58,7 @@ static void *allouer(size_t n)
 {
     void *p = malloc(n ? n : 1);
     if (!p)
-        mourir("mémoire insuffisante", NULL);
+        mourir("out of memory", NULL);
     return p;
 }
 
@@ -67,7 +67,7 @@ static void chemin(char *tampon, size_t taille, const char *racine, const char *
 {
     int n = snprintf(tampon, taille, "%s/%s/%s%s", racine, sous_dossier, nom, suffixe ? suffixe : "");
     if (n < 0 || (size_t)n >= taille)
-        mourir("chemin trop long", nom);
+        mourir("path too long", nom);
 }
 
 static unsigned char *lire_fichier(const char *chemin_fichier, size_t maximum, size_t *longueur)
@@ -76,11 +76,11 @@ static unsigned char *lire_fichier(const char *chemin_fichier, size_t maximum, s
     unsigned char *tampon;
     size_t lus;
     if (!f)
-        mourir("entrée illisible", chemin_fichier);
+        mourir("unreadable input", chemin_fichier);
     tampon = (unsigned char *)allouer(maximum);
     lus = fread(tampon, 1, maximum, f);
     if (ferror(f))
-        mourir("lecture impossible", chemin_fichier);
+        mourir("read failed", chemin_fichier);
     fclose(f);
     *longueur = lus;
     return tampon;
@@ -94,7 +94,7 @@ static void ecrire_fichier(const char *sous_dossier, const char *nom, const char
     chemin(p, sizeof(p), dossier_sorties, sous_dossier, nom, suffixe);
     f = fopen(p, "wb");
     if (!f || (longueur && fwrite(donnees, 1, longueur, f) != longueur) || fclose(f) != 0)
-        mourir("écriture impossible", p);
+        mourir("write failed", p);
 }
 
 static void ecrire_statut(const char *sous_dossier, const char *nom, int code, size_t longueur)
@@ -109,9 +109,9 @@ static void creer_dossier(const char *sous_dossier)
     char p[4096];
     int n = snprintf(p, sizeof(p), "%s/%s", dossier_sorties, sous_dossier);
     if (n < 0 || (size_t)n >= sizeof(p))
-        mourir("chemin trop long", sous_dossier);
+        mourir("path too long", sous_dossier);
     if (mkdir(p, 0755) != 0 && errno != EEXIST)
-        mourir("dossier de sortie impossible", p);
+        mourir("cannot create the output folder", p);
 }
 
 /* Lit la liste ; charge les données des entrées f si `charger_f`, des entrées z si `charger_z`. */
@@ -123,10 +123,10 @@ static entree *lire_liste(size_t *nombre, int charger_f, int charger_z, size_t p
     size_t n = 0, capacite = 0;
     int c = snprintf(p, sizeof(p), "%s/liste", dossier_entrees);
     if (c < 0 || (size_t)c >= sizeof(p))
-        mourir("chemin trop long", "liste");
+        mourir("path too long", "liste");
     f = fopen(p, "r");
     if (!f)
-        mourir("liste illisible", p);
+        mourir("unreadable list", p);
     while (fgets(ligne, sizeof(ligne), f))
     {
         entree e;
@@ -134,7 +134,7 @@ static entree *lire_liste(size_t *nombre, int charger_f, int charger_z, size_t p
         char type;
         memset(&e, 0, sizeof(e));
         if (sscanf(ligne, " %c %63s %llu", &type, e.nom, &taille) != 3 || (type != 'f' && type != 'z'))
-            mourir("ligne de liste invalide", ligne);
+            mourir("invalid list line", ligne);
         e.type = type;
         e.taille = (size_t)taille;
         if ((type == 'f' && charger_f) || (type == 'z' && charger_z))
@@ -148,7 +148,7 @@ static entree *lire_liste(size_t *nombre, int charger_f, int charger_z, size_t p
                 struct stat st;
                 chemin(q, sizeof(q), dossier_entrees, "z", e.nom, NULL);
                 if (stat(q, &st) != 0)
-                    mourir("flux introuvable", q);
+                    mourir("stream not found", q);
                 maximum = (size_t)st.st_size;
             }
             else
@@ -160,7 +160,7 @@ static entree *lire_liste(size_t *nombre, int charger_f, int charger_z, size_t p
             capacite = capacite ? 2 * capacite : 64;
             liste = (entree *)realloc(liste, capacite * sizeof(entree));
             if (!liste)
-                mourir("mémoire insuffisante", NULL);
+                mourir("out of memory", NULL);
         }
         liste[n++] = e;
     }
@@ -199,7 +199,7 @@ static void deflate_flux(const entree *e, size_t indice, int niveau)
     tailles_flux(indice, e->longueur, &morceau_entree, &morceau_sortie, &flush_regulier);
     memset(&s, 0, sizeof(s));
     if (mz_deflateInit(&s, niveau) != MZ_OK)
-        mourir("mz_deflateInit a échoué", e->nom);
+        mourir("mz_deflateInit failed", e->nom);
     /* Chaque MZ_SYNC_FLUSH ajoute au plus quelques octets : marge large. */
     capacite = (size_t)mz_deflateBound(&s, (mz_ulong)e->longueur) * 2 + 4096;
     garde = 4 * (e->longueur + capacite) + 4096;
@@ -225,10 +225,10 @@ static void deflate_flux(const entree *e, size_t indice, int niveau)
             if (demande == MZ_SYNC_FLUSH && s.avail_in == 0)
                 demande = MZ_NO_FLUSH;
             if (r != MZ_OK && r != MZ_STREAM_END && r != MZ_BUF_ERROR)
-                mourir("mz_deflate a échoué", e->nom);
+                mourir("mz_deflate failed", e->nom);
             sorti = morceau_sortie - s.avail_out;
             if (sorti > capacite - produit || ++appels > garde)
-                mourir("mz_deflate ne termine pas", e->nom);
+                mourir("mz_deflate does not finish", e->nom);
             memcpy(sortie + produit, tampon, sorti);
             produit += sorti;
         } while (s.avail_in > 0 || s.avail_out == 0 || (flush == MZ_FINISH && r != MZ_STREAM_END));
@@ -251,7 +251,7 @@ static void inflate_flux(const entree *e, size_t indice)
     tailles_flux(indice, e->taille, &morceau_entree, &morceau_sortie, &flush_regulier);
     memset(&s, 0, sizeof(s));
     if (mz_inflateInit(&s) != MZ_OK)
-        mourir("mz_inflateInit a échoué", e->nom);
+        mourir("mz_inflateInit failed", e->nom);
     sortie = (unsigned char *)allouer(capacite);
     tampon = (unsigned char *)allouer(morceau_sortie);
     for (;;)
@@ -313,7 +313,7 @@ static int verifier(entree *liste, size_t n)
                 int r = mz_compress2(sortie, &taille, e->donnees, (mz_ulong)e->longueur, NIVEAUX_UNIQUE[j]);
                 snprintf(suffixe, sizeof(suffixe), ".%d", NIVEAUX_UNIQUE[j]);
                 if (r != MZ_OK)
-                    mourir("mz_compress2 a échoué", e->nom);
+                    mourir("mz_compress2 failed", e->nom);
                 ecrire_fichier("c", e->nom, suffixe, sortie, (size_t)taille);
                 free(sortie);
             }
@@ -361,7 +361,7 @@ static int compresser(entree *liste, size_t n, int niveau)
         if (liste[i].type == 'f')
         {
             if (codes[i] != MZ_OK)
-                mourir("mz_compress2 a échoué", liste[i].nom);
+                mourir("mz_compress2 failed", liste[i].nom);
             ecrire_fichier("c", liste[i].nom, NULL, sorties[i], (size_t)tailles[i]);
             free(sorties[i]);
         }
@@ -394,7 +394,7 @@ static int decompresser(entree *liste, size_t n)
         if (liste[i].type == 'z')
         {
             if (codes[i] != MZ_OK)
-                mourir("mz_uncompress a échoué", liste[i].nom);
+                mourir("mz_uncompress failed", liste[i].nom);
             ecrire_fichier("d", liste[i].nom, NULL, sorties[i], (size_t)tailles[i]);
             free(sorties[i]);
         }
@@ -422,14 +422,14 @@ static int memoire(entree *liste, size_t n)
         chemin(p, sizeof(p), dossier_entrees, "f", liste[i].nom, NULL);
         f = fopen(p, "rb");
         if (!f)
-            mourir("entrée illisible", p);
+            mourir("unreadable input", p);
         chemin(p, sizeof(p), dossier_sorties, "m", liste[i].nom, NULL);
         g = fopen(p, "wb");
         if (!g)
-            mourir("écriture impossible", p);
+            mourir("write failed", p);
         memset(&s, 0, sizeof(s));
         if (mz_deflateInit(&s, 6) != MZ_OK)
-            mourir("mz_deflateInit a échoué", liste[i].nom);
+            mourir("mz_deflateInit failed", liste[i].nom);
         while (r != MZ_STREAM_END)
         {
             size_t lus = 0;
@@ -437,7 +437,7 @@ static int memoire(entree *liste, size_t n)
             {
                 lus = fread(bloc, 1, BLOC_FLUX, f);
                 if (ferror(f))
-                    mourir("lecture impossible", liste[i].nom);
+                    mourir("read failed", liste[i].nom);
                 fin = lus < BLOC_FLUX;
             }
             s.next_in = bloc;
@@ -448,15 +448,15 @@ static int memoire(entree *liste, size_t n)
                 s.avail_out = BLOC_FLUX;
                 r = mz_deflate(&s, fin ? MZ_FINISH : MZ_NO_FLUSH);
                 if (r != MZ_OK && r != MZ_STREAM_END && r != MZ_BUF_ERROR)
-                    mourir("mz_deflate a échoué", liste[i].nom);
+                    mourir("mz_deflate failed", liste[i].nom);
                 if (fwrite(sortie, 1, BLOC_FLUX - s.avail_out, g) != BLOC_FLUX - s.avail_out)
-                    mourir("écriture impossible", liste[i].nom);
+                    mourir("write failed", liste[i].nom);
             } while (s.avail_out == 0);
         }
         mz_deflateEnd(&s);
         fclose(f);
         if (fclose(g) != 0)
-            mourir("écriture impossible", liste[i].nom);
+            mourir("write failed", liste[i].nom);
     }
     free(bloc);
     free(sortie);
@@ -471,7 +471,7 @@ int main(int argc, char **argv)
     int i;
     if (argc < 4)
     {
-        fprintf(stderr, "usage : execution <mode> <dossier_entrees> <dossier_sorties> [--prefixe N]\n");
+        fprintf(stderr, "usage: execution <mode> <input_folder> <output_folder> [--prefixe N]\n");
         return 2;
     }
     umask(0); /* l'hôte doit pouvoir effacer les sorties (écrites par un autre utilisateur) */
@@ -483,7 +483,7 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--prefixe") == 0 && i + 1 < argc)
             prefixe = (size_t)strtoull(argv[++i], NULL, 10);
         else
-            mourir("option inconnue", argv[i]);
+            mourir("unknown option", argv[i]);
     }
     if (strcmp(mode, "verifier") == 0)
     {
@@ -505,6 +505,6 @@ int main(int argc, char **argv)
         liste = lire_liste(&n, 0, 0, 0);
         return memoire(liste, n);
     }
-    mourir("mode inconnu", mode);
+    mourir("unknown mode", mode);
     return 2;
 }

@@ -29,4 +29,4 @@ cc -O2 -g -std=gnu99 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter \
   -I"$outillage/base" -I"$outillage/bee/commun" \
   "$outillage/bee/juge/execution.c" "$sortie/obj/miniz.o" "$sortie/obj/miniz_tdef.o" "$sortie/obj/miniz_tinfl.o" \
   -o "$sortie/execution"
-echo "construction terminée"
+echo "build done"

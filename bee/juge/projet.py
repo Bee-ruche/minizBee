@@ -151,8 +151,8 @@ def historique_du_corpus(outillage):
     accès réseau ici : un commit absent est une erreur d'environnement (code 2)."""
     if subprocess.run(["git", "-C", outillage, "cat-file", "-e", COMMIT_CORPUS + "^{commit}"],
                       capture_output=True).returncode != 0:
-        raise Erreur(f"corpus : commit {COMMIT_CORPUS} absent de la base ; déclarez-le à juge.yml (historique), "
-                     f"ou, en local, git fetch --depth=1 origin {COMMIT_CORPUS}")
+        raise Erreur(f"corpus: commit {COMMIT_CORPUS} missing from the base; declare it to juge.yml (historique), "
+                     f"or, locally, git fetch --depth=1 origin {COMMIT_CORPUS}")
 
 
 class Projet:
@@ -187,9 +187,9 @@ class Projet:
     def __init__(self, options):
         sortie = options.pop("sortie_compressee", "identique")
         if sortie not in ("identique", "peut_changer"):
-            raise Erreur(f"sortie_compressee : identique ou peut_changer, pas {sortie!r}")
+            raise Erreur(f"sortie_compressee: identique or peut_changer, not {sortie!r}")
         if options:
-            raise Erreur("options inconnues : " + ", ".join(sorted(options)))
+            raise Erreur("unknown options: " + ", ".join(sorted(options)))
         self.identique = sortie == "identique"
         self.VERIFICATION = {"sortie_compressee": sortie}
 
@@ -225,9 +225,9 @@ class Projet:
         if self.identique:
             sortie_a = a.exiger("f", relatif)
             if sortie_a != sortie_b:
-                raise Refus(f"sortie compressée différente de la base : {relatif} ({len(sortie_a)} contre {len(sortie_b)} octets)")
+                raise Refus(f"compressed output differs from the base: {relatif} ({len(sortie_a)} vs {len(sortie_b)} bytes)")
         elif decompresser_zlib(sortie_b) != original:
-            raise Refus(f"la sortie compressée ne redonne pas l'original (zlib de l'hôte) : {relatif}")
+            raise Refus(f"the compressed output does not give back the original (host zlib): {relatif}")
         return len(sortie_b)
 
     def verifier(self, a, b, entrees):
@@ -237,7 +237,7 @@ class Projet:
                 continue
             # Contrôle de bon sens sur la base elle-même (niveau 6) : il détecte un juge mal monté.
             if decompresser_zlib(a.exiger("f", f"c/{e.nom}.6")) != e.donnees:
-                raise Erreur(f"la base ne redonne pas l'original pour {e.nom} : juge mal monté")
+                raise Erreur(f"the base does not give back the original for {e.nom}: judge set up wrong")
             for niveau in NIVEAUX_UNIQUE:
                 self.compressee(a, b, f"c/{e.nom}.{niveau}", e.donnees)
                 comparees += 1
@@ -251,17 +251,17 @@ class Projet:
                 code_a, _ = a.statut("z", f"{etat}/{e.nom}")
                 code_b, _ = b.statut("z", f"{etat}/{e.nom}")
                 if code_a != code_b:
-                    raise Refus(f"décompression ({'mz_uncompress' if unique else 'mz_inflate en flux'}) de {e.nom} : "
-                                f"code {code_b}, la base donne {code_a}")
+                    raise Refus(f"decompression ({'mz_uncompress' if unique else 'streamed mz_inflate'}) of {e.nom}: "
+                                f"code {code_b}, the base gives {code_a}")
                 sa, sb = a.exiger("z", f"{sortie}/{e.nom}"), b.exiger("z", f"{sortie}/{e.nom}")
                 comparees += 1
                 if code_a == (MZ_OK if unique else MZ_STREAM_END):
                     if sa != sb:
-                        raise Refus(f"décompression de {e.nom} différente de la base ({sortie})")
+                        raise Refus(f"decompression of {e.nom} differs from the base ({sortie})")
                     if e.attendu is not None and sa != e.attendu:
-                        raise Erreur(f"la base ne redonne pas l'original de {e.nom} ({sortie}) : juge mal monté")
+                        raise Erreur(f"the base does not give back the original of {e.nom} ({sortie}): judge set up wrong")
                 elif sa[:min(len(sa), len(sb))] != sb[:min(len(sa), len(sb))]:
-                    raise Refus(f"décompression de {e.nom} en erreur : octets produits différents de la base ({sortie})")
+                    raise Refus(f"decompression of {e.nom} in error: bytes produced differ from the base ({sortie})")
         return comparees
 
     def fixes(self, sorties, corpus):
@@ -284,7 +284,7 @@ class Projet:
             for e in entrees:
                 if e.cote == "z":
                     if b.exiger("z", f"decompression/d/{e.nom}") != e.attendu:
-                        raise Refus(f"décompression mesurée de {e.nom} différente de l'original")
+                        raise Refus(f"measured decompression of {e.nom} differs from the original")
                     traites += len(e.attendu)
                     comparees += 1
             return {"debit_decompression": traites / 1e6 / cpu if cpu > 0 else None}, comparees
@@ -294,4 +294,4 @@ class Projet:
                     self.compressee(a, b, f"memoire/m/{e.nom}", e.donnees)
                     comparees += 1
             return {"memoire_max_ko": mesure["maxrss_ko"]}, comparees
-        raise Erreur(f"scénario inconnu : {s}")
+        raise Erreur(f"unknown scenario: {s}")

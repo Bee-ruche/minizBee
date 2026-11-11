@@ -26,7 +26,7 @@
 
 static void ecart(const char *quoi, int niveau, int strategie, size_t taille)
 {
-    fprintf(stderr, "fuzz_compression : ÉCART %s (niveau %d, stratégie %d, %zu octets)\n", quoi, niveau, strategie, taille);
+    fprintf(stderr, "fuzz_compression: DISCREPANCY %s (level %d, strategy %d, %zu bytes)\n", quoi, niveau, strategie, taille);
     abort();
 }
 
@@ -37,13 +37,13 @@ static void verifier_avec_zlib(const unsigned char *c, size_t nc, const uint8_t 
     int r = uncompress(tampon, &taille, c, (uLong)nc);
     if (r != Z_OK)
     {
-        fprintf(stderr, "fuzz_compression : %s : uncompress de zlib a renvoyé %d\n", mode, r);
-        ecart("zlib ne décompresse pas la sortie de miniz", niveau, strategie, n);
+        fprintf(stderr, "fuzz_compression: %s: zlib's uncompress returned %d\n", mode, r);
+        ecart("zlib does not decompress miniz's output", niveau, strategie, n);
     }
     if (taille != n || (n && memcmp(tampon, d, n) != 0))
     {
-        fprintf(stderr, "fuzz_compression : %s\n", mode);
-        ecart("la sortie de miniz décompressée par zlib diffère de l'entrée", niveau, strategie, n);
+        fprintf(stderr, "fuzz_compression: %s\n", mode);
+        ecart("miniz's output decompressed by zlib differs from the input", niveau, strategie, n);
     }
 }
 
@@ -132,7 +132,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *donnees, size_t taille)
         int r;
         memset(&s, 0, sizeof(s));
         if (mz_deflateInit2(&s, niveau, MZ_DEFLATED, MZ_DEFAULT_WINDOW_BITS, 9, strategie) != MZ_OK)
-            ecart("mz_deflateInit2 refuse des paramètres valides", niveau, strategie, n);
+            ecart("mz_deflateInit2 refuses valid parameters", niveau, strategie, n);
         s.next_in = d;
         s.avail_in = (unsigned int)n;
         s.next_out = c;
@@ -141,20 +141,20 @@ int LLVMFuzzerTestOneInput(const uint8_t *donnees, size_t taille)
         nc = s.total_out;
         mz_deflateEnd(&s);
         if (r != MZ_STREAM_END)
-            ecart("mz_deflate(MZ_FINISH) n'aboutit pas avec un tampon de mz_compressBound octets", niveau, strategie, n);
+            ecart("mz_deflate(MZ_FINISH) does not finish with a buffer of mz_compressBound bytes", niveau, strategie, n);
         if (nc > borne)
-            ecart("la sortie dépasse mz_compressBound", niveau, strategie, n);
+            ecart("the output exceeds mz_compressBound", niveau, strategie, n);
     }
-    verifier_avec_zlib(c, nc, d, n, tampon, "une fois", niveau, strategie);
+    verifier_avec_zlib(c, nc, d, n, tampon, "one shot", niveau, strategie);
 
     /* 2 et 3. Compression en flux. */
     {
         size_t nf = compresser_flux(d, n, niveau, strategie, morceau, avec_vidage, flux, capacite_flux);
         if (nf == 0)
-            ecart("la compression en flux échoue", niveau, strategie, n);
-        verifier_avec_zlib(flux, nf, d, n, tampon, avec_vidage ? "flux avec MZ_SYNC_FLUSH" : "flux", niveau, strategie);
+            ecart("streamed compression fails", niveau, strategie, n);
+        verifier_avec_zlib(flux, nf, d, n, tampon, avec_vidage ? "streamed with MZ_SYNC_FLUSH" : "streamed", niveau, strategie);
         if (!avec_vidage && (nf != nc || memcmp(flux, c, nc) != 0))
-            ecart("la sortie en flux diffère de la sortie en une fois", niveau, strategie, n);
+            ecart("the streamed output differs from the one-shot output", niveau, strategie, n);
     }
 
     free(c);

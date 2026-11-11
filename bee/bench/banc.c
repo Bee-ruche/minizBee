@@ -78,7 +78,7 @@ static void *allouer(size_t n)
     void *p = malloc(n ? n : 1);
     if (!p)
     {
-        fprintf(stderr, "banc : mémoire insuffisante (%zu octets)\n", n);
+        fprintf(stderr, "banc: out of memory (%zu bytes)\n", n);
         exit(2);
     }
     return p;
@@ -225,18 +225,18 @@ static long mesurer_memoire(const char *dossier)
                 snprintf(chemin, sizeof(chemin), "%s/%s", dossier, liste.fichiers[i].nom);
                 if (flux_fichier(chemin, niveaux[k], entree, compresse, sortie) != 0)
                 {
-                    fprintf(stderr, "banc : échec du passage en flux de %s au niveau %d\n", chemin, niveaux[k]);
+                    fprintf(stderr, "banc: the streaming pass over %s failed at level %d\n", chemin, niveaux[k]);
                     _exit(4);
                 }
             }
         if (verbeux)
-            fprintf(stderr, "banc : pic des allocations de miniz en flux : %zu octets\n", alloc_pic);
+            fprintf(stderr, "banc: peak of miniz's allocations in streaming: %zu bytes\n", alloc_pic);
         fflush(stderr);
         _exit(0);
     }
     if (wait4(pid, &statut, 0, &ru) < 0 || !WIFEXITED(statut) || WEXITSTATUS(statut) != 0)
     {
-        fprintf(stderr, "banc : le processus de mesure mémoire a échoué (statut %d)\n", statut);
+        fprintf(stderr, "banc: the memory measurement process failed (status %d)\n", statut);
         return -1;
     }
     return ru.ru_maxrss;
@@ -295,12 +295,12 @@ static double mesurer_compression(const bee_corpus *c, int niveau, int passes, c
             FIN_INSTRUMENTATION();
         if (r != 0)
         {
-            fprintf(stderr, "banc : mz_compress2 a échoué au niveau %d\n", niveau);
+            fprintf(stderr, "banc: mz_compress2 failed at level %d\n", niveau);
             exit(1);
         }
         if (p > 0 && z->total != total_precedent)
         {
-            fprintf(stderr, "banc : la taille compressée varie d'une passe à l'autre au niveau %d (non déterministe)\n", niveau);
+            fprintf(stderr, "banc: the compressed size varies from one pass to the next at level %d (not deterministic)\n", niveau);
             exit(1);
         }
         total_precedent = z->total;
@@ -308,15 +308,15 @@ static double mesurer_compression(const bee_corpus *c, int niveau, int passes, c
             meilleur = t;
     }
     if (verbeux)
-        fprintf(stderr, "banc : niveau %d, %d passes, meilleure %.4f s, %zu -> %zu octets\n", niveau, passes, meilleur, c->total, z->total);
+        fprintf(stderr, "banc: level %d, %d passes, best %.4f s, %zu -> %zu bytes\n", niveau, passes, meilleur, c->total, z->total);
     return meilleur;
 }
 
 static void usage(void)
 {
-    fprintf(stderr, "usage : banc [--corpus DOSSIER] [--scenario tout|n1|n6|n9|decompression|memoire] [--passes K]\n"
-                    "             [--passes-n1 K] [--passes-n6 K] [--passes-n9 K] [--passes-decompression K]\n"
-                    "             [--prefixe N] [--sans-memoire] [--verbeux]\n");
+    fprintf(stderr, "usage: banc [--corpus FOLDER] [--scenario tout|n1|n6|n9|decompression|memoire] [--passes K]\n"
+                    "            [--passes-n1 K] [--passes-n6 K] [--passes-n9 K] [--passes-decompression K]\n"
+                    "            [--prefixe N] [--sans-memoire] [--verbeux]\n");
 }
 
 static void ecrire_nombre(const char *cle, double valeur, int decimales, int dernier)
@@ -385,7 +385,7 @@ int main(int argc, char **argv)
         instrumenter_compression = 0;
     if (passes_n1 < 1 || passes_n6 < 1 || passes_n9 < 1 || passes_dec < 1)
     {
-        fprintf(stderr, "banc : le nombre de passes doit être au moins 1\n");
+        fprintf(stderr, "banc: the number of passes must be at least 1\n");
         return 2;
     }
     if (!strcmp(scenario, "tout"))
@@ -467,7 +467,7 @@ int main(int argc, char **argv)
                     if (mz_uncompress(sortie, &n, z.sorties[i], z.tailles[i]) != MZ_OK || n != corpus.fichiers[i].taille ||
                         (n && memcmp(sortie, corpus.fichiers[i].donnees, n) != 0))
                     {
-                        fprintf(stderr, "banc : la décompression ne restitue pas %s\n", corpus.fichiers[i].nom);
+                        fprintf(stderr, "banc: decompression does not give back %s\n", corpus.fichiers[i].nom);
                         return 1;
                     }
                 }
@@ -482,7 +482,7 @@ int main(int argc, char **argv)
                     FIN_INSTRUMENTATION();
                     if (r != 0)
                     {
-                        fprintf(stderr, "banc : mz_uncompress a échoué\n");
+                        fprintf(stderr, "banc: mz_uncompress failed\n");
                         return 1;
                     }
                     if (meilleur < 0 || td < meilleur)
@@ -490,7 +490,7 @@ int main(int argc, char **argv)
                 }
                 debit_dec = (double)corpus.total / meilleur / 1e6;
                 if (verbeux)
-                    fprintf(stderr, "banc : décompression, %d passes, meilleure %.4f s\n", passes_dec, meilleur);
+                    fprintf(stderr, "banc: decompression, %d passes, best %.4f s\n", passes_dec, meilleur);
             }
         }
         for (i = 0; i < corpus.nombre; i++)
