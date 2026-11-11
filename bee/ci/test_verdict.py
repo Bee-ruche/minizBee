@@ -933,6 +933,7 @@ class JobVerdictJugeV3(unittest.TestCase):
     def test_rapport_verifie_contre_les_sorties_du_job_juge(self):
         etape = self.etape("Common judge's report checked")
         self.assertEqual(etape["if"], "needs.greffon.outputs.contrat == 'juge-v3'")
+        self.assertEqual(self.etape("Common judge (registry, at the pinned commit of juge-v3")["if"], etape["if"])
         self.assertEqual(etape["env"]["SORTIES_JUGE"], "${{ toJSON(needs.juge.outputs) }}")
         noms = list(self.etapes)
         self.assertLess(noms.index(etape["name"]), noms.index("Assembler verdict.json"))

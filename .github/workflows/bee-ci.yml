@@ -620,6 +620,7 @@ jobs:
           name: juge
           path: artefacts/juge
       - name: Common judge (registry, at the pinned commit of juge-v3; rapport.py)
+        if: needs.greffon.outputs.contrat == 'juge-v3'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.REGISTRE }}
