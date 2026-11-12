@@ -1042,6 +1042,10 @@ class JobVerdict(unittest.TestCase):
         # The new verdict.py, on the jobs of judge-v4: green; a failed judge job: red.
         v = Verdict().executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, judge=v4), rapport_ab())
         self.assertEqual(v["ci"], "green")
+        v = Verdict().executer({e: "succes" for e in ETAPES}, dict(JOBS_OK, judge={"result": "failure", "outputs": {"code": "0"}}),
+                               rapport_ab())
+        self.assertEqual((v["ci"], v["steps"]["common_judge"]), ("red", "passed (job failure)"))
+        self.assertEqual(v["failed_step"], "Common judge (checking from the outside and measurements) (no result)")
 
     def test_ci_rouge_lit_les_deux_vocabulaires(self):
         """The last step reads the verdict the base's verdict.py wrote: French under juge-v3, English after the merge."""
