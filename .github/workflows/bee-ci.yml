@@ -1,54 +1,52 @@
-# CI Bee du fork miniz (https://github.com/Bee-ruche/minizBee). Fork indépendant, non affilié au projet miniz.
+# Bee CI of the miniz fork (https://github.com/Bee-ruche/minizBee). Independent fork, not affiliated with the miniz project.
 #
-# Étapes, dans l'ordre (la première en échec est rapportée, voir docs/evaluation.md du registre Bee) :
-#   1. manifeste et taille : bee verifier-fork (check-fork), avec l'outil du registre (branche main, lu dans ses deux
-#      vocabulaires, français et anglais : docs/english-migration.md du registre ; bee/ci/vocabulaire.py)
-#   2. compilation et tests d'origine de miniz, x86-64 et ARM64
-#   3. tests différentiels contre zlib et empreintes de déterminisme, x86-64 et ARM64
-#   4. fuzzing libFuzzer, 2 harnais en parallèle pendant 10 minutes, x86-64
-#   5. juge commun du registre (workflow réutilisable juge.yml de juge-v3, épinglé par SHA) avec le greffon de
-#      minizBee (bee/juge/projet.py) lu dans la BASE : base de la PR (celle de l'événement) contre tête de la PR ;
-#      vérification de toutes les sorties par l'hôte (zlib de l'hôte, entrées tirées
-#      au hasard), mesures entrelacées (10 répétitions) et décompte d'instructions Cachegrind, tout en
-#      conteneur ; analyse des objets compilés (constructions suspectes). The verdict job checks the judge's
-#      report against its job's outputs (rapport.py --verifier). Transition: a base whose plugin is still
-#      written for juge-v2 (the PR that adopts juge-v3, miniz-0048) is judged by juge-v2, from its starting point
-#   6. ancien juge isolé (bee/juge/juge.py), tant qu'une base en a encore un (transition, miniz-0032)
-#   7. méta-tests du greffon contre le juge commun, seulement si la PR modifie bee/juge/ ou ce workflow
-#   8. verdict.json, publié en artefact « verdict » (lu par le workflow verdicts.yml du registre)
+# Steps, in order (the first failed one is reported, see the Bee registry's docs/evaluation.md):
+#   1. manifest and size: bee check-fork, with the registry's tool (branch main, read in English; its metric ids in
+#      French or in English until ruche-0149: bee/ci/vocabulaire.py)
+#   2. miniz's build and original tests, x86-64 and ARM64
+#   3. differential tests against zlib and determinism fingerprints, x86-64 and ARM64
+#   4. libFuzzer fuzzing, 2 harnesses in parallel for 10 minutes, x86-64
+#   5. the registry's common judge (reusable workflow judge.yml of judge-v4, pinned by SHA) with minizBee's plugin
+#      (bee/judge/project.py) read in the BASE: the PR's base (the event's) against the PR's head; every output
+#      checked by the host (the host's zlib, inputs drawn
+#      at random), interleaved measurements (10 repetitions) and Cachegrind instruction count, all in
+#      containers; analysis of the compiled objects (suspicious constructs). The verdict job checks the judge's
+#      report against its job's outputs (report.py --verify). Transition: a base that still pins juge-v3 (the PR
+#      that adopts judge-v4, miniz-0050) is judged by juge-v3 too, whose report its verdict.py reads
+#   6. the plugin's meta-tests against the common judge, only if the PR modifies bee/judge/ or this workflow
+#   7. verdict.json, published as the artifact « verdict » (read by the registry's verdicts.yml workflow)
 #
-# Sécurité :
-#   - permissions: contents: read pour tout le workflow ; aucun secret ; checkouts sans identifiants
-#     conservés (persist-credentials: false). Déclencheur pull_request (jamais pull_request_target) :
-#     pour une PR venant d'un fork, GitHub ne fournit de toute façon ni secret ni jeton en écriture.
-#   - les juges (tests, corpus, banc, fuzzing, scripts de CI) viennent de la BASE de la PR ; seules les
-#     sources de miniz viennent de la PR, qui ne peut pas assouplir ces fichiers-là.
-#   - MAIS ce fichier de workflow est celui de la PR (déclencheur pull_request) : une PR qui modifie
-#     .github/ ou bee/ peut fabriquer son propre verdict. Le registre le détecte de son côté (liste des
-#     fichiers de la PR lue auprès de l'API GitHub, verdicts.yml) : verdict refusé pour une optimisation,
-#     relecture du conseil ou d'un Confirmé exigée pour une tâche d'outillage (R3).
-#   - le manifeste (manifests/<tâche>.yaml ou manifestes/) et la tâche du registre sont des données (yaml.safe_load), jamais exécutées ;
-#     les valeurs qui en sortent sont validées contre des listes fermées.
-#   - « ci » est décidée par le job verdict à partir du résultat des jobs (needs.*.result), que le code
-#     de la PR ne peut pas réécrire ; les fichiers d'état servent seulement à nommer l'étape en échec.
-#   - le code C de la PR ne s'exécute JAMAIS sur la machine de CI elle-même : compilation, tests,
-#     fuzzing et mesures tournent dans le conteneur du juge commun (sans réseau, lecture seule, sans
-#     privilège), sur des copies jetables. isoler.sh et l'image viennent du registre au commit JUGE_COMMUN_SHA ;
-#     juge.yml est appelé à ce commit et en extrait lui-même le juge (ruche-0024 : jamais une étiquette).
-#     L'image est construite avant que le moindre fichier de la PR ne soit monté. Le commit du corpus
-#     (2948eeb) est déclaré à juge.yml (historique) et récupéré avant la PR ; aucun réseau ensuite.
-#   - le greffon (bee/juge/projet.py) est lu dans la BASE, jamais dans la PR : seule la PR qui l'introduit
-#     (bee/ci/juges.sh, « introduction du greffon ») est jugée avec le sien, en amorçage (amorcage: true).
-#   - les étapes 2 à 4 restent des contrôles « de l'intérieur » : un code malveillant peut fausser ses
-#     propres tests (exit(0) au milieu, par exemple) mais pas en sortir. Le juge commun (étape 5), lui,
-#     vérifie les sorties de l'extérieur, avec des entrées qu'aucun code ne connaît d'avance, et mesure
-#     les temps par le noyau : c'est lui qui fait foi. Modèle de menace : bee/README.md, section « Juge commun et greffon ».
+# Security:
+#   - permissions: contents: read for the whole workflow; no secret; checkouts keep no credentials
+#     (persist-credentials: false). Trigger pull_request (never pull_request_target):
+#     for a PR from a fork, GitHub provides neither secret nor write token anyway.
+#   - the judges (tests, corpus, bench, fuzzing, CI scripts) come from the PR's BASE; only the
+#     sources of miniz come from the PR, which cannot loosen those files.
+#   - BUT this workflow file is the PR's (pull_request trigger): a PR that modifies
+#     .github/ or bee/ can fabricate its own verdict. The registry detects it on its side (the list of the
+#     PR's files read from the GitHub API, verdicts.yml): verdict refused for an optimization,
+#     review by the council or a Confirmed member required for a tooling task (R3).
+#   - the manifest (manifests/<task>.yaml or manifestes/) and the registry's task are data (yaml.safe_load), never run;
+#     the values drawn from them are checked against closed lists.
+#   - « ci » is decided by the verdict job from the jobs' results (needs.*.result), which the PR's
+#     code cannot rewrite; the state files only name the failed step.
+#   - the PR's C code NEVER runs on the CI machine itself: build, tests,
+#     fuzzing and measurements run in the common judge's container (no network, read-only, no
+#     privilege), on disposable copies. isoler.sh and the image come from the registry at the commit JUGE_COMMUN_SHA;
+#     judge.yml is called at that commit and checks out the judge itself (ruche-0024: never a tag).
+#     The image is built before the slightest file of the PR is mounted. The corpus commit
+#     (2948eeb) is declared to judge.yml (history) and fetched before the PR; no network afterwards.
+#   - the plugin (bee/judge/project.py) is read in the BASE, never in the PR.
+#   - steps 2 to 4 remain checks « from the inside »: malicious code can distort its
+#     own tests (exit(0) in the middle, for example) but not get out. The common judge (step 5), for its part,
+#     checks the outputs from the outside, with inputs no code knows in advance, and measures
+#     the times through the kernel: it is authoritative. Threat model: bee/README.md, section « Common judge and plugin ».
 name: bee-ci
 
 on:
   pull_request:
-    # Seules les PR vers master sont jugées : une PR vers une vieille branche serait jugée par les juges de
-    # cette branche, puis pourrait être rebasculée vers master sans nouvelle exécution (revue adverse).
+    # Only PRs to master are judged: a PR to an old branch would be judged by that branch's judges, then could be
+    # switched to master without a new run (adversarial review).
     branches: [master]
 
 permissions:
@@ -71,12 +69,12 @@ env:
   # PR whose base pins it (the base's verdict.py reads juge-v3's report). The same SHA as in that job's « uses: ».
   JUGE_V3_SHA: "3b21e97a89c25ddcfbb3c0d28d1086b801c991bc"  # juge-v3
   ETATS: ${{ github.workspace }}/etats
-  # Amorçage : la première PR, qui apporte bee/, a pour base le master d'origine, sans juges.
-  # Pour CE commit seulement, les juges viennent de la PR elle-même (verdict : amorcage: true).
+  # Bootstrap: the first PR, which brings bee/, has the original master as its base, without judges.
+  # For THIS commit only, the judges come from the PR itself (verdict: bootstrap: true).
   BEE_COMMIT_AMORCAGE: 2948eebafc5b9f1c69bebed80333e403a09bd62d
-  # Logique de bee/ci/juges.sh (copie identique, vérifiée par bee/ci/test_verdict.py), exécutée par
-  # l'étape « Juges » de chaque job : à l'amorçage, la base ne contient pas encore ce script.
-  # Variables attendues : base, pr, base_sha, etats.
+  # The logic of bee/ci/juges.sh (an identical copy, checked by bee/ci/test_verdict.py), run by
+  # the « Judges » step of each job: at bootstrap, the base does not contain this script yet. It writes the state
+  # values the base's bee/ci/verdict.py reads (succes, echec, oui). Expected variables: base, pr, base_sha, etats.
   BEE_JUGES: |
     mkdir -p "$etats"
     if [ -f "$base/bee/ci/etape.sh" ]; then
@@ -98,8 +96,9 @@ env:
       exit 1
     fi
 
-  # Conteneur du juge commun (juge-commun/ : le registre au commit JUGE_COMMUN_SHA), après l'étape « Juges » :
-  # isoler.sh du registre et l'image commune avec les paquets du greffon (de la base ; de la PR en amorçage).
+  # The common judge's container (juge-commun/: the registry at the commit JUGE_COMMUN_SHA), after the « Judges » step:
+  # the registry's isoler.sh and the common image with the plugin's packages (from the base; from the PR at bootstrap).
+  # judge-v4's commit has tools/judge/isoler.sh without its executable mode (lost when the judge moved to tools/judge).
   BEE_IMAGE: |
     chmod +x juge-commun/tools/judge/isoler.sh
     greffon=base
@@ -107,7 +106,7 @@ env:
     image="$(python3 juge-commun/tools/judge/judge.py --tooling "$greffon" --image-only)"
     echo "ISOLER=$GITHUB_WORKSPACE/juge-commun/tools/judge/isoler.sh" >> "$GITHUB_ENV"
     echo "IMAGE=$image" >> "$GITHUB_ENV"
-  # Copie de travail jetable pour une étape conteneurisée : la base et la PR, fraîches.
+  # A disposable working copy for a containerized step: the base and the PR, fresh.
   BEE_TRAVAIL: |
     travail="$RUNNER_TEMP/travail-$1"
     rm -rf "$travail"
@@ -118,7 +117,7 @@ env:
 
 jobs:
   manifeste:
-    name: Manifeste et taille
+    name: Manifest and size
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -127,24 +126,24 @@ jobs:
       metrique: ${{ steps.manifeste.outputs.metrique }}
       sortie_compressee: ${{ steps.manifeste.outputs.sortie_compressee }}
     steps:
-      - name: Base de la PR (juges)
+      - name: Base of the PR (judges)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BASE_SHA }}
           path: base
           persist-credentials: false
-      - name: Tête de la PR (historique complet, pour le diff)
+      - name: Head of the PR (full history, for the diff)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
           path: pr
           fetch-depth: 0
           persist-credentials: false
-      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+      - name: Judges (bee/ of the base, or of the PR at bootstrap)
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Registre Bee (branche main)
+      - name: Bee registry (branch main)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.REGISTRE }}
@@ -161,7 +160,7 @@ jobs:
           python3 base/bee/bench/test_ab.py
           python3 base/bee/ci/test_verdict.py
           python3 base/bee/bench/test_profil.py
-      - name: Manifeste, tâche, R1 et commandement 3
+      - name: Manifest, task, R1 and commandment 3
         id: manifeste
         env:
           AUTEUR: ${{ github.event.pull_request.user.login }}
@@ -169,14 +168,14 @@ jobs:
         run: |
           mkdir -p donnees
           base/bee/ci/etape.sh "$ETATS" manifeste_et_taille base/bee/ci/manifeste.sh pr registre python3
-      - name: Conserver le manifeste, la tâche et l'état
+      - name: Keep the manifest, the task and the state
         if: always()
         env:
           MANIFESTE: ${{ steps.manifeste.outputs.manifeste }}
         run: |
           mkdir -p donnees
-          # Nom validé par bee/ci/manifeste.sh (manifests/ ou manifestes/miniz-NNNN.yaml, ou CONTRIBUTION.yaml) ;
-          # un manifeste est un fichier ordinaire : ni lien symbolique ni dossier n'est copié.
+          # A name checked by bee/ci/manifeste.sh (manifests/ or manifestes/miniz-NNNN.yaml, or CONTRIBUTION.yaml);
+          # a manifest is a regular file: neither a symbolic link nor a folder is copied.
           case "$MANIFESTE" in
             manifests/miniz-[0-9][0-9][0-9][0-9].yaml|manifestes/miniz-[0-9][0-9][0-9][0-9].yaml|CONTRIBUTION.yaml)
               if [ -f "pr/$MANIFESTE" ] && [ ! -L "pr/$MANIFESTE" ]; then cp "pr/$MANIFESTE" donnees/CONTRIBUTION.yaml 2>/dev/null || true; fi ;;
@@ -189,20 +188,17 @@ jobs:
           path: donnees/
           if-no-files-found: warn
 
-  # Le commit que le juge commun extrait comme base : son bee/juge/projet.py est le greffon et ses sources
-  # sont A. Sous juge-v2, LE point de départ de la PR (un seul merge-base), dont bee/ et miniz* doivent être ceux
-  # de la base : tout ce que le juge lit dans A. Sinon la CI est rouge (« rebasez »), car A ne serait pas ce
-  # que la PR change dans master : comparer la base à une tête qui n'a pas ses changements, ou un point de
-  # départ à une tête qui a recopié (squash, cherry-pick) ce que master a reçu depuis, attribuerait à la PR
-  # le travail d'un autre (revues adverses de miniz-0032 : +19 % fabriqué, faux refus d'une PR non rebasée,
-  # gain d'une optimisation recopiée, criss-cross). Jamais la PR, sauf pour la PR qui introduit le greffon
-  # (bee/ci/juges.sh), qui ne touche pas miniz : ses sources sont alors exactement celles du point de départ.
-  # Le commit retenu et la règle qui l'a choisi sont publiés dans verdict.json (base_juge).
-  # Since juge-v3 (miniz-0048), juge.yml judges only the event's base: A is the PR's base (rule base_de_la_pr), under
-  # the same condition (one starting point, whose bee/ and miniz* are the base's), so its content is the starting
-  # point's. The starting point itself and the introduction remain for a base that still pins juge-v2 (job juge-v2).
+  # The commit the common judge checks out as its base: its plugin is the plugin and its sources are A. Since juge-v3
+  # (miniz-0048), judge.yml judges only the event's base: A is the PR's base (rule base_de_la_pr), provided the PR has
+  # one starting point (one merge-base) whose bee/ and miniz* are the base's: everything the judge reads in A. Otherwise
+  # the CI is red (« rebase »), because A would not be what the PR changes in master: comparing the base with a head
+  # that does not have its changes, or a starting point with a head that has copied (squash, cherry-pick) what master
+  # has received since, would credit the PR with someone else's work (adversarial reviews of miniz-0032: +19%
+  # fabricated, false refusal of a PR not rebased, gain of a copied optimization, criss-cross). Never the PR.
+  # The commit kept and the rule that chose it are published in verdict.json (judge_base); the outputs keep the
+  # names and values the base's verdict.py reads (regle: base_de_la_pr…). « contrat » names the judge the base pins.
   greffon:
-    name: Greffon du juge commun
+    name: Common judge plugin
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -211,24 +207,24 @@ jobs:
       depart: ${{ steps.greffon.outputs.depart }}
       contrat: ${{ steps.greffon.outputs.contrat }}
     steps:
-      - name: Base de la PR (juges)
+      - name: Base of the PR (judges)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BASE_SHA }}
           path: base
           persist-credentials: false
-      - name: Tête de la PR (historique complet, qui contient la base et le point de départ)
+      - name: Head of the PR (full history, which holds the base and the starting point)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
           path: pr
           fetch-depth: 0
           persist-credentials: false
-      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+      - name: Judges (bee/ of the base, or of the PR at bootstrap)
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
-      - name: Commit du greffon et de A pour le juge commun
+      - name: Commit of the plugin and of A for the common judge
         id: greffon
         run: |
           echo "echec" > "$ETATS/greffon_juge.txt"
@@ -246,7 +242,7 @@ jobs:
             exit 1
           fi
           # The judge the base's plugin and harness are written for: the one the base's bee-ci.yml pins (they change
-          # together, in one PR, whose meta-tests run its plugin against its pin). juge-v3 judges the event's base.
+          # together, in one PR, whose meta-tests run its plugin against its pin). Both judge the event's base.
           epingle="$(sed -n 's/^  JUGE_COMMUN_SHA: "\([0-9a-f]\{40\}\)".*/\1/p' base/.github/workflows/bee-ci.yml)"
           if [ "$(cat "$ETATS/greffon.txt")" != "base" ]; then
             echo "::error::The common judge reads the plugin of the PR's base only, and this base has none (bootstrap)." >&2
@@ -272,7 +268,7 @@ jobs:
           if-no-files-found: warn
 
   compilation-et-tests:
-    name: Compilation et tests (${{ matrix.arch }})
+    name: Build and tests (${{ matrix.arch }})
     needs: manifeste
     if: always()
     strategy:
@@ -286,21 +282,21 @@ jobs:
     runs-on: ${{ matrix.machine }}
     timeout-minutes: 30
     steps:
-      - name: Base de la PR (juges ; historique complet pour le corpus)
+      - name: Base of the PR (judges; full history for the corpus)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BASE_SHA }}
           path: base
           fetch-depth: 0
           persist-credentials: false
-      - name: Tête de la PR
+      - name: Head of the PR
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
           path: pr
           fetch-depth: 0
           persist-credentials: false
-      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+      - name: Judges (bee/ of the base, or of the PR at bootstrap)
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
@@ -311,14 +307,14 @@ jobs:
           ref: ${{ env.JUGE_COMMUN_SHA }}
           path: juge-commun
           persist-credentials: false
-      - name: Image du conteneur du juge commun (réseau pour docker build, avant d'exécuter quoi que ce soit de la PR)
+      - name: The common judge's container image (network for docker build, before running anything of the PR)
         run: eval "$BEE_IMAGE"
-      - name: Compilation et tests d'origine de miniz (conteneur sans réseau)
+      - name: miniz's build and original tests (container without network)
         run: |
           travail="$(bash -c "$BEE_TRAVAIL" -- compilation)"
           base/bee/ci/etape.sh "$ETATS" compilation_${{ matrix.arch }} "$ISOLER" "$IMAGE" "$travail" -- \
             /travail/base/bee/ci/tests_origine.sh /travail/pr /travail/cmake
-      - name: Tests différentiels et empreintes (conteneur sans réseau)
+      - name: Differential tests and fingerprints (container without network)
         if: always()
         env:
           SORTIE_COMPRESSEE: ${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
@@ -341,20 +337,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Base de la PR (harnais ; historique complet pour le corpus de graines)
+      - name: Base of the PR (harnesses; full history for the seed corpus)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BASE_SHA }}
           path: base
           fetch-depth: 0
           persist-credentials: false
-      - name: Tête de la PR
+      - name: Head of the PR
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
           path: pr
           persist-credentials: false
-      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+      - name: Judges (bee/ of the base, or of the PR at bootstrap)
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
@@ -365,13 +361,13 @@ jobs:
           ref: ${{ env.JUGE_COMMUN_SHA }}
           path: juge-commun
           persist-credentials: false
-      - name: Image du conteneur du juge commun (réseau pour docker build, avant d'exécuter quoi que ce soit de la PR)
+      - name: The common judge's container image (network for docker build, before running anything of the PR)
         run: eval "$BEE_IMAGE"
-      # Les entrées fautives, les journaux de libFuzzer et les traces ne quittent JAMAIS la machine de
-      # CI : journaux et artefacts d'un dépôt public sont publics (docs/securite.md du registre).
-      # lancer.sh est en mode discret sous GitHub Actions (empreintes seulement) et rejoue chaque
-      # entrée fautive sur la base : un écart qui y existe déjà est signalé sans compter contre la PR.
-      - name: Fuzzing différentiel, 2 harnais en parallèle, 600 s chacun (conteneur sans réseau)
+      # The faulty inputs, libFuzzer's logs and the traces NEVER leave the CI machine: the logs and artifacts of a
+      # public repository are public (the registry's docs/security.md). lancer.sh is in discreet mode under GitHub
+      # Actions (fingerprints only) and replays each faulty input on the base: a discrepancy that already exists there
+      # is reported without counting against the PR.
+      - name: Differential fuzzing, 2 harnesses in parallel, 600 s each (container without network)
         run: |
           travail="$(bash -c "$BEE_TRAVAIL" -- fuzzing)"
           base/bee/ci/etape.sh "$ETATS" fuzzing "$ISOLER" "$IMAGE" "$travail" -- \
@@ -414,9 +410,8 @@ jobs:
       tete_sha: ${{ github.event.pull_request.head.sha }}
       options: sortie_compressee=${{ needs.manifeste.outputs.sortie_compressee || 'identique' }}
 
-  # Transition : tant que la base a encore l'ancien juge isolé (bee/juge/juge.py, version 2), il juge aussi
-  # la PR, comme avant. C'est le cas de toute PR vers master tant que miniz-0032 n'y est pas fusionnée ;
-  # ensuite master n'en a plus et ce job ne fait rien.
+  # Transition to judge-v4: a base's verdict.py written for juge-v3 still requires the step of the old isolated judge
+  # (bee/juge/juge.py, gone since miniz-0032). Under juge-v3 only, this job records that the base has none.
   juge-ancien:
     name: Old isolated judge of the base (juge-v3 transition)
     needs: [manifeste, greffon]
@@ -453,11 +448,11 @@ jobs:
           path: conserver/
           if-no-files-found: warn
 
-  # Exécute du code de la PR (bee/juge/test_juge.py) sur la machine de CI quand elle modifie bee/juge/ ou ce
-  # workflow : job à part, en lecture seule, sans secret ni identifiant conservé, sans artefact ni sortie.
-  # Seul son résultat compte (needs du verdict) : verdict.json reste assemblé par l'outillage de la base.
+  # Runs the PR's code (bee/judge/test_judge.py) on the CI machine when it modifies bee/judge/ or this
+  # workflow: a separate job, read-only, with no secret nor kept credential, no artifact nor output.
+  # Only its result counts (needs of the verdict): verdict.json stays assembled by the base's tooling.
   meta-juge:
-    name: Méta-tests du greffon (juge commun)
+    name: Plugin meta-tests (common judge)
     needs: manifeste
     if: always()
     runs-on: ubuntu-24.04
@@ -465,21 +460,21 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Base de la PR
+      - name: Base of the PR
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BASE_SHA }}
           path: base
           fetch-depth: 0
           persist-credentials: false
-      - name: Tête de la PR (historique complet, pour le diff et le corpus)
+      - name: Head of the PR (full history, for the diff and the corpus)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
           path: pr
           fetch-depth: 0
           persist-credentials: false
-      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+      - name: Judges (bee/ of the base, or of the PR at bootstrap)
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
           eval "$BEE_JUGES"
@@ -490,10 +485,10 @@ jobs:
           ref: ${{ env.JUGE_COMMUN_SHA }}
           path: juge-commun
           persist-credentials: false
-      # Une PR qui modifie bee/juge/ (greffon, harnais) ou la version du juge commun doit prouver que le juge
-      # commun, avec SON greffon, attrape des variantes malveillantes de miniz (bee/juge/test_juge.py),
-      # compilées et lancées en conteneur.
-      - name: Méta-tests (seulement si la PR modifie bee/juge/ ou ce workflow)
+      # A PR that modifies bee/judge/ (plugin, harness) or the common judge's version must prove that the common
+      # judge, with ITS plugin, catches malicious variants of miniz (bee/judge/test_judge.py),
+      # compiled and run in containers.
+      - name: Meta-tests (only if the PR modifies bee/judge/ or this workflow)
         run: |
           if git -C pr diff --quiet "$BASE_SHA...$TETE_SHA" -- bee/judge bee/juge .github/workflows/bee-ci.yml; then
             echo "bee/judge/ and bee-ci.yml unchanged by the PR: no meta-tests."
@@ -504,18 +499,18 @@ jobs:
             BEE_COMMON_JUDGE="$GITHUB_WORKSPACE/juge-commun/tools/judge" python3 pr/bee/judge/test_judge.py
       # No artifact: the PR's code ran in this job, nothing it may have written reaches the verdict.
 
-  # Tests de l'outillage de CI de la PR (bee/ci/test_verdict.py) quand elle modifie bee/ci/ ou ce workflow : le
-  # job manifeste ne lance que ceux de la base. Mêmes conditions que meta-juge : code de la PR sur la machine
-  # de CI, donc job à part, en lecture seule, sans secret ni identifiant conservé, sans artefact ni sortie ;
-  # seul son résultat compte, et verdict.json reste assemblé par l'outillage de la base.
+  # Tests of the PR's CI tooling (bee/ci/test_verdict.py) when it modifies bee/ci/ or this workflow: the
+  # manifeste job runs only the base's. The same conditions as meta-juge: the PR's code on the CI machine,
+  # hence a separate job, read-only, with no secret nor kept credential, no artifact nor output;
+  # only its result counts, and verdict.json stays assembled by the base's tooling.
   outillage-pr:
-    name: Tests de l'outillage de CI de la PR
+    name: Tests of the PR's CI tooling
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - name: Tête de la PR (historique complet, pour le diff)
+      - name: Head of the PR (full history, for the diff)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
@@ -525,9 +520,9 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - name: PyYAML (lecture du workflow par les tests)
+      - name: PyYAML (the tests read the workflow)
         run: pip install "pyyaml==6.0.2"
-      - name: Tests de l'outillage de CI de la PR (seulement si la PR modifie bee/ci/ ou ce workflow)
+      - name: Tests of the PR's CI tooling (only if the PR modifies bee/ci/ or this workflow)
         run: |
           if git -C pr diff --quiet "$BASE_SHA...$TETE_SHA" -- bee/ci .github/workflows/bee-ci.yml; then
             echo "bee/ci/ and bee-ci.yml unchanged by the PR: the base's tests are enough (manifeste job)."
@@ -542,20 +537,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Base de la PR (verdict.py)
+      - name: Base of the PR (verdict.py)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BASE_SHA }}
           path: base
           persist-credentials: false
-      - name: Historique de la PR (lu par git diff seulement, pour compter les lignes)
+      - name: History of the PR (read by git diff only, to count the lines)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.TETE_SHA }}
           path: pr
           fetch-depth: 0
           persist-credentials: false
-      - name: Juges (bee/ de la base, ou de la PR en amorçage)
+      - name: Judges (bee/ of the base, or of the PR at bootstrap)
         id: juges
         run: |
           export base=base pr=pr base_sha="${BASE_SHA:?}" etats="${ETATS:?}"
@@ -563,7 +558,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - name: PyYAML (lecture du manifeste et de la tâche)
+      - name: PyYAML (reading the manifest and the task)
         run: pip install "pyyaml==6.0.2"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -624,8 +619,8 @@ jobs:
           RESULTATS_JOBS: ${{ toJSON(needs) }}
           CONTRAT: ${{ needs.greffon.outputs.contrat }}
         run: |
-          # Transition to juge-v3: one of the two judging jobs runs, the one the base's plugin is written for (greffon
-          # job); verdict.py reads it as « juge », and the other one, skipped, is left out.
+          # Transition to judge-v4: a base's verdict.py written for juge-v3 reads the juge-v3 job as « juge », and the
+          # juge-ancien job; otherwise both are left out (skipped). The judge job counts in both cases.
           python3 - > resultats-jobs.json <<'FIN'
           import json, os
           jobs = json.loads(os.environ["RESULTATS_JOBS"])
@@ -645,7 +640,7 @@ jobs:
           python3 "$verdict" --artefacts artefacts --juge "$juge" --etats "$ETATS" --jobs resultats-jobs.json \
             --depot pr --base "$BASE_SHA" --tete "$TETE_SHA" --sortie verdict.json
           cat verdict.json
-      - name: Verdict de repli (base sans juges, verdict.py indisponible)
+      - name: Fallback verdict (base without judges, verdict.py unavailable)
         if: failure() && steps.juges.outcome == 'failure'
         run: |
           printf '%s\n' '{"ci": "red", "failed_step": "Judges (base without bee/)", "gain": null, "metric": null, "beyond_noise": false, "measurements": {"A": {}, "B": {}}, "instructions": null, "degradations": {}, "changed_lines": null, "bootstrap": false}' > verdict.json
@@ -656,6 +651,6 @@ jobs:
           name: verdict
           path: verdict.json
           if-no-files-found: error
-      - name: CI rouge si une étape a échoué
+      - name: CI red if a step failed
         run: |
           python3 -c 'import json, sys; v = json.load(open("verdict.json")); print("CI", v["ci"], v.get("failed_step", v.get("etape_en_echec", ""))); sys.exit(v["ci"] not in ("green", "verte"))'

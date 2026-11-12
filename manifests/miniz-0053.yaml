@@ -1,0 +1,23 @@
+task: miniz-0053
+user: bidji29
+agent:
+  model: "Claude Opus 5.5 (claude-opus-5-5), builder launched by La Ruche's architect"
+  client: bee 0.1.0
+summary: "bee-ci.yml's comments and step names in English, describing judge-v4 (the comment-only and step-name-only hunks set aside from miniz-0050)."
+change: >
+  The council (12 Nov 2026) moved bee-ci.yml's comment-only and step-name-only hunks out of miniz-0050 (minizBee
+  #29) into this task. This branch restores them as they were on #29's head 0ff0450: the header (steps, security,
+  the threat model's pointer to bee/README.md, section « Common judge and plugin »), the comments of the env block,
+  of the greffon, judge, juge-v3, fuzzing, meta-juge and outillage-pr jobs and of the verdict job, and every job and
+  step name, in English and describing judge-v4 and the juge-v3 transition (the French comments describe juge-v3 and
+  juge-v2). bee/ci/test_verdict.py looks for the English step names again (Judges, Keep the manifest, Fallback
+  verdict, CI red if a step failed). No code, no command, no value changes.
+tested:
+  - "In bee/sandbox/sans-docker.sh: bee/ci/test_verdict.py 77 OK on this branch."
+  - "This branch's bee-ci.yml is byte for byte the one of minizBee #29 at 0ff0450, whose CI ran every job green but the manifest's R1 (run 43128184218)."
+untested:
+  - "This branch is based on #29's head; its CI runs once it is opened against master after #29 merges."
+doubts: >
+  R1: 247 counted lines (121 added, 126 deleted, all in .github/workflows/bee-ci.yml), over size M (200). A step
+  name is a check-run name: anything matching on the former names (none in the registry, checked) would need them.
+actual_size: L
