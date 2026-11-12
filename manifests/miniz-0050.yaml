@@ -1,0 +1,50 @@
+task: miniz-0050
+user: bidji29
+agent:
+  model: "Claude Opus 5.5 (claude-opus-5-5), builder launched by La Ruche's architect"
+  client: bee 0.1.0
+summary: "minizBee moves to judge-v4 (juge-v3 kept for the transition) and writes English: verdict.json, metric ids, the plugin (bee/judge/project.py), ab.py's report, bee-ci.yml."
+change: >
+  bee-ci.yml pins judge-v4, the registry's commit 7623c12 the founder tags judge-v4: the judge job calls
+  judge.yml@7623c12 with its English inputs (head_sha, history); JUGE_COMMUN_SHA is that commit; the image comes from
+  tools/judge/judge.py --tooling … --image-only and ISOLER is tools/judge/isoler.sh; the verdict job downloads the
+  artifact judge and checks results' judge.json with report.py --verify against toJSON(needs.judge.outputs). The
+  greffon job reads the base's pin: judge-v4, or juge-v3 for the transition (any other pin, juge-v2's included, is
+  refused). A base that pins juge-v3 (this PR) is judged by the old version and by the new one: the juge-v3 job
+  (juge.yml@3b21e97), whose artifact juge the base's French verdict.py reads, and the judge-v4 job, whose report is
+  checked too; the juge-ancien job runs only then, because that verdict.py still requires its step. juge-v2's
+  transition (JUGE_V2_SHA, the juge-v2 job, the point_de_depart and introduction rules, BEE_JUGES's introduction of
+  the plugin) is gone. The workflow comes from the PR and the scripts from the base, so their interfaces keep their
+  French names and values (state files, job ids, artifacts etat-*, outputs regle, sortie_compressee…). The plugin
+  moves to bee/judge/ (project.py with judge-v4's English contract: Project, NAME, PACKAGES, REQUIRED_SOURCES,
+  TOOLING, BASE_HEADERS, BUILD, ALLOWED, SIDES, METRICS higher/lower, METHOD, verify, fixed; build.sh;
+  test_judge.py against tools/judge, English options and report keys); its input functions are unchanged (the
+  frozen fingerprint test passes). verdict.json is English (names.yaml fork_verdict; the steps and details keys as
+  libyamlBee #6; failed_step labels in English; judge_base.rule pr_base); verdict.py reads judge.json's English keys
+  and accepts judge-vN. Metric ids are English where the fork writes them (banc.c, ab.py, the plugin, verdict.json);
+  the registry's French ids are still read (vocabulaire.py METRIQUES_FR) until ruche-0149's M2. ab.py's report keys
+  are English (ab_report, judge_report). miniz-0049's French registry fallbacks are dropped (taches/, outils/,
+  French task keys, verifier-fork, --registre; the outils/requirements.txt step); manifests are still read in either
+  vocabulary and from manifestes/. bee-ci.yml's step names, notices, comments and fallback verdict are English;
+  BEE_JUGES and bee/ci/juges.sh stay identical. README: judge-v4, the CI table, verdict.json, the Dockerfile built
+  (miniz-0003) but not pinned by digest, the file tree's five omissions, the « Common judge and plugin » pointer.
+tested:
+  - "In bee/sandbox/sans-docker.sh: test_verdict.py 77 OK; test_judge.py with BEE_HARNESS_SANDBOX=1 and judge-v4's tools/judge (git archive 7623c12): 29 tests, 21 OK, 8 meta-tests skipped (Docker); test_ab.py 12 OK; test_profil.py 4 OK. A mutation of BEE_JUGES in a scratch copy fails both copy tests."
+  - "judge-v4's load_plugin, in each sandbox: master's French plugin (d6125e7) loads (class Projet, French metric ids), so this PR's judge-v4 job can judge it; this PR's English plugin loads (EnglishPlugin, METRICS read as plus_haut/plus_bas)."
+  - "verdict.json before (master's verdict.py, juge-v3 artifacts) and after (this verdict.py, the same artifacts translated by names.yaml judge_report and metric_id) on 7 scenarios (green; red step; red without result; task copy missing; degradations and bootstrap; judge refusal; rebase refusal): in all 7 the before verdict translated key by key by names.yaml fork_verdict plus a disclosed map (steps, labels, details, pr_base) equals the after verdict."
+  - "ab.py before and after on the same revisions (f5440c3 against d6125e7, 6 repetitions, --instructions), each in its own sandbox: the old report translated by names.yaml has exactly the new report's 237 key paths, and 43 deterministic values are equal, instruction counts included (170765561, 334757696, 482752478, 26160282)."
+  - "In throwaway copies of registry main: bee record-verdict records the French and the English verdicts of the same inputs identically, but for judge.common and the failed step's label; it refuses an English verdict naming another metric; the English fallback verdict behaves as the French one. bee record-measurement records the old French report and its English translation identically."
+  - "banc in the sandbox prints the six English metric ids."
+untested:
+  - "The meta-tests with Docker (honest variant and the seven malicious ones against judge-v4 with this English plugin): the sandbox has no Docker; the meta-juge job runs them on this PR."
+  - "The judge-v4 and juge-v3 jobs and report checks run for real only in CI; ARM64 too."
+doubts: >
+  R1: bee-ci.yml counts 495 lines (235 added, 260 deleted), over this task's size M (200) and over L (400): about 237
+  of them are in hunks that touch code (the judge-v4 pin, the transition, the paths, the verdict job), about 258 in
+  comment and step-name hunks; bee check-fork's R1 check fails until the council decides (size, or a split, which
+  the coordinator decides). The scenario name memoire (a mode word of the harness and of banc.c) and internal
+  identifiers stay French. judge-v4 is not tagged yet (pinned by SHA). The juge-v3 and juge-ancien jobs and the
+  verdict job's remap go with the next version move. The registry's names.yaml has no pr_base yet in
+  fork_judge_base_rule. This PR touches bee/** and .github/workflows: a tooling task with judge paths, for a
+  guardian or the council (R3).
+actual_size: L

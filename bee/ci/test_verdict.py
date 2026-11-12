@@ -706,14 +706,16 @@ class Juges(unittest.TestCase):
         import yaml
         with open(WORKFLOW, encoding="utf-8") as f:
             workflow = yaml.safe_load(f)
-        for sha, attendu in ((COMMIT_AMORCAGE, 0), ("2" * 40, 1)):
-            with self.subTest(sha=sha), tempfile.TemporaryDirectory() as d:
-                base, pr = self.preparer(d, base_avec_bee=False)
+        for sha, avec_bee, attendu in ((COMMIT_AMORCAGE, False, (0, "pr", "oui")), ("2" * 40, False, (1, None, None)),
+                                       ("2" * 40, True, (0, "base", None))):
+            with self.subTest(sha=sha, base_avec_bee=avec_bee), tempfile.TemporaryDirectory() as d:
+                base, pr = self.preparer(d, base_avec_bee=avec_bee)
                 env = dict(os.environ, BEE_JUGES=workflow["env"]["BEE_JUGES"],
                            BEE_COMMIT_AMORCAGE=workflow["env"]["BEE_COMMIT_AMORCAGE"])
                 r = subprocess.run(["bash", "-e", "-c", f'export base="{base}" pr="{pr}" base_sha="{sha}" etats="{d}/etats"\neval "$BEE_JUGES"'],
                                    capture_output=True, text=True, env=env)
-                self.assertEqual(r.returncode, attendu, r.stdout + r.stderr)
+                self.assertEqual((r.returncode, self.lire(d, "greffon.txt"), self.lire(d, "amorcage.txt")), attendu, r.stdout + r.stderr)
+                self.assertEqual(self.lire(d, "juges.txt"), "succes" if attendu[0] == 0 else "echec")
 
 
 class Greffon(unittest.TestCase):
