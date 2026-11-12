@@ -580,10 +580,9 @@ class Juges(unittest.TestCase):
                 self.assertEqual(nom, "outillage-pr")  # le seul job sans la base : il ne lance que les tests de la PR
                 continue
             etapes = [e.get("name", "") for e in job["steps"]]
-            # The step names stay French until miniz-0053 translates them (« Juges »), but the new job's (« Judges »).
-            self.assertTrue(any(n.startswith(("Juges", "Judges")) for n in etapes), f"job {nom} has no Judges step")
+            self.assertTrue(any(n.startswith("Judges") for n in etapes), f"job {nom} has no Judges step")
             # No step uses base/bee before the Judges step.
-            i_juges = next(i for i, n in enumerate(etapes) if n.startswith(("Juges", "Judges")))
+            i_juges = next(i for i, n in enumerate(etapes) if n.startswith("Judges"))
             for e in job["steps"][:i_juges]:
                 self.assertNotIn("base/bee", e.get("run", ""), f"job {nom}: base/bee used before Judges")
 
@@ -722,9 +721,8 @@ class Juges(unittest.TestCase):
 
 
 class Greffon(unittest.TestCase):
-    """Étape « Commit du greffon et de A pour le juge commun » du job greffon de bee-ci.yml, sur de petits dépôts git :
-    le juge commun ne lit jamais le greffon dans la PR ; il juge la base de la PR, épinglée à judge-v4 ou, en transition,
-    à juge-v3."""
+    """Étape « Commit of the plugin and of A » du job greffon de bee-ci.yml, sur de petits dépôts git : le juge commun
+    ne lit jamais le greffon dans la PR ; il juge la base de la PR, épinglée à judge-v4 ou, en transition, à juge-v3."""
 
     def setUp(self):
         import yaml
@@ -1049,7 +1047,7 @@ class JobVerdict(unittest.TestCase):
 
     def test_ci_rouge_lit_les_deux_vocabulaires(self):
         """The last step reads the verdict the base's verdict.py wrote: French under juge-v3, English after the merge."""
-        etape = self.etape("CI rouge si une étape a échoué")["run"]
+        etape = self.etape("CI red if a step failed")["run"]
         for verdict, attendu in (({"ci": "verte"}, 0), ({"ci": "green"}, 0), ({"ci": "rouge", "etape_en_echec": "x"}, 1),
                                  ({"ci": "red", "failed_step": "Fuzzing (x86-64)"}, 1), ({"ci": "vert"}, 1)):
             with self.subTest(verdict=verdict):
@@ -1060,7 +1058,7 @@ class JobVerdict(unittest.TestCase):
                 self.assertIn(verdict.get("failed_step", verdict.get("etape_en_echec", "")), r.stdout)
 
     def test_verdict_de_repli_en_anglais(self):
-        etape = self.etape("Verdict de repli")
+        etape = self.etape("Fallback verdict")
         self.assertEqual(etape["if"], "failure() && steps.juges.outcome == 'failure'")
         r = subprocess.run(["bash", "-e", "-c", etape["run"]], cwd=self.d, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -1451,14 +1449,14 @@ class DependancesDeLOutil(unittest.TestCase):
 
 
 class ConserverLeManifeste(unittest.TestCase):
-    """Étape « Conserver le manifeste, la tâche et l'état » du job manifeste, extraite telle quelle : seul un manifeste
+    """Étape « Keep the manifest, the task and the state » du job manifeste, extraite telle quelle : seul un manifeste
     au nom validé et qui est un fichier ordinaire est copié dans l'artefact etat-manifeste (ni lien, ni dossier)."""
 
     def test_seul_un_fichier_ordinaire_au_nom_valide_est_copie(self):
         import yaml
         with open(WORKFLOW, encoding="utf-8") as f:
             etapes = yaml.safe_load(f)["jobs"]["manifeste"]["steps"]
-        scripts = [e["run"] for e in etapes if e.get("name", "").startswith("Conserver le manifeste")]
+        scripts = [e["run"] for e in etapes if e.get("name", "").startswith("Keep the manifest")]
         self.assertEqual(len(scripts), 1)
         for chemin, forme, garde in (("manifests/miniz-0050.yaml", "fichier", True), ("manifestes/miniz-0050.yaml", "fichier", True),
                                      ("CONTRIBUTION.yaml", "fichier", True), ("manifests/miniz-50.yaml", "fichier", False),
