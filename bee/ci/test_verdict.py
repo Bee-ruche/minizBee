@@ -636,6 +636,8 @@ class Juges(unittest.TestCase):
         self.assertEqual(workflow["env"]["REGISTRE"], "Bee-ruche/registre")
         self.assertIn("juge-commun/tools/judge/judge.py --tooling \"$greffon\" --image-only", workflow["env"]["BEE_IMAGE"])
         self.assertIn("ISOLER=$GITHUB_WORKSPACE/juge-commun/tools/judge/isoler.sh", workflow["env"]["BEE_IMAGE"])
+        # 7623c12 records isoler.sh as 100644 (outils/juge/isoler.sh was 100755): the steps run it through etape.sh.
+        self.assertTrue(workflow["env"]["BEE_IMAGE"].startswith("chmod +x juge-commun/tools/judge/isoler.sh\n"))
         verdict = workflow["jobs"]["verdict"]
         self.assertEqual(set(verdict["needs"]), set(workflow["jobs"]) - {"verdict"})
 

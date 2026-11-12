@@ -98,7 +98,9 @@ env:
 
   # The common judge's container (juge-commun/: the registry at the commit JUGE_COMMUN_SHA), after the « Judges » step:
   # the registry's isoler.sh and the common image with the plugin's packages (from the base; from the PR at bootstrap).
+  # judge-v4's commit has tools/judge/isoler.sh without its executable mode (lost when the judge moved to tools/judge).
   BEE_IMAGE: |
+    chmod +x juge-commun/tools/judge/isoler.sh
     greffon=base
     if [ "$(cat "$ETATS/greffon.txt")" = "pr" ]; then greffon=pr; fi
     image="$(python3 juge-commun/tools/judge/judge.py --tooling "$greffon" --image-only)"
