@@ -3,21 +3,30 @@ user: bidji29
 agent:
   model: "Claude Opus 5.5 (claude-opus-5-5), builder launched by La Ruche's architect"
   client: bee 0.1.0
-summary: "bee-ci.yml's comments and step names in English, describing judge-v4 (the comment-only and step-name-only hunks set aside from miniz-0050)."
+summary: "bee-ci.yml's comments, job names and step names in English, describing judge-v4 (the comment-only and name-only hunks set aside from miniz-0050)."
 change: >
   The council (12 Nov 2026) moved bee-ci.yml's comment-only and step-name-only hunks out of miniz-0050 (minizBee
-  #29) into this task. This branch restores them as they were on #29's head 0ff0450: the header (steps, security,
-  the threat model's pointer to bee/README.md, section « Common judge and plugin »), the comments of the env block,
-  of the greffon, judge, juge-v3, fuzzing, meta-juge and outillage-pr jobs and of the verdict job, and every job and
-  step name, in English and describing judge-v4 and the juge-v3 transition (the French comments describe juge-v3 and
-  juge-v2). bee/ci/test_verdict.py looks for the English step names again (Judges, Keep the manifest, Fallback
-  verdict, CI red if a step failed). No code, no command, no value changes.
+  #29, merged as #30) into this task. This branch restores them as they were on #29's head 0ff0450 (bee-ci.yml byte
+  for byte), and master (aa33341, with miniz-0050's final state) is merged into it: the header (steps, security, the
+  threat model's pointer to bee/README.md, section « Common judge and plugin »), the comments of the env block, of
+  the greffon, judge, juge-v3, fuzzing, meta-juge and outillage-pr jobs and of the verdict job, 10 comment lines
+  inside 3 run scripts, the display names of 5 jobs (manifeste, greffon, compilation-et-tests, meta-juge,
+  outillage-pr) and 34 step names, in English and describing judge-v4 and the juge-v3 transition.
+  bee/ci/test_verdict.py looks for the English step names (Judges only, no longer « Juges »; Keep the manifest;
+  Fallback verdict; CI red if a step failed). No code, no command, no value changes. What stays French: job ids,
+  step ids, env and output names, state files and their values, artifact names (what passes between the PR's
+  workflow and the base's scripts), and test_verdict.py's French docstrings and comments outside the step names.
 tested:
-  - "In bee/sandbox/sans-docker.sh: bee/ci/test_verdict.py 77 OK on this branch."
-  - "This branch's bee-ci.yml is byte for byte the one of minizBee #29 at 0ff0450, whose CI ran every job green but the manifest's R1 (run 43128184218)."
+  - "In bee/sandbox/sans-docker.sh, at the merge b96378f: test_verdict.py 77 OK (0917ed7's assertion included: a failed judge job gives ci red, its label is verdict.py's own); test_ab.py 12 OK; test_profil.py 4 OK; test_judge.py with BEE_HARNESS_SANDBOX=1 and judge-v4's tools/judge (git archive 7623c12) 29 tests OK, 8 skipped (Docker); bee/ci/differentiel.sh 3843 checks, 0 discrepancies, API 192 cases, 0 failures; bee/ci/tests_origine.sh (cmake + ctest) 1/1 passed."
+  - "The step-name tests are as strict as before, or stricter: in scratch copies, putting back « Verdict de repli », « CI rouge si une étape a échoué », « Conserver le manifeste » or one « Juges (bee/ … » fails test_verdict.py each time (1 test each)."
+  - "A structural diff of bee-ci.yml, master against this head (both loaded with PyYAML, job and step names and full-line comments inside scalars removed): equal; same job ids in the same order, same step count and step ids; 5 job names and 34 step names changed; every one of the 247 changed raw lines is a YAML comment, a job or step name: line, or a comment line inside a run script. A negative control (an artifact name and a run line changed) is caught by both checks."
+  - "Names as data: verdict.py's labels are its own constants keyed by job id (toJSON(needs)), not read from bee-ci.yml; the renamed steps with an id (manifeste, greffon, juges) keep it, so steps.<id> is unchanged; the registry reads the runs of bee-ci.yml by workflow file and the artifact « verdict », never a job or step name, and names.yaml fork_verdict has no step label; master has no branch protection and no ruleset (REST)."
+  - "bee check-fork as the manifeste job runs it (master's etape.sh and manifeste.sh, in the sandbox, registry main 0516eaa): branch compliant, 247 changed lines, manifest valid."
 untested:
-  - "This branch is based on #29's head; its CI runs once it is opened against master after #29 merges."
+  - "This PR's CI on GitHub runs after the push; its result is on the PR. The « Keep the manifest » step's case pattern is not exercised outside GitHub."
 doubts: >
-  R1: 247 counted lines (121 added, 126 deleted, all in .github/workflows/bee-ci.yml), over size M (200). A step
-  name is a check-run name: anything matching on the former names (none in the registry, checked) would need them.
+  R1: 247 counted lines (121 added, 126 deleted, all in .github/workflows/bee-ci.yml), over size M (200), within L.
+  The 5 job display names are check-run names, a step further than « step names »: the task's 247 lines include
+  them, and the bee/README.md table already uses them; nothing found reads them (no branch protection, no ruleset,
+  nothing in the registry), but anything outside the registry matching on the former names would need them.
 actual_size: L
