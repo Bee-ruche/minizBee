@@ -1,20 +1,22 @@
-"""Greffon de minizBee pour le juge commun Bee (registre : outils/juge/, docs/juge-commun.md).
+"""minizBee's plugin for the Bee common judge (registry: tools/judge/, docs/common-judge.md).
 
-Le juge commun (isolement, lanceur chrono, lecture sûre, analyse des objets, graine, statistiques,
-rapport) est lu dans le registre à un commit (juge-vN, épinglé par SHA dans .github/workflows/bee-ci.yml).
-Ce fichier dit ce qui est propre à miniz : les sources, la construction (construire.sh), les entrées
-(corpus, données tirées au hasard, flux zlib produits par l'hôte), la règle de justesse (sorties
-identiques à la base, aller-retour par la zlib de l'hôte) et les scénarios mesurés. Il est lu depuis la
-BASE de la PR, jamais depuis la PR (seule exception : la PR qui l'introduit, en amorçage, voir
-bee/ci/juges.sh). Il ne voit les sorties du conteneur qu'à travers lecture.Sorties, n'exécute rien de ce
-que le conteneur a produit et ne fait confiance qu'à la base (A) et à la zlib de l'hôte. Les fonctions
-d'entrées sont celles du juge isolé de miniz-0031 (version 2), à l'identique : même graine, mêmes
-entrées, mêmes vérifications, mêmes décomptes (bee/juge/test_juge.py le vérifie).
+The common judge (isolation, chrono launcher, safe reading, object analysis, seed, statistics, report) is read in the
+registry at a commit (judge-vN, pinned by SHA in .github/workflows/bee-ci.yml). This file says what is specific to
+miniz: the sources, the build (build.sh), the inputs (corpus, randomly drawn data, zlib streams produced by the host),
+the correctness rule (outputs identical to the base, round trip through the host's zlib) and the measured scenarios.
+It is read from the PR's BASE, never from the PR. It sees the container's outputs only through lecture.Sorties, runs
+nothing the container produced, and trusts only the base (A) and the host's zlib. The input functions are those of
+miniz-0031's isolated judge (version 2), unchanged: same seed, same inputs, same checks, same counts
+(bee/judge/test_judge.py checks it).
+
+The English plugin contract (judge-v4, ruche-0148; miniz-0050): Project, NAME, PACKAGES, REQUIRED_SOURCES, TOOLING,
+BASE_HEADERS, BUILD, ALLOWED, SIDES, METRICS (directions higher and lower), METHOD, verify() and fixed(). The metric
+ids are the registry's English ones (compression_throughput_n1, ..., max_memory_kb).
 
 juge-v3 contract (miniz-0048; the registry's docs/common-judge.md): the harness reads its parameters on its
-descriptor 0 and writes an input's output at the same path in every mode (bee/juge/execution.c); the common judge
+descriptor 0 and writes an input's output at the same path in every mode (bee/judge/execution.c); the common judge
 mixes verification inputs, invalid streams included, into the measured ones. So each scenario checks every output
-of its side with the rule of verifier(), and n6 also computes ratio_n6 from its timed outputs.
+of its side with the rule of verify(), and n6 also computes ratio_n6 from its timed outputs.
 """
 
 import subprocess
@@ -26,12 +28,12 @@ from lecture import Erreur, Refus
 NIVEAUX_UNIQUE = (0, 1, 2, 3, 6, 9, 10)
 NIVEAUX_FLUX = (1, 6, 9)
 MZ_OK, MZ_STREAM_END = 0, 1
-# bee/corpus/generer.py lit des sources de miniz figées à ce commit par leur identifiant d'objet git.
+# bee/corpus/generer.py reads miniz sources frozen at this commit by their git object id.
 COMMIT_CORPUS = "2948eebafc5b9f1c69bebed80333e403a09bd62d"
 
 
 def decompresser_zlib(donnees):
-    """Décompression de référence (zlib de l'hôte) d'un flux zlib complet ; None s'il est invalide."""
+    """Reference decompression (the host's zlib) of a complete zlib stream; None if it is invalid."""
     d = zlib.decompressobj()
     try:
         sortie = d.decompress(donnees) + d.flush()
@@ -47,7 +49,7 @@ def mots(rng, nombre):
 
 
 def entrees_aleatoires(rng, corpus):
-    """Entrées que personne ne connaît avant l'exécution : formes variées, tailles aux bornes des blocs."""
+    """Inputs nobody knows before the run: varied shapes, sizes at the bounds of the blocks."""
     e = []
     octets = lambda n: rng.randbytes(n)  # noqa: E731
     e += [b"", octets(1), octets(2)] + [octets(rng.randint(3, 300)) for _ in range(3)]
@@ -103,9 +105,9 @@ def entrees_aleatoires(rng, corpus):
 
 
 def flux_zlib(rng, originaux):
-    """Flux zlib produits ICI (zlib de l'hôte), valides et invalides, avec la taille de tampon à donner.
+    """zlib streams produced HERE (the host's zlib), valid and invalid, with the buffer size to give.
 
-    Renvoie [(nom, flux, taille_tampon, original_ou_None)] ; original None : comportement de la base."""
+    Returns [(name, stream, buffer_size, original_or_None)]; original None: the base's behavior."""
     strategies = [zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED, zlib.Z_HUFFMAN_ONLY, zlib.Z_RLE, zlib.Z_FIXED]
     flux = []
     for i, (_, d) in enumerate(originaux):
@@ -148,48 +150,48 @@ def flux_zlib(rng, originaux):
 
 
 def historique_du_corpus(outillage):
-    """Vérifie que les objets git du commit COMMIT_CORPUS sont lisibles dans la copie de la base (outillage).
+    """Checks that the git objects of the commit COMMIT_CORPUS are readable in the base's copy (outillage).
 
-    Les sources figées que bee/corpus/generer.py lit par identifiant d'objet (miniz_tdef.c et miniz_tinfl.c
-    d'origine, entre autres) viennent de ce commit. juge.yml (juge-v2, ruche-0024) le récupère avant la PR,
-    parce que bee-ci.yml le déclare (historique) ; pendant le jugement, git n'a plus aucun transport. Aucun
-    accès réseau ici : un commit absent est une erreur d'environnement (code 2)."""
+    The frozen sources that bee/corpus/generer.py reads by object id (the original miniz_tdef.c and miniz_tinfl.c,
+    among others) come from this commit. judge.yml (since juge-v2, ruche-0024) fetches it before the PR, because
+    bee-ci.yml declares it (history); during judging, git no longer has any transport. No network access here: a
+    missing commit is an environment error (code 2)."""
     if subprocess.run(["git", "-C", outillage, "cat-file", "-e", COMMIT_CORPUS + "^{commit}"],
                       capture_output=True).returncode != 0:
-        raise Erreur(f"corpus: commit {COMMIT_CORPUS} missing from the base; declare it to juge.yml (historique), "
+        raise Erreur(f"corpus: commit {COMMIT_CORPUS} missing from the base; declare it to judge.yml (history), "
                      f"or, locally, git fetch --depth=1 origin {COMMIT_CORPUS}")
 
 
-class Projet:
-    NOM = "miniz"
-    # Paquets en plus de l'image commune : tests d'origine (g++, cmake), tests différentiels (zlib1g-dev),
-    # générateur du corpus (git), fuzzing libFuzzer (clang-18, libclang-rt-18-dev), lancés par isoler.sh.
-    PAQUETS = ["g++", "cmake", "zlib1g-dev", "git", "clang-18", "libclang-rt-18-dev"]
-    # Fichiers compilés par construire.sh (miniz_zip.c ne l'est pas : il n'est ni copié, ni jugé) ; le juge
-    # analyse ces fichiers en entier, et chaque .c doit laisser son objet dans obj/.
+class Project:
+    NAME = "miniz"
+    # Packages on top of the common image: original tests (g++, cmake), differential tests (zlib1g-dev), corpus
+    # generator (git), libFuzzer fuzzing (clang-18, libclang-rt-18-dev), run through isoler.sh.
+    PACKAGES = ["g++", "cmake", "zlib1g-dev", "git", "clang-18", "libclang-rt-18-dev"]
+    # Files compiled by build.sh (miniz_zip.c is not: it is neither copied nor judged); the judge analyzes these
+    # files whole, and each .c must leave its object in obj/.
     SOURCES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz*.h"]
-    SOURCES_REQUISES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz.h"]
-    OUTILLAGE = ["bee/juge", "bee/commun"]
-    EN_TETES_BASE = ["miniz*.h"]
-    CONSTRUIRE = "bee/juge/construire.sh"
+    REQUIRED_SOURCES = ["miniz.c", "miniz_tdef.c", "miniz_tinfl.c", "miniz.h"]
+    TOOLING = ["bee/judge", "bee/commun"]
+    BASE_HEADERS = ["miniz*.h"]
+    BUILD = "bee/judge/build.sh"
     PREFIXES = ("mz_", "tdefl_", "tinfl_", "miniz_", "MZ_")
-    PERMIS = ()
-    # Les fichiers bruts (f) et les flux zlib (z) passent dans des conteneurs SÉPARÉS : une décompression ne
-    # voit jamais les originaux (sinon elle pourrait les retrouver et les recopier au lieu de décompresser).
-    COTES = ("f", "z")
+    ALLOWED = ()
+    # The raw files (f) and the zlib streams (z) go through SEPARATE containers: a decompression never sees the
+    # originals (otherwise it could find them and copy them instead of decompressing).
+    SIDES = ("f", "z")
     SCENARIOS = {"n1": "f", "n6": "f", "n9": "f", "decompression": "z", "memoire": "f"}
     INSTRUCTIONS = ("n1", "n6", "n9", "decompression")
-    METRIQUES = [  # mêmes définitions que projets/miniz.yaml du registre et bee/bench/ab.py
-        ("debit_compression_n1", "plus_haut", "Mo/s"),
-        ("debit_compression_n6", "plus_haut", "Mo/s"),
-        ("debit_compression_n9", "plus_haut", "Mo/s"),
-        ("debit_decompression", "plus_haut", "Mo/s"),
-        ("ratio_n6", "plus_haut", "ratio"),
-        ("memoire_max_ko", "plus_bas", "Ko"),
+    METRICS = [  # the same definitions as the registry's projects/miniz.yaml and bee/bench/ab.py, English ids
+        ("compression_throughput_n1", "higher", "MB/s"),
+        ("compression_throughput_n6", "higher", "MB/s"),
+        ("compression_throughput_n9", "higher", "MB/s"),
+        ("decompression_throughput", "higher", "MB/s"),
+        ("ratio_n6", "higher", "ratio"),
+        ("max_memory_kb", "lower", "KB"),
     ]
-    METHODE = {"memoire": "ru_maxrss du processus du scénario « memoire » (flux par blocs de 64 Kio), lu par wait4",
-               "ratio_n6": "original size divided by compressed size at level 6, on the timed outputs of scenario n6 "
-                           "(perturbed corpus and the verification inputs mixed into it)"}
+    METHOD = {"max_memory_kb": "ru_maxrss of the process of the scenario « memoire » (streaming in blocks of 64 KiB), read by wait4",
+              "ratio_n6": "original size divided by compressed size at level 6, on the timed outputs of scenario n6 "
+                          "(perturbed corpus and the verification inputs mixed into it)"}
 
     def __init__(self, options):
         sortie = options.pop("sortie_compressee", "identique")
@@ -200,7 +202,7 @@ class Projet:
         self.identique = sortie == "identique"
         self.VERIFICATION = {"sortie_compressee": sortie}
 
-    # -------------------------------------------------------------- entrées
+    # -------------------------------------------------------------- inputs
 
     def corpus(self, outillage):
         historique_du_corpus(outillage)
@@ -225,7 +227,7 @@ class Projet:
         perturbes = perturber(rng, corpus, prefixe)
         return self.entrees(perturbes, [(nom, zlib.compress(d, 6), len(d), d) for nom, d in perturbes])
 
-    # -------------------------------------------------------------- vérification
+    # -------------------------------------------------------------- verification
 
     def compressee(self, a, b, relatif, original):
         sortie_b = b.exiger("f", relatif)
@@ -256,12 +258,12 @@ class Projet:
             raise Refus(f"decompression of {e.nom} in error: bytes produced differ from the base ({sortie})")
         return len(sa)
 
-    def verifier(self, a, b, entrees):
+    def verify(self, a, b, entrees):
         comparees = 0
         for e in entrees:
             if e.cote != "f":
                 continue
-            # Contrôle de bon sens sur la base elle-même (niveau 6) : il détecte un juge mal monté.
+            # Sanity check on the base itself (level 6): it detects a judge set up wrong.
             if decompresser_zlib(a.exiger("f", f"c/{e.nom}.6")) != e.donnees:
                 raise Erreur(f"the base does not give back the original for {e.nom}: judge set up wrong")
             for niveau in NIVEAUX_UNIQUE:
@@ -278,15 +280,15 @@ class Projet:
             comparees += 2
         return comparees
 
-    def fixes(self, sorties, corpus):
+    def fixed(self, sorties, corpus):
         total = sum(len(d) for _, d in corpus)
         compresse = sum(len(sorties.exiger("f", f"c/{nom}.6")) for nom, _ in corpus)
         return {"ratio_n6": total / compresse if compresse else None}
 
     def scenario(self, s, a, b, entrees, mesure):
-        """Outputs of a measured scenario, each one checked by the rule of verifier(), whatever its input (the common
+        """Outputs of a measured scenario, each one checked by the rule of verify(), whatever its input (the common
         judge mixes verification inputs into the measured ones); returns ({metric: value}, outputs compared). n6 also
-        computes ratio_n6 from its timed outputs, which replaces the value fixes() reads on verification."""
+        computes ratio_n6 from its timed outputs, which replaces the value fixed() reads on verification."""
         if s not in self.SCENARIOS:
             raise Erreur(f"unknown scenario: {s}")
         cpu = mesure["utilisateur_s"] + mesure["systeme_s"]
@@ -294,13 +296,13 @@ class Projet:
         if s in ("n1", "n6", "n9"):
             compresses = [self.compressee(a, b, f"{s}/c/{e.nom}.{s[1]}", e.donnees) for e in mesurees]
             traites = sum(len(e.donnees) for e in mesurees)
-            valeurs = {f"debit_compression_{s}": traites / 1e6 / cpu if cpu > 0 else None}
+            valeurs = {f"compression_throughput_{s}": traites / 1e6 / cpu if cpu > 0 else None}
             if s == "n6":
                 valeurs["ratio_n6"] = traites / sum(compresses) if sum(compresses) else None
             return valeurs, len(mesurees)
         if s == "decompression":
             traites = sum(self.decompressee(a, b, e, f"{s}/d", f"{s}/e") for e in mesurees)
-            return {"debit_decompression": traites / 1e6 / cpu if cpu > 0 else None}, len(mesurees)
+            return {"decompression_throughput": traites / 1e6 / cpu if cpu > 0 else None}, len(mesurees)
         for e in mesurees:
             self.compressee(a, b, f"memoire/m/{e.nom}", e.donnees)
-        return {"memoire_max_ko": mesure["maxrss_ko"]}, len(mesurees)
+        return {"max_memory_kb": mesure["maxrss_ko"]}, len(mesurees)

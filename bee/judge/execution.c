@@ -2,7 +2,7 @@
 
    It is compiled WITH the miniz to judge, in a container without network, and runs only there. It judges
    nothing itself: it reads inputs prepared by the host, calls miniz, and writes the raw outputs. The host
-   (the plugin bee/juge/projet.py, run by the registry's common judge), outside the container, checks
+   (the plugin bee/judge/project.py, run by the registry's common judge), outside the container, checks
    these outputs with its own zlib and compares them with the base's. The PR's code shares this process:
    nothing this program prints or computes is taken on trust.
 

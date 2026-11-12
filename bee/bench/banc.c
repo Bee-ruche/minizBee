@@ -1,11 +1,11 @@
 /* Banc de mesure Bee pour miniz.
 
-   Sortie (stdout) : un objet JSON sur une ligne, avec exactement ces six clés :
-     debit_compression_n1, debit_compression_n6, debit_compression_n9   (Mo/s, Mo = 10^6 octets d'entrée)
-     debit_decompression                                                 (Mo/s d'octets produits)
-     ratio_n6                                                            (taille originale / taille compressée)
-     memoire_max_ko                                                      (Ko, ru_maxrss de getrusage)
-   Une métrique non mesurée (option --scenario) vaut null.
+   Output (stdout): one JSON object on one line, with exactly these six keys, the registry's English metric ids:
+     compression_throughput_n1, _n6, _n9   (MB/s, MB = 10^6 input bytes)
+     decompression_throughput              (MB/s of bytes produced)
+     ratio_n6                              (original size / compressed size)
+     max_memory_kb                         (KB, ru_maxrss from getrusage)
+   A metric not measured (option --scenario) is null.
 
    Méthode :
    - Débits : le corpus est chargé en mémoire, puis compressé fichier par fichier avec mz_compress2
@@ -16,7 +16,7 @@
    - Ratio : somme des tailles originales / somme des tailles compressées au niveau 6 (déterministe).
    - Mémoire : un processus fils, créé avant le chargement du corpus, fait passer chaque fichier du corpus
      dans miniz en flux (lecture par 64 Kio, mz_deflate aux niveaux 1, 6 et 9, sortie aussitôt décompressée
-     par mz_inflate, tampons de 64 Kio). memoire_max_ko est le ru_maxrss de ce fils, lu par wait4 : c'est
+     par mz_inflate, tampons de 64 Kio). max_memory_kb est le ru_maxrss de ce fils, lu par wait4 : c'est
      la mémoire de miniz plus celle, fixe, du programme (environ 1,5 Mo), sans les données du corpus.
      On ne lit pas ru_maxrss du processus lui-même : sous Linux, ce compteur survit à execve et vaudrait
      celui du processus parent (Python, par exemple) s'il était plus gros.
@@ -503,15 +503,15 @@ int main(int argc, char **argv)
     }
 
     printf("{");
-    ecrire_nombre("debit_compression_n1", debit[1], 3, 0);
-    ecrire_nombre("debit_compression_n6", debit[6], 3, 0);
-    ecrire_nombre("debit_compression_n9", debit[9], 3, 0);
-    ecrire_nombre("debit_decompression", debit_dec, 3, 0);
+    ecrire_nombre("compression_throughput_n1", debit[1], 3, 0);
+    ecrire_nombre("compression_throughput_n6", debit[6], 3, 0);
+    ecrire_nombre("compression_throughput_n9", debit[9], 3, 0);
+    ecrire_nombre("decompression_throughput", debit_dec, 3, 0);
     ecrire_nombre("ratio_n6", ratio, 4, 0);
     if (memoire < 0)
-        printf("\"memoire_max_ko\": null");
+        printf("\"max_memory_kb\": null");
     else
-        printf("\"memoire_max_ko\": %ld", memoire);
+        printf("\"max_memory_kb\": %ld", memoire);
     printf("}\n");
     return 0;
 }

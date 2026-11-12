@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
-"""Tests du greffon de minizBee pour le juge commun Bee (bee/juge/projet.py, construire.sh, execution.c).
+"""Tests of minizBee's plugin for the Bee common judge (bee/judge/project.py, build.sh, execution.c).
 
-  python3 bee/juge/test_juge.py                     tests unitaires (sans Docker)
-  BEE_JUGE_INTEGRATION=1 python3 bee/juge/test_juge.py
-                                                    + méta-tests : le juge commun, avec CE greffon, contre des
-                                                      variantes de miniz honnête et MALVEILLANTES (Docker requis)
-  BEE_JUGE_COMMUN=<registre>/outils/juge            le juge commun, à l'étiquette épinglée par
-                                                    .github/workflows/bee-ci.yml (juge-v3) ; par défaut,
-                                                    ../registre/outils/juge à côté de ce dépôt
-  BEE_JUGE_RESEAU=host                              réseau de « docker build » (machines sans pont Docker)
-  bee/sandbox/sans-docker.sh env BEE_HARNAIS_SANDBOX=1 python3 bee/juge/test_juge.py
-                                                    + the harness built by construire.sh and run here, without
+  python3 bee/judge/test_judge.py                   unit tests (without Docker)
+  BEE_JUDGE_INTEGRATION=1 python3 bee/judge/test_judge.py
+                                                    + meta-tests: the common judge, with THIS plugin, against honest
+                                                      and MALICIOUS variants of miniz (Docker required)
+  BEE_COMMON_JUDGE=<registry>/tools/judge           the common judge, at the commit pinned by
+                                                    .github/workflows/bee-ci.yml (judge-v4); by default,
+                                                    ../registre/tools/judge next to this repository
+  BEE_JUDGE_NETWORK=host                            network of « docker build » (machines without a Docker bridge)
+  bee/sandbox/sans-docker.sh env BEE_HARNESS_SANDBOX=1 python3 bee/judge/test_judge.py
+                                                    + the harness built by build.sh and run here, without
                                                       Docker: ONLY in the sandbox (it also checks it has no network
                                                       interface but lo); never on the CI machine
 
-Le greffon et le harnais testés sont ceux de CE dépôt (la PR, quand la CI lance ces tests) ; le juge
-commun est celui du registre. Les variantes malveillantes sont écrites ici, comme des transformations du
-texte de miniz.c, et ne sont compilées et exécutées que DANS le conteneur du juge. Chacune vise une façon
-de tromper un juge qui exécuterait le code de la PR dans son propre processus :
-  sortie_anticipee   le programme s'arrête « avec succès » au milieu des tests
-  faux_chronos       le code remplace clock_gettime pour annoncer des temps flatteurs, et il est plus lent
-  table_precalculee  le compresseur ne marche que sur les entrées qu'il connaît d'avance (le corpus)
-  requete_valgrind   le code suspend le décompte d'instructions de Valgrind pendant son propre travail
-  faux_resume        le code écrit un faux résumé « I refs » sur la sortie d'erreur
-  travail_deplace    le code fait son initialisation dans mz_compressBound, appelée par le harnais avant les
-                     compressions (revue adverse du 27/10 : +1,7 à +27 % d'instructions « gagnées » tant que
-                     seule une zone du harnais était comptée)
+The plugin and the harness tested are THIS repository's (the PR's, when the CI runs these tests); the common judge is
+the registry's. The malicious variants are written here, as transformations of the text of miniz.c, and are compiled
+and run only INSIDE the judge's container. Each one targets a way of fooling a judge that would run the PR's code in
+its own process:
+  sortie_anticipee   the program exits « successfully » in the middle of the tests
+  faux_chronos       the code replaces clock_gettime to report flattering times, and it is slower
+  table_precalculee  the compressor works only on the inputs it knows in advance (the corpus)
+  requete_valgrind   the code suspends Valgrind's instruction count during its own work
+  faux_resume        the code writes a fake « I refs » summary on standard error
+  travail_deplace    the code does its initialization in mz_compressBound, which the harness calls before the
+                     compressions (adversarial review of 27/10: +1.7 to +27% instructions « gained » as long as only
+                     a zone of the harness was counted)
   mesure_devinee     the code guesses from its own calls that it is measured (its first mz_compress2 is not at
                      level 0), and then compresses at level 1 whatever level it is given: faster and worse, yet
-                     still correct, with sortie_compressee=peut_changer (juge-v3: refused, because a verification
+                     still correct, with sortie_compressee=peut_changer (juge-v3 on: refused, because a verification
                      input mixed into n6 or n9 must give its verification output, byte for byte)
-  honnete            miniz tel quel : accepté, rien de suspect, décomptes de A et B identiques
+  honnete            miniz as it is: accepted, nothing suspicious, identical counts for A and B
 """
 
 import hashlib
@@ -47,16 +47,16 @@ import zlib
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 RACINE = os.path.dirname(os.path.dirname(ICI))
-JUGE_COMMUN = os.path.abspath(os.environ.get("BEE_JUGE_COMMUN") or os.path.join(os.path.dirname(RACINE), "registre", "outils", "juge"))
-if not os.path.isfile(os.path.join(JUGE_COMMUN, "juge.py")):
-    sys.exit(f"common judge not found in {JUGE_COMMUN}: BEE_JUGE_COMMUN=<registry>/outils/juge "
-             "(at the tag pinned by .github/workflows/bee-ci.yml)")
+JUGE_COMMUN = os.path.abspath(os.environ.get("BEE_COMMON_JUDGE") or os.path.join(os.path.dirname(RACINE), "registre", "tools", "judge"))
+if not os.path.isfile(os.path.join(JUGE_COMMUN, "judge.py")):
+    sys.exit(f"common judge not found in {JUGE_COMMUN}: BEE_COMMON_JUDGE=<registry>/tools/judge "
+             "(at the commit pinned by .github/workflows/bee-ci.yml)")
 sys.path.insert(0, JUGE_COMMUN)
-import juge as juge_commun  # noqa: E402
+import judge as juge_commun  # noqa: E402
 import lecture  # noqa: E402
 from entrees import Entree  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location("greffon_minizbee", os.path.join(ICI, "projet.py"))
+_spec = importlib.util.spec_from_file_location("greffon_minizbee", os.path.join(ICI, "project.py"))
 greffon = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(greffon)
 
@@ -102,32 +102,36 @@ class ZlibFactice:
 
 class TestContrat(unittest.TestCase):
     def test_greffon_charge_par_le_juge_commun(self):
-        projet, empreinte = juge_commun.charger_greffon(RACINE, {})
-        with open(os.path.join(ICI, "projet.py"), "rb") as f:
+        projet, empreinte = juge_commun.load_plugin(RACINE, {})
+        with open(os.path.join(ICI, "project.py"), "rb") as f:
             self.assertEqual(empreinte, hashlib.sha256(f.read()).hexdigest())
-        self.assertEqual(projet.NOM, "miniz")
+        self.assertIsInstance(projet, juge_commun.EnglishPlugin)  # the English contract (judge-v4, miniz-0050)
+        self.assertEqual(projet.NAME, "miniz")
         self.assertEqual(projet.SCENARIOS, {"n1": "f", "n6": "f", "n9": "f", "decompression": "z", "memoire": "f"})
         self.assertEqual(projet.INSTRUCTIONS, ("n1", "n6", "n9", "decompression"))
-        self.assertEqual([m for m, _, _ in projet.METRIQUES],
-                         ["debit_compression_n1", "debit_compression_n6", "debit_compression_n9",
-                          "debit_decompression", "ratio_n6", "memoire_max_ko"])
+        self.assertEqual(projet.METRICS,
+                         [("compression_throughput_n1", "higher", "MB/s"), ("compression_throughput_n6", "higher", "MB/s"),
+                          ("compression_throughput_n9", "higher", "MB/s"), ("decompression_throughput", "higher", "MB/s"),
+                          ("ratio_n6", "higher", "ratio"), ("max_memory_kb", "lower", "KB")])
+        self.assertEqual([d for _, d, _ in projet.METRIQUES], ["plus_haut"] * 5 + ["plus_bas"])  # as the judge reads them
         self.assertEqual(projet.VERIFICATION, {"sortie_compressee": "identique"})
-        self.assertIn("timed outputs of scenario n6", projet.METHODE["ratio_n6"])
+        self.assertIn("timed outputs of scenario n6", projet.METHOD["ratio_n6"])
+        self.assertEqual(set(projet.METHOD), {"max_memory_kb", "ratio_n6"})
 
     def test_options(self):
-        projet, _ = juge_commun.charger_greffon(RACINE, {"sortie_compressee": "peut_changer"})
+        projet, _ = juge_commun.load_plugin(RACINE, {"sortie_compressee": "peut_changer"})
         self.assertFalse(projet.identique)
         for options in ({"sortie_compressee": "parfois"}, {"inconnue": "1"}):
             with self.assertRaises(lecture.Erreur, msg=str(options)):
-                juge_commun.charger_greffon(RACINE, options)
+                juge_commun.load_plugin(RACINE, options)
 
     def test_sources_et_objets(self):
         """Seuls miniz.c, miniz_tdef.c et miniz_tinfl.c sont compilés : un objet chacun, miniz_zip.c n'est pas copié."""
-        projet, _ = juge_commun.charger_greffon(RACINE, {})
+        projet, _ = juge_commun.load_plugin(RACINE, {})
         destination = tempfile.mkdtemp()
         try:
-            juge_commun.copier_sources(RACINE, destination, projet.SOURCES, projet.SOURCES_REQUISES)
-            self.assertEqual(juge_commun.objets_attendus(destination), ({"miniz.o", "miniz_tdef.o", "miniz_tinfl.o"}, []))
+            juge_commun.copy_sources(RACINE, destination, projet.SOURCES, projet.REQUIRED_SOURCES)
+            self.assertEqual(juge_commun.expected_objects(destination), ({"miniz.o", "miniz_tdef.o", "miniz_tinfl.o"}, []))
             self.assertIn("miniz.h", os.listdir(destination))
             self.assertNotIn("miniz_zip.c", os.listdir(destination))
         finally:
@@ -164,7 +168,7 @@ class TestIdentiqueAuJugeV2(unittest.TestCase):
     CORPUS = [("k000", b"abc" * 30000), ("k001", bytes(range(256)) * 400), ("k002", b""), ("k003", b"le juge commun " * 9000)]
 
     def test_memes_entrees(self):
-        projet = greffon.Projet({})
+        projet = greffon.Project({})
         rng = random.Random(int.from_bytes(bytes.fromhex("00320000b5e0c0de0032b5e0c0de2026"), "big"))
         h = hashlib.sha256()
         vraie_zlib, greffon.zlib = greffon.zlib, ZlibFactice()
@@ -192,7 +196,7 @@ class TestIdentiqueAuJugeV2(unittest.TestCase):
 
     def test_flux_des_mesures(self):
         """Avec la vraie zlib, les flux des mesures redonnent les fichiers perturbés qu'ils accompagnent."""
-        projet = greffon.Projet({})
+        projet = greffon.Project({})
         for etape in (projet.repetition(random.Random(7), self.CORPUS), projet.instructions(random.Random(7), self.CORPUS, 1000)):
             fichiers = {e.nom: e.donnees for e in etape if e.cote == "f"}
             for e in etape:
@@ -212,7 +216,7 @@ def ecrire_sorties(dossier, fichiers):
 
 
 def sorties_de_verification(donnees):
-    """Verification outputs for an input f « k000 » and a valid stream z « z000 » of `donnees` (bee/juge/execution.c)."""
+    """Verification outputs for an input f « k000 » and a valid stream z « z000 » of `donnees` (bee/judge/execution.c)."""
     fichiers = {("f", f"c/k000.{niveau}"): zlib.compress(donnees, min(niveau, 9)) for niveau in greffon.NIVEAUX_UNIQUE}
     fichiers.update({("f", f"s/k000.{niveau}"): zlib.compress(donnees, niveau) for niveau in greffon.NIVEAUX_FLUX})
     fichiers[("f", "m/k000")] = zlib.compress(donnees, 6)
@@ -246,41 +250,41 @@ class TestVerification(unittest.TestCase):
 
     def test_identique_accepte(self):
         b = self.sorties("B")
-        self.assertEqual(greffon.Projet({}).verifier(self.sorties("A"), b, self.entrees()), 13)
-        juge_commun.exiger_couverture(b, self.entrees(), "essai")
+        self.assertEqual(greffon.Project({}).verify(self.sorties("A"), b, self.entrees()), 13)
+        juge_commun.require_coverage(b, self.entrees(), "essai")
 
     def test_sortie_compressee_differente(self):
         autre = lambda f: f.__setitem__(("f", "c/k000.9"), zlib.compress(self.DONNEES, 0))  # noqa: E731 (juste, mais autre)
         with self.assertRaises(lecture.Refus):
-            greffon.Projet({}).verifier(self.sorties("A"), self.sorties("B", autre), self.entrees())
+            greffon.Project({}).verify(self.sorties("A"), self.sorties("B", autre), self.entrees())
         # Si la tâche le permet, une autre sortie compressée qui redonne l'original est acceptée ; pas une fausse.
-        peut_changer = greffon.Projet({"sortie_compressee": "peut_changer"})
-        self.assertEqual(peut_changer.verifier(self.sorties("A2"), self.sorties("B2", autre), self.entrees()), 13)
+        peut_changer = greffon.Project({"sortie_compressee": "peut_changer"})
+        self.assertEqual(peut_changer.verify(self.sorties("A2"), self.sorties("B2", autre), self.entrees()), 13)
         fausse = lambda f: f.__setitem__(("f", "c/k000.9"), zlib.compress(self.DONNEES[:-1], 9))  # noqa: E731
         with self.assertRaises(lecture.Refus):
-            peut_changer.verifier(self.sorties("A3"), self.sorties("B3", fausse), self.entrees())
+            peut_changer.verify(self.sorties("A3"), self.sorties("B3", fausse), self.entrees())
 
     def test_decompression_differente_ou_absente(self):
         b = self.sorties("B", lambda f: f.__setitem__(("z", "ds/z000"), self.DONNEES[:-1] + b"?"))
         with self.assertRaises(lecture.Refus):
-            greffon.Projet({}).verifier(self.sorties("A"), b, self.entrees())
+            greffon.Project({}).verify(self.sorties("A"), b, self.entrees())
         b = self.sorties("B2", lambda f: f.pop(("z", "e/z000")))
         with self.assertRaises(lecture.Refus):
-            greffon.Projet({}).verifier(self.sorties("A2"), b, self.entrees())
+            greffon.Project({}).verify(self.sorties("A2"), b, self.entrees())
         b = self.sorties("B3", lambda f: f.__setitem__(("z", "e/z000"), b"-3 0\n"))
         with self.assertRaises(lecture.Refus):
-            greffon.Projet({}).verifier(self.sorties("A3"), b, self.entrees())
+            greffon.Project({}).verify(self.sorties("A3"), b, self.entrees())
 
     def test_base_fausse_est_une_erreur(self):
         a = self.sorties("A", lambda f: f.__setitem__(("f", "c/k000.6"), zlib.compress(b"autre chose", 6)))
         with self.assertRaises(lecture.Erreur):
-            greffon.Projet({}).verifier(a, self.sorties("B"), self.entrees())
+            greffon.Project({}).verify(a, self.sorties("B"), self.entrees())
 
     def test_sortie_de_memoire_verifiee(self):
         """juge-v3: verification also writes m/NAME, as the memoire scenario does, and checks it."""
         b = self.sorties("B", lambda f: f.__setitem__(("f", "m/k000"), zlib.compress(self.DONNEES, 1)))
         with self.assertRaises(lecture.Refus):
-            greffon.Projet({}).verifier(self.sorties("A"), b, self.entrees())
+            greffon.Project({}).verify(self.sorties("A"), b, self.entrees())
 
 
 class TestScenarios(unittest.TestCase):
@@ -314,27 +318,27 @@ class TestScenarios(unittest.TestCase):
         return ecrire_sorties(os.path.join(self.travail, nom), {(c, f"{s}/{r}"): o for (c, r), o in fichiers.items()})
 
     def test_chaque_sortie_verifiee(self):
-        projet = greffon.Projet({})
+        projet = greffon.Project({})
         for s, cote in projet.SCENARIOS.items():
             with self.subTest(s=s):
                 b = self.sorties(f"B-{s}", s)
                 valeurs, comparees = projet.scenario(s, self.sorties(f"A-{s}", s), b, self.entrees, self.MESURE)
                 self.assertEqual(comparees, len([e for e in self.entrees if e.cote == cote]))
-                juge_commun.exiger_couverture(b, [e for e in self.entrees if e.cote == cote], s)
-        self.assertEqual(valeurs, {"memoire_max_ko": 1234})
+                juge_commun.require_coverage(b, [e for e in self.entrees if e.cote == cote], s)
+        self.assertEqual(valeurs, {"max_memory_kb": 1234})
 
     def test_ratio_n6_sur_les_sorties_chronometrees(self):
-        valeurs, _ = greffon.Projet({}).scenario("n6", self.sorties("A", "n6"), self.sorties("B", "n6"), self.entrees, self.MESURE)
+        valeurs, _ = greffon.Project({}).scenario("n6", self.sorties("A", "n6"), self.sorties("B", "n6"), self.entrees, self.MESURE)
         self.assertEqual(valeurs["ratio_n6"], len(self.DONNEES) / len(zlib.compress(self.DONNEES, 6)))
-        self.assertEqual(valeurs["debit_compression_n6"], len(self.DONNEES) / 1e6)
+        self.assertEqual(valeurs["compression_throughput_n6"], len(self.DONNEES) / 1e6)
 
     def test_flux_invalide_mele_comme_en_verification(self):
         """A stream in error mixed into the decompression scenario: B must give A's status and bytes, as in
         verification (juge-v2's plugin compared measured outputs with the original only)."""
-        projet = greffon.Projet({})
+        projet = greffon.Project({})
         valeurs, _ = projet.scenario("decompression", self.sorties("A", "decompression"), self.sorties("B", "decompression"),
                                      self.entrees, self.MESURE)
-        self.assertEqual(valeurs["debit_decompression"], len(self.DONNEES) / 1e6)
+        self.assertEqual(valeurs["decompression_throughput"], len(self.DONNEES) / 1e6)
         for modifier in (lambda f: f.__setitem__(("z", "e/e0001"), b"0 40\n"), lambda f: f.pop(("z", "e/e0001")),
                          lambda f: f.__setitem__(("z", "d/e0000"), self.DONNEES[:-1] + b"?")):
             with self.subTest(modifier=modifier), self.assertRaises(lecture.Refus):
@@ -344,14 +348,14 @@ class TestScenarios(unittest.TestCase):
     def test_compression_mesuree_differente(self):
         b = self.sorties("B", "n9", lambda f: f.__setitem__(("f", "c/e0000.9"), zlib.compress(self.DONNEES, 1)))
         with self.assertRaises(lecture.Refus):
-            greffon.Projet({}).scenario("n9", self.sorties("A", "n9"), b, self.entrees, self.MESURE)
+            greffon.Project({}).scenario("n9", self.sorties("A", "n9"), b, self.entrees, self.MESURE)
 
     def test_scenario_lit_les_chemins_de_la_verification(self):
-        """Each output a scenario reads sits at a path verification writes (bee/juge/execution.c), without its <s>/
+        """Each output a scenario reads sits at a path verification writes (bee/judge/execution.c), without its <s>/
         prefix: the common judge compares a mixed-in verification input there, byte for byte."""
-        projet = greffon.Projet({})
+        projet = greffon.Project({})
         verification = ecrire_sorties(os.path.join(self.travail, "V-B"), sorties_de_verification(self.DONNEES))
-        projet.verifier(ecrire_sorties(os.path.join(self.travail, "V-A"), sorties_de_verification(self.DONNEES)), verification,
+        projet.verify(ecrire_sorties(os.path.join(self.travail, "V-A"), sorties_de_verification(self.DONNEES)), verification,
                         [self.entrees[0]._replace(nom="k000"), self.entrees[1]._replace(nom="z000")])
         chemins = {(c, r.replace("k000", "NOM").replace("z000", "NOM")) for c, r in verification.lues}
         for s in projet.SCENARIOS:
@@ -481,10 +485,10 @@ def en_sandbox():
         return False
 
 
-@unittest.skipUnless(os.environ.get("BEE_HARNAIS_SANDBOX") == "1" and en_sandbox() and shutil.which("cc"),
-                     "harness tests: inside bee/sandbox/sans-docker.sh, with BEE_HARNAIS_SANDBOX=1 (they run miniz here)")
+@unittest.skipUnless(os.environ.get("BEE_HARNESS_SANDBOX") == "1" and en_sandbox() and shutil.which("cc"),
+                     "harness tests: inside bee/sandbox/sans-docker.sh, with BEE_HARNESS_SANDBOX=1 (they run miniz here)")
 class TestHarnaisEnSandbox(unittest.TestCase):
-    """The harness built as the common judge builds it (bee/juge/construire.sh, the base's headers in base/), run in
+    """The harness built as the common judge builds it (bee/judge/build.sh, the base's headers in base/), run in
     the sandbox, without Docker (juge-v3 contract, miniz-0048): malformed records exit 2; the judged code finds no
     arguments, no environment and nothing left on descriptor 0, and the same output folders, created up front, in
     every mode; each scenario's outputs are verification's, at the same paths."""
@@ -564,14 +568,14 @@ static void bee_espion(void)
                 shutil.copyfile(os.path.join(RACINE, fichier), os.path.join(sources, fichier))
                 if fichier.endswith(".h"):
                     shutil.copyfile(os.path.join(RACINE, fichier), os.path.join(outillage, "base", fichier))
-        for dossier in greffon.Projet.OUTILLAGE:
+        for dossier in greffon.Project.TOOLING:
             shutil.copytree(os.path.join(RACINE, dossier), os.path.join(outillage, dossier))
         if transformation:
             with open(os.path.join(sources, "miniz.c"), encoding="utf-8") as f:
                 texte = transformation(f.read())
             with open(os.path.join(sources, "miniz.c"), "w", encoding="utf-8") as f:
                 f.write(texte)
-        subprocess.run(["sh", os.path.join(outillage, greffon.Projet.CONSTRUIRE), sources, outillage, sortie], check=True,
+        subprocess.run(["sh", os.path.join(outillage, greffon.Project.BUILD), sources, outillage, sortie], check=True,
                        capture_output=True)
         return os.path.join(sortie, "execution")
 
@@ -631,15 +635,15 @@ static void bee_espion(void)
         self.assertEqual(verification["e/e0003"], b"-3 0\n")  # a stream in error: its status, never a stop
 
 
-@unittest.skipUnless(os.environ.get("BEE_JUGE_INTEGRATION") == "1" and shutil.which("docker"),
-                     "meta-tests: BEE_JUGE_INTEGRATION=1 and Docker required")
+@unittest.skipUnless(os.environ.get("BEE_JUDGE_INTEGRATION") == "1" and shutil.which("docker"),
+                     "meta-tests: BEE_JUDGE_INTEGRATION=1 and Docker required")
 class TestJugeContreVariantes(unittest.TestCase):
     """Le juge commun complet, en conteneur, avec ce greffon, contre la base et des variantes malveillantes."""
 
     @classmethod
     def setUpClass(cls):
         cls.travail = tempfile.mkdtemp(prefix="bee-meta-")
-        cls.corpus = greffon.Projet({}).corpus(RACINE)
+        cls.corpus = greffon.Project({}).corpus(RACINE)
 
     @classmethod
     def tearDownClass(cls):
@@ -656,38 +660,40 @@ class TestJugeContreVariantes(unittest.TestCase):
                 texte = f.read()
             with open(os.path.join(source_b, "miniz.c"), "w", encoding="utf-8") as f:
                 f.write(transformation(texte, self.corpus))
-        commande = [sys.executable, os.path.join(JUGE_COMMUN, "juge.py"), "--outillage", RACINE, "--source-a", RACINE,
-                    "--source-b", source_b, "--repetitions", "2", "--chauffe", "0"]
+        commande = [sys.executable, os.path.join(JUGE_COMMUN, "judge.py"), "--tooling", RACINE, "--source-a", RACINE,
+                    "--source-b", source_b, "--repetitions", "2", "--warmup", "0"]
         if sans_instructions:
-            commande.append("--sans-instructions")
+            commande.append("--no-instructions")
         for option in options:
             commande += ["--option", option]
-        if os.environ.get("BEE_JUGE_RESEAU"):
-            commande += ["--reseau-construction", os.environ["BEE_JUGE_RESEAU"]]
+        if os.environ.get("BEE_JUDGE_NETWORK"):
+            commande += ["--build-network", os.environ["BEE_JUDGE_NETWORK"]]
         r = subprocess.run(commande, capture_output=True, text=True, timeout=3600)
         rapport = json.loads(r.stdout) if r.returncode == 0 else None
         print(f"\n[{nom}] code {r.returncode}: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ''}", file=sys.stderr)
         return r.returncode, rapport, r.stderr
 
     def types_suspects(self, rapport):
-        return {s["type"] for s in rapport["juge"]["constructions_suspectes"]}
+        return {s["type"] for s in rapport["judge"]["suspicious_constructs"]}
 
     def details(self, rapport):
-        return " ".join(s["detail"] for s in rapport["juge"]["constructions_suspectes"])
+        return " ".join(s["detail"] for s in rapport["judge"]["suspicious_constructs"])
 
     def test_honnete(self):
         code, rapport, _ = self.juger("honnete")
         self.assertEqual(code, 0)
-        self.assertEqual(rapport["juge"]["constructions_suspectes"], [])
-        self.assertEqual(rapport["juge"]["projet"], "miniz")
-        self.assertEqual(rapport["juge"]["commun"], f"juge-v{juge_commun.VERSION_COMMUNE}")
-        self.assertEqual(rapport["juge"]["greffon"], juge_commun.charger_greffon(RACINE, {})[1])
-        self.assertGreater(rapport["juge"]["verification"]["sorties_comparees"], 900)
-        # juge-v3: verification inputs mixed into every measurement, and no fixed metric read on verification alone.
-        self.assertGreater(rapport["juge"]["verification"]["entrees_melees"], 0)
-        self.assertEqual(rapport["juge"]["verification"]["fixes_sans_mesure"], [])
-        self.assertEqual(rapport["juge"]["verification"]["instructions_sans_melange"], [])
-        self.assertFalse(rapport["metriques"]["ratio_n6"]["verification_seulement"])
+        self.assertEqual(rapport["judge"]["suspicious_constructs"], [])
+        self.assertEqual(rapport["judge"]["project"], "miniz")
+        self.assertEqual(rapport["judge"]["common"], juge_commun.common_tag())
+        self.assertEqual(rapport["judge"]["common"], "judge-v4")
+        self.assertEqual(rapport["judge"]["plugin"], juge_commun.load_plugin(RACINE, {})[1])
+        self.assertGreater(rapport["judge"]["verification"]["outputs_compared"], 900)
+        # juge-v3 on: verification inputs mixed into every measurement, and no fixed metric read on verification alone.
+        self.assertGreater(rapport["judge"]["verification"]["inputs_mixed"], 0)
+        self.assertEqual(rapport["judge"]["verification"]["fixed_without_measurement"], [])
+        self.assertEqual(rapport["judge"]["verification"]["instructions_without_mixing"], [])
+        self.assertFalse(rapport["metrics"]["ratio_n6"]["verification_only"])
+        self.assertEqual(list(rapport["metrics"]), [m for m, _, _ in greffon.Project.METRICS])  # English metric ids
         self.assertEqual(set(rapport["instructions"]), {"instructions_n1", "instructions_n6", "instructions_n9", "instructions_decompression"})
         for m in rapport["instructions"].values():
             self.assertEqual(m["A"], m["B"])
@@ -695,7 +701,7 @@ class TestJugeContreVariantes(unittest.TestCase):
     def test_sortie_anticipee(self):
         code, _, sortie = self.juger("sortie_anticipee", sortie_anticipee, sans_instructions=True)
         self.assertEqual(code, 1)
-        self.assertIn("REFUS", sortie)
+        self.assertIn("judge: REFUSAL: ", sortie)
 
     def test_faux_chronos(self):
         code, rapport, _ = self.juger("faux_chronos", faux_chronos, sans_instructions=True)
@@ -703,13 +709,13 @@ class TestJugeContreVariantes(unittest.TestCase):
         self.assertIn("symbole_interdit", self.types_suspects(rapport))
         self.assertIn("clock_gettime", self.details(rapport))
         # Le temps est mesuré par le noyau, pas par clock_gettime : B est vu plus lent, pas plus rapide.
-        n6 = rapport["metriques"]["debit_compression_n6"]
-        self.assertLess(n6["B"]["mediane"], n6["A"]["mediane"])
+        n6 = rapport["metrics"]["compression_throughput_n6"]
+        self.assertLess(n6["B"]["median"], n6["A"]["median"])
 
     def test_table_precalculee(self):
         code, _, sortie = self.juger("table_precalculee", table_precalculee, sans_instructions=True)
         self.assertEqual(code, 1)
-        self.assertIn("REFUS", sortie)
+        self.assertIn("judge: REFUSAL: ", sortie)
 
     def test_requete_valgrind(self):
         code, rapport, _ = self.juger("requete_valgrind", requete_valgrind)
@@ -720,7 +726,7 @@ class TestJugeContreVariantes(unittest.TestCase):
     def test_travail_deplace(self):
         code, rapport, _ = self.juger("travail_deplace", travail_deplace)
         self.assertEqual(code, 0)
-        self.assertEqual(rapport["juge"]["constructions_suspectes"], [])  # rien de visible : seul le décompte protège
+        self.assertEqual(rapport["judge"]["suspicious_constructs"], [])  # rien de visible : seul le décompte protège
         n6 = rapport["instructions"]["instructions_n6"]
         self.assertLess(n6["gain"], 0.002, "work moved out of the compressions must stay counted")
 
@@ -728,7 +734,7 @@ class TestJugeContreVariantes(unittest.TestCase):
         code, _, sortie = self.juger("mesure_devinee", mesure_devinee, sans_instructions=True,
                                      options=["sortie_compressee=peut_changer"])
         self.assertEqual(code, 1)
-        self.assertIn("REFUS", sortie)
+        self.assertIn("judge: REFUSAL: ", sortie)
 
     def test_faux_resume(self):
         code, rapport, _ = self.juger("faux_resume", faux_resume)
