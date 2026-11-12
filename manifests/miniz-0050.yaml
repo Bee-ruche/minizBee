@@ -35,15 +35,18 @@ tested:
   - "ab.py before and after on the same revisions (f5440c3 against d6125e7, 6 repetitions, --instructions), each in its own sandbox: the old report translated by names.yaml has exactly the new report's 237 key paths, and 43 deterministic values are equal, instruction counts included (170765561, 334757696, 482752478, 26160282)."
   - "In throwaway copies of registry main: bee record-verdict records the French and the English verdicts of the same inputs identically, but for judge.common and the failed step's label; it refuses an English verdict naming another metric; the English fallback verdict behaves as the French one. bee record-measurement records the old French report and its English translation identically."
   - "banc in the sandbox prints the six English metric ids."
+  - "The fork's CI on f124f72 (run 43127185396): the judge-v4 judge job and the juge-v3 job each gave code 0 on this PR with master's French plugin, both report checks passed (juge_isole: succes), the meta-tests ran with Docker against judge-v4 with the English plugin (26 OK; mesure_devinee, sortie_anticipee and table_precalculee refused), outillage-pr and juge-ancien green; build, differential and fuzzing failed on isoler.sh's mode (fixed in f2b7b81), and the manifest job on R1."
 untested:
   - "The meta-tests with Docker (honest variant and the seven malicious ones against judge-v4 with this English plugin): the sandbox has no Docker; the meta-juge job runs them on this PR."
   - "The judge-v4 and juge-v3 jobs and report checks run for real only in CI; ARM64 too."
 doubts: >
-  R1: bee-ci.yml counts 495 lines (235 added, 260 deleted), over this task's size M (200) and over L (400): about 237
+  R1: bee-ci.yml counts 497 lines (237 added, 260 deleted), over this task's size M (200) and over L (400): about 239
   of them are in hunks that touch code (the judge-v4 pin, the transition, the paths, the verdict job), about 258 in
   comment and step-name hunks; bee check-fork's R1 check fails until the council decides (size, or a split, which
   the coordinator decides). The scenario name memoire (a mode word of the harness and of banc.c) and internal
-  identifiers stay French. judge-v4 is not tagged yet (pinned by SHA). The juge-v3 and juge-ancien jobs and the
+  identifiers stay French. judge-v4 is not tagged yet (pinned by SHA), and its commit records tools/judge/isoler.sh
+  without the executable mode (100644; outils/juge/isoler.sh was 100755): BEE_IMAGE runs chmod +x on the runner's
+  checkout, a no-op once the registry restores the mode. The juge-v3 and juge-ancien jobs and the
   verdict job's remap go with the next version move. The registry's names.yaml has no pr_base yet in
   fork_judge_base_rule. This PR touches bee/** and .github/workflows: a tooling task with judge paths, for a
   guardian or the council (R3).
