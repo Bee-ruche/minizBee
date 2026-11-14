@@ -1,10 +1,20 @@
 # Sandbox Bee pour le fork miniz : compiler, tester, mesurer et fuzzer le code des contributions
 # sans réseau ni secret. Fork indépendant, non affilié au projet miniz.
 #
-# Construction (une fois, avec le réseau) :
+# Build (once, with network, before any project code has run in the clone):
 #   docker build -t bee-miniz bee/sandbox
-# Utilisation (sans réseau ; seul le clone du fork est monté, en /travail) :
-#   docker run --rm -it --network none -v "$PWD":/travail -w /travail bee-miniz bash
+# Use, from the root of the clone (no network, no capability; only the clone is mounted, in /travail,
+# with .git, the agent instructions, the CI and this folder read-only; bee is mounted over itself so
+# that it cannot be renamed). Not run where this was written: no Docker daemon there.
+#   docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileges \
+#     --mount type=bind,source="$PWD",target=/travail \
+#     --mount type=bind,source="$PWD/.git",target=/travail/.git,readonly \
+#     --mount type=bind,source="$PWD/.github",target=/travail/.github,readonly \
+#     --mount type=bind,source="$PWD/AGENTS.md",target=/travail/AGENTS.md,readonly \
+#     --mount type=bind,source="$PWD/CLAUDE.md",target=/travail/CLAUDE.md,readonly \
+#     --mount type=bind,source="$PWD/bee",target=/travail/bee \
+#     --mount type=bind,source="$PWD/bee/sandbox",target=/travail/bee/sandbox,readonly \
+#     -w /travail bee-miniz bash
 #
 # Les outils correspondent à ceux de la CI (ubuntu-24.04) : gcc 13, clang 18 avec son runtime libFuzzer
 # (libclang-rt-18-dev), valgrind, cmake, make, zlib1g-dev (la référence des tests différentiels),

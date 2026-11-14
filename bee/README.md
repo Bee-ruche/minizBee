@@ -35,16 +35,56 @@ In a fork of the fork, `upstream` designates `Bee-ruche/minizBee` (`gh repo fork
 
 ## Sandbox: running code without network or secrets
 
-The contributions' code runs in a sandbox (commandment 6). `bee/sandbox/Dockerfile` builds an Ubuntu 24.04 image with exactly the CI's tools:
+The code of the project and of its contributions runs **only** in a sandbox (commandment 6): every command of this README that compiles or runs something goes through one of the two forms below, from the root of the clone. A disposable cloud session or VM is not a sandbox by itself: it holds the credentials that push to your fork.
+
+**Without Docker, on Linux**: `bee/sandbox/sans-docker.sh <command>` runs the command at the root of the work tree, which is the folder the launcher sits in (it does not ask git where that is). Examples: `bee/sandbox/sans-docker.sh make -C bee differentiel`, or `bee/sandbox/sans-docker.sh bash` for a session (no job control; Ctrl-C ends it). It needs bash, util-linux 2.33 or later, coreutils 8.31 or later, findutils, and user namespaces (`unshare --user`); it says so if they are refused. If project code ever ran in your clone under the earlier launcher (before November 2026), clone the repository again first.
+
+**With Docker**: `bee/sandbox/Dockerfile` builds an Ubuntu 24.04 image with exactly the CI's tools (its base image is not yet pinned by digest, see "Known limits"). All the commands of this README work as they are in the container.
 
 ```bash
-docker build -t bee-miniz bee/sandbox
-docker run --rm -it --network none -v "$PWD":/travail -w /travail bee-miniz bash
+docker build -t bee-miniz bee/sandbox    # with network; only while `git status --porcelain bee/sandbox` prints nothing
+docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileges \
+  --mount type=bind,source="$PWD",target=/travail \
+  --mount type=bind,source="$PWD/.git",target=/travail/.git,readonly \
+  --mount type=bind,source="$PWD/.github",target=/travail/.github,readonly \
+  --mount type=bind,source="$PWD/AGENTS.md",target=/travail/AGENTS.md,readonly \
+  --mount type=bind,source="$PWD/CLAUDE.md",target=/travail/CLAUDE.md,readonly \
+  --mount type=bind,source="$PWD/bee",target=/travail/bee \
+  --mount type=bind,source="$PWD/bee/sandbox",target=/travail/bee/sandbox,readonly \
+  -w /travail bee-miniz bash
 ```
 
-Only the fork's clone is mounted, in `/travail`, and the container has no network. All the commands of this README work as they are in the container. A disposable VM without the user's files or credentials also does the job.
+Only the clone is mounted, in `/travail`: neither your home nor any credential. The container has no network, no capability, and runs as the unprivileged user `bee`. The read-only mounts are the guarded paths of the next paragraph; `bee` is mounted over itself so that it cannot be renamed, with `bee/sandbox` inside it.
 
-**Without Docker** (disposable cloud session, Linux): `bee/sandbox/sans-docker.sh <command>` runs the command at the repository's root, without network, without the user's environment variables (tokens, proxy) and with an empty home folder (`~/.config/gh` is hidden). Examples: `bee/sandbox/sans-docker.sh make -C bee differentiel`, or `bee/sandbox/sans-docker.sh bash` for a session. It requires user namespaces (`unshare -r`) and says so if they are refused. The Dockerfile has been built (miniz-0003 measured in its container), but its base image is not yet pinned by digest (see "Known limits").
+### What the sandbox guarantees
+
+Inside `sans-docker.sh`, a command:
+
+- has **no network** (an empty network namespace) and **none of your environment variables** (no token, no proxy): only `PATH`, `HOME`, `LANG`, `TERM`;
+- can **write** in the work tree, which lasts, and in a private `/tmp` (with its empty home, `/tmp/home`) and a private `/dev/shm`, which are gone when the command ends; nowhere else;
+- **is shown of `.git` only the history**: `HEAD`, `refs`, `packed-refs`, `objects`, `shallow` and the index, read-only, with empty settings. The clone's settings (the remotes' addresses, a credential if one was written there), its logs, its hooks and whatever else `.git` holds are not shown: what a command can read, it can copy into the work tree, and the work tree is what you push. Git reads the history inside, and writes nothing. The launcher refuses to run if `.git` is not a real folder in git's plain format, if its settings are not a plain file, if one of those entries is a link, if a folder under them cannot be listed, or if a file under them is a second name of a file elsewhere (a pack shared with another clone is fine);
+- **cannot change the guarded paths** of the work tree: `.git`, `.github`, `.claude`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `bee/sandbox` (this launcher). They are read-only and can be neither renamed nor removed. One that does not exist cannot be covered: if the command creates it, the launcher renames it `<name>.created-in-sandbox.XXXXXX` when the command ends, and says so (exit status 125 if it cannot; a launcher killed outright renames nothing: look at the tree before you use it);
+- **does not see the rest of the machine**: your home, the folders next to the clone (the registry, other repositories), `/var`, `/run` and its sockets (Docker, D-Bus, ssh-agent), `/sys`, the disks and terminals of `/dev`, the other processes, the descriptors its caller left open. `/usr`, `/bin`, `/sbin`, `/lib*` and `/etc` are there read-only; in `/etc`, what "others" cannot read (`shadow`, private keys) is hidden, also when the session is root;
+- **leaves no core file** when it crashes (the limit is one byte, and it cannot raise it);
+- **leaves no process behind**: its processes live in a PID namespace, killed when the command ends, when the launcher receives SIGTERM, SIGINT, SIGHUP or SIGQUIT, or when the launcher is killed;
+- **cannot undo any of this**: it has no capability and can regain none; the mounts are locked for the user namespaces it may create.
+
+If one of these protections cannot be set up, the launcher does not run the command: exit status 125 and the reason on stderr. `bee/sandbox/test_sandbox.sh bee/sandbox/sans-docker.sh <an empty folder>` checks each of them on a throwaway repository it makes there (read its first lines before running it as root). Otherwise stdin, stdout, stderr and the exit status are the command's (128+N if signal N killed it). The work tree keeps its path inside, so paths in build outputs stay valid from one session to the next.
+
+What changes for the commands of this README:
+
+- **`.git` is read-only and shows the history only.** A command that asks git for a remote's address or a setting of the clone finds none. `git commit` and `git worktree add` fail inside, and so does `bee/bench/ab.py`, which checks revisions out with `git worktree`. Run such a command on a private copy of the clone: `bee/sandbox/sans-docker.sh bash -c 'cp -a . /tmp/copy && cd /tmp/copy && python3 bee/bench/ab.py --base upstream/master --candidate HEAD'` (with `--json "$OLDPWD/report.json"` to keep the report in the work tree).
+- **Nothing outside the work tree exists inside.** Copy what a command needs into the work tree first, for instance the registry's `tools/judge` into the unversioned `bee/construction/`.
+- A rename or a hard link between `bee/` and the rest of the tree fails ("cross-device"); `mv` and `cp` fall back to copying.
+- The command is root in name only: it has no capability, so `mount` fails, and `unshare -r` fails too (`/proc` is read-only, a nested user namespace cannot map its IDs).
+
+### What it does not guarantee
+
+- **It is not a virtual machine.** The command talks to the kernel of your machine: a kernel vulnerability or a CPU side channel crosses the sandbox. Use a disposable VM for code you have reasons to distrust.
+- **The work tree stays writable**: builds happen there. Code that runs inside can change any file of the tree and leave a file under any name the launcher does not guard. After a run, treat the tree as untrusted: read `git status --porcelain --ignored` and `git diff` before you commit, execute nothing of the tree outside the sandbox, and run git from the root of the clone only.
+- **It can read** the work tree and the history (keep no secret in either), `/usr`, the world-readable part of `/etc` (user names), and what `/proc` says of the machine (CPU, memory, kernel). The Docker form shows `.git` whole, read-only: there, keep no credential in `.git/config`.
+- **No limit on CPU, memory, processes or disk.** A command can fill the disk through the work tree or the memory through `/tmp`. Your own timeout ends it: killing the launcher kills everything inside.
+- **Guarded names are those of the list, at the root of the work tree.** The Docker form guards the paths its command mounts read-only, and renames nothing.
 
 ## Building
 
@@ -189,7 +229,7 @@ python3 bee/bench/test_ab.py                                            # unit t
 make -B -C bee banc && python3 bee/bench/profil.py --json bee/construction/profil/profil.json   # ≈ 15 s
 ```
 
-With `bee/sandbox/sans-docker.sh`, build the bench and profile **in the same session** (`sans-docker.sh bash -c '…'` with the line above), with a forced rebuild (`-B`): the repository is mounted there at a different path in each session, a bench built in another session points Callgrind to sources it cannot find, and everything ends up in the group starting with "hors miniz" (outside miniz).
+With `bee/sandbox/sans-docker.sh`, the repository is mounted at its own path, the same in every session. A bench built before this was so (the repository was then mounted at a different path in each session) points Callgrind to sources it cannot find, and everything ends up in the group starting with "hors miniz" (outside miniz): rebuild it (`-B`).
 
 `profil.py` runs the bench under `valgrind --tool=callgrind --toggle-collect=…`, scenario by scenario, on the first 128 KiB of each file (2.2 MB in all). Only the measured passes are counted. The exclusive cost of each line is then attributed to the function that contains it in the source, which shows separately the inline functions (`tdefl_find_match`, `tdefl_record_*`) that callgrind merges into their caller. The `callgrind.<scenario>` files open with `callgrind_annotate --auto=yes`.
 
@@ -249,7 +289,7 @@ BEE_COMMON_JUDGE=<registry>/tools/judge BEE_JUDGE_INTEGRATION=1 python3 bee/judg
 bee/sandbox/sans-docker.sh env BEE_HARNESS_SANDBOX=1 BEE_COMMON_JUDGE=<registry>/tools/judge python3 bee/judge/test_judge.py
                        # + the harness built by build.sh and run without Docker: in the sandbox only, never on CI
 ```
-(`<registry>` at the commit pinned by `bee-ci.yml`, `JUGE_COMMUN_SHA` (judge-v4; it mounts a tmpfs for each execution, as root or through `sudo -n`). Without a Docker bridge, as in some cloud sessions: add `--build-network host`, or `BEE_JUDGE_NETWORK=host` for the meta-tests.)
+(`<registry>` at the commit pinned by `bee-ci.yml`, `JUGE_COMMUN_SHA` (judge-v4; it mounts a tmpfs for each execution, as root or through `sudo -n`). For the `sans-docker.sh` line, `<registry>` is a copy inside the work tree, for instance in the unversioned `bee/construction/`: nothing outside the work tree exists in the sandbox. Without a Docker bridge, as in some cloud sessions: add `--build-network host`, or `BEE_JUDGE_NETWORK=host` for the meta-tests.)
 
 **How it runs** (the common judge, with this plugin).
 1. **Image**: the registry's `Dockerfile.base` (Ubuntu 24.04 pinned by digest) plus the plugin's `PACKAGES` (g++, cmake, zlib1g-dev, git, clang-18, libclang-rt-18-dev: those of the original tests, the differential tests and the fuzzing, which run in the same image). Built before the slightest file of the PR is mounted: it is the only step where the container has network. The corpus commit is fetched before, in a separate step (see "History for the corpus").
@@ -339,6 +379,8 @@ These paths are **judge paths** (`judge_paths` of `projects/miniz.yaml` in the r
 - **Shared machine.** Throughputs vary by a few percent from one run to the next. The sign test and the instruction count limit false verdicts, without eliminating them. When in doubt, rerun `ab.py` or the common judge and compare the instructions.
 - **Common judge throughputs.** The judge's CPU time and instruction count cover the whole process of a scenario (reading the inputs, calls to miniz, writing the outputs): the throughputs are lower than those of the bench (`ab.py`, timed passes only), and the relative differences somewhat attenuated. That is the price of a count from which nothing escapes.
 - **Sandbox image not pinned.** The Dockerfile has been built (miniz-0003 measured in its container, `bee/resultats/miniz-0003/RAPPORT.md`), but its base image, `ubuntu:24.04`, is not yet pinned by digest: to be done by a maintainer with network access (`docker buildx imagetools inspect ubuntu:24.04`, then `FROM ubuntu:24.04@sha256:…`, as the Dockerfile's comment says).
+- **`ab.py` on a private copy not run.** The copy described in "Sandbox" (`cp -a . /tmp/copy`) was checked for what git needs (`git worktree add` works in the copy), on a test repository; `ab.py` itself was not run that way.
+- **Docker form of the sandbox not run.** The `docker run` line of "Sandbox" (read-only `.git` and guarded paths, no capability, no new privileges) was written on a machine without a Docker daemon: not run. `sans-docker.sh` was tested with `bee/sandbox/test_sandbox.sh` as root (80 checks) and as an unprivileged user (74 checks) on one machine (kernel 6.18, util-linux 2.39, coreutils 9.4, git 2.43), and, as root, with the corpus generator, `make -C bee differentiel api banc` and the differential tests (`bee/tests/lancer.sh`), which pass inside it; the bench and the fuzzing were not run inside it. Where unprivileged user namespaces are restricted (Ubuntu 24.04's default AppArmor policy is reported to do so: not tested), it refuses to run, and Docker is the way.
 - **Not checked outside CI.** ARM64 and libFuzzer were not run locally (no ARM64 machine, libFuzzer runtime missing): their first run took place on GitHub Actions.
 - **UBSan exclusion.** clang's `pointer-overflow` check is disabled in miniz's source files only, because of pre-existing and benign "null pointer + 0" cases (null buffers of size 0): see `bee/fuzz/ubsan-exclusions.txt`. ASan and all the other checks stay active.
 - **Assertions outside fuzzing.** The harnesses are compiled with `-DNDEBUG` (see "Fuzzing"): fuzzing does not check miniz's internal assertions; only the differential tests do, on the reference corpus.

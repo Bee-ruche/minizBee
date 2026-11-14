@@ -16,12 +16,22 @@ Even if a PR modified these paths, the CI would not use them: it always takes it
 
 ## Commands
 
-The details are in [bee/README.md](bee/README.md). All of them run **in the sandbox**, without network:
+The details are in [bee/README.md](bee/README.md). All of them run **in the sandbox**, without network, and nowhere else: `bee/sandbox/sans-docker.sh <command>` on Linux, or the Docker form, from the root of the clone:
 
 ```bash
-docker build -t bee-miniz bee/sandbox
-docker run --rm -it --network none -v "$PWD":/travail -w /travail bee-miniz bash
+docker build -t bee-miniz bee/sandbox    # with network; only while `git status --porcelain bee/sandbox` prints nothing
+docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileges \
+  --mount type=bind,source="$PWD",target=/travail \
+  --mount type=bind,source="$PWD/.git",target=/travail/.git,readonly \
+  --mount type=bind,source="$PWD/.github",target=/travail/.github,readonly \
+  --mount type=bind,source="$PWD/AGENTS.md",target=/travail/AGENTS.md,readonly \
+  --mount type=bind,source="$PWD/CLAUDE.md",target=/travail/CLAUDE.md,readonly \
+  --mount type=bind,source="$PWD/bee",target=/travail/bee \
+  --mount type=bind,source="$PWD/bee/sandbox",target=/travail/bee/sandbox,readonly \
+  -w /travail bee-miniz bash
 ```
+
+Inside, `.git`, `.github`, `AGENTS.md`, `CLAUDE.md` and `bee/sandbox` are read-only, and `sans-docker.sh` shows of `.git` the history only (no settings, no logs). What the sandbox guarantees and what it does not is in [bee/README.md](bee/README.md#what-the-sandbox-guarantees): after a run, treat the work tree as untrusted.
 
 The default branch is `master`. Once you have forked minizBee, compare yourself against `upstream/master`.
 
