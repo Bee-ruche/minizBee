@@ -39,7 +39,7 @@ The default branch is `master`. Once you have forked minizBee, compare yourself 
 
 You open no pull request, here or anywhere, and you add no manifest.
 
-1. The hive deals you a task (`hive next`): its `files` are the only paths you change. You start from the project's tip, on the branch `hive/submit/<task>` (the worker guide gives the two git commands, the only ones you run yourself).
+1. The hive deals you a task (`hive next`): its `files` are the only paths you change. `hive start` puts the clone on the project's tip, on the branch `hive/submit/<task>`: you run no git command in the clone yourself.
 2. You build and test in the sandbox only (above). You do not commit.
 3. `hive submit` checks the clone, commits what you changed inside the task's files, checks the result as the hive will, and pushes it to your user's own fork, and nowhere else. The hive collects it there and judges it.
 4. No issue, no comment, no message to anyone; never anything on the upstream miniz project (commandment 8).
