@@ -46,12 +46,12 @@ fixture() {
   ln -s "$outside/target.txt" "$repo/link-to-file"; ln -s "$outside/dir" "$repo/link-to-dir"
   ln -s ../registre/tools/hive/hive.py "$repo/link-to-sibling"
   cat >"$repo/attack.py" <<'EOF'
-# Tries, by direct system calls, to undo the read-only mount of .git: first with the privileges the
-# sandbox leaves, then with every capability of a nested user namespace. Exit 1 if anything worked,
-# 2 if the nested user namespace could not be created (nothing proven), 0 if every attempt was refused.
+# Tries, by direct system calls, to undo the read-only mount of .git with the privileges the sandbox
+# leaves, then to make a namespace of its own: in a user namespace it would hold capabilities again,
+# and could mount what belongs to the machine's root. Exit 1 if anything worked, 0 if all was refused.
 import ctypes, os, sys
 libc = ctypes.CDLL(None, use_errno=True)
-MS_REMOUNT, MS_BIND, MS_MOVE, MNT_DETACH, CLONE_NEWNS, CLONE_NEWUSER = 32, 4096, 8192, 2, 0x20000, 0x10000000
+MS_REMOUNT, MS_BIND, MS_MOVE, MNT_DETACH, CLONE_NEWNS, CLONE_NEWUSER, CLONE_NEWCGROUP = 32, 4096, 8192, 2, 0x20000, 0x10000000, 0x02000000
 def call(name, *args):
     return "WORKED" if getattr(libc, name)(*args) == 0 else os.strerror(ctypes.get_errno())
 def attempts(who):
@@ -69,11 +69,15 @@ def attempts(who):
         print(f"{who}: {what}: {result}")
     return any(result == "WORKED" for _, result in results)
 won = attempts("sandbox user")
-if libc.unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0:
-    print("nested user namespace: could not be created:", os.strerror(ctypes.get_errno()))
-    sys.exit(1 if won else 2)
-print("nested user namespace: created,", open("/proc/self/status").read().split("CapEff:")[1].split()[0], "effective capabilities")
-won = attempts("nested user namespace") or won
+for flags, what in ((CLONE_NEWUSER, "a user namespace"), (CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWCGROUP, "user, mount and control-group namespaces"),
+                    (CLONE_NEWNS, "a mount namespace"), (CLONE_NEWCGROUP, "a control-group namespace")):
+    if os.fork() == 0:  # in a child: a namespace that could be made is left behind with it
+        os._exit(0 if libc.unshare(flags) == 0 else 1 + (ctypes.get_errno() & 63))
+    made = os.waitpid(-1, 0)[1] >> 8
+    print(f"a namespace of its own: {what}: {'CREATED' if made == 0 else os.strerror(made - 1)}")
+    won = won or made == 0
+if os.path.exists("/sys/fs/cgroup") or libc.mount(b"cgroup", b"/tmp", b"cgroup", 0, b"memory") == 0:
+    print("the machine's control groups: SEEN or MOUNTED"); won = True
 sys.exit(1 if won else 0)
 EOF
   git -C "$repo" init -q -b master
@@ -161,7 +165,7 @@ refused b8 ".git cannot be renamed away (to put another in its place)" 'mv .git 
 inside 'umount .git; umount -l .git; mount -o remount,bind,rw .git; echo x >.git/planted-after-remount'
 verdict b9 ".git cannot be unmounted or remounted read-write (mount, umount)" $((rc == 0)) "the write succeeded inside"
 inside 'python3 attack.py'
-verdict b10 "nor by direct system calls, even with the capabilities of a nested user namespace" "$rc" "exit $rc of attack.py, see below"
+verdict b10 "nor by direct system calls; and the command can make no namespace of its own, nor mount the machine's control groups" "$rc" "exit $rc of attack.py, see below"
 printf '%s\n' "$out" | sed 's/^/          /'
 verdict b11 "after all this, .git on the host is unchanged (content, names, modes, dates)" "$([ "$(digest "$repo/.git")" = "$before" ]; echo $?)" "new: $(cd "$repo" && ls -d .git/hooks/pre-commit .git/planted* 2>/dev/null | tr '\n' ' '); last line of .git/config: $(tail -n 1 "$repo/.git/config")"
 
@@ -370,6 +374,30 @@ if [ "$uid" -eq 0 ]; then
 else
   skip h2 "through a link to a file of /etc" "not root: the kernel refuses anyway"
 fi
+
+# ---------------------------------------------------------------------------------------------------
+echo "== i. what the caller hands the command, and the machine's devices, are not the command's to change"
+fixture
+# A file given as the command's input or output is a file of the machine: the command reads and writes
+# through it, and can change neither its mode nor its dates (as root it would own it).
+printf 'a line of the caller\n' >"$outside/input.txt"; : >"$outside/output.log"; : >"$outside/errors.log"
+chmod 644 "$outside/input.txt" "$outside/output.log" "$outside/errors.log"
+handed() { stat -c '%a %y' "$outside/input.txt"; stat -c '%a' "$outside/output.log" "$outside/errors.log"; }
+before=$(handed)
+run sh -c 'cat; echo said; echo warned >&2; chmod 4755 /proc/self/fd/1 /proc/self/fd/2; chmod 4777 /proc/self/fd/0; touch -d 2000-01-01 /proc/self/fd/0; true' \
+  <"$outside/input.txt" >"$outside/output.log" 2>"$outside/errors.log"; rc=$?
+verdict i1 "a file given as input or output keeps its mode and dates, and what was read and said arrives whole" \
+  "$([ "$(handed)" = "$before" ] && [ "$rc" -eq 0 ] && [ "$(cat "$outside/output.log")" = "$(printf 'a line of the caller\nsaid')" ] && grep -qx warned "$outside/errors.log"; echo $?)" \
+  "rc $rc; before: $(echo $before); after: $(echo $(handed)); output: $(first_line "$(cat "$outside/output.log")")"
+# The devices shown are the machine's own nodes: they work, and their mode and dates stay the machine's.
+# (Each chmod below gives a node the mode it already has: where it is not refused, only its date moves.)
+nodes() { stat -c '%a %z %n' /dev/null /dev/zero /dev/full /dev/random /dev/urandom; }
+before=$(nodes)
+out=$(run sh -c 'for d in null zero full random urandom; do chmod "$(stat -c %a /dev/$d)" /dev/$d; done 2>/dev/null
+  chmod "$(stat -c %a /dev/null)" /proc/self/fd/0 2>/dev/null; [ ! -e /etc/shadow ] || chmod "$(stat -c %a /dev/null)" /etc/shadow 2>/dev/null
+  echo x >/dev/null && head -c 3 /dev/zero | wc -c' </dev/null 2>&1); rc=$?
+verdict i2 "the machine's device nodes work inside, and their mode and dates cannot be changed from inside" \
+  "$([ "$(nodes)" = "$before" ] && [ "$(echo $out)" = 3 ]; echo $?)" "rc $rc, output: $(first_line "$out"); nodes before and after differ: $([ "$(nodes)" = "$before" ] && echo no || echo yes)"
 
 # ---------------------------------------------------------------------------------------------------
 echo "== x. other checks"

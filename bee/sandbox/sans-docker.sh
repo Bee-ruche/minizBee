@@ -57,10 +57,17 @@ inside() {
   trap 'refuse "a protection could not be set up ($BASH_COMMAND)"' ERR
   PATH=/usr/sbin:/usr/bin:/sbin:/bin
   local repo=$1 new=$2 guarded=$3 d rest mode drop; shift 3
-  for d in mount umount findmnt pivot_root setsid setpriv prlimit stat readlink; do
+  for d in mount umount findmnt pivot_root setsid setpriv prlimit stat readlink unshare; do
     type -P "$d" >/dev/null || refuse "$d not found (util-linux, coreutils)"
   done
   env --default-signal=INT true   # coreutils 8.31
+
+  # The command may make no user namespace of its own: in one it would hold capabilities again, and
+  # could mount what belongs to the machine's root (its control groups, when the session is root).
+  # The limit is this user namespace's own; it is set before anything is built, and checked.
+  echo 0 >/proc/sys/user/max_user_namespaces
+  [ "$(cat /proc/sys/user/max_user_namespaces)" = 0 ] || refuse "the limit on user namespaces could not be set"
+  ! unshare --user true 2>/dev/null || refuse "a user namespace can still be made inside the sandbox"
 
   # The new root is an empty tmpfs: nothing of the machine is inside unless it is bound below.
   mount -t tmpfs -o mode=755,nosuid,nodev tmpfs "$new"
@@ -74,14 +81,18 @@ inside() {
   { stat -c "%A %n" /etc/** 2>/dev/null || true; } | while read -r mode d; do
     if [[ $mode == ???????r* || ! -e $new$d ]]; then continue; fi
     if [ -d "$new$d" ]; then mount -t tmpfs -o ro,mode=555 tmpfs "$new$d" || exit
-    else mount --bind /dev/null "$new$d" || exit; fi
+    else mount --bind /dev/null "$new$d" && mount -o remount,bind,ro,nosuid,noexec "$new$d" || exit; fi
   done
 
   # A /proc of the new PID namespace, read-only (as root, /proc/sys would otherwise be writable); a
   # /dev without disks or terminal; an empty /tmp, which holds the empty home.
   mkdir "$new/proc" "$new/dev" "$new/tmp"
   mount -t proc -o ro,nosuid,nodev,noexec proc "$new/proc"
-  for d in null zero full random urandom; do : >"$new/dev/$d"; mount --bind "/dev/$d" "$new/dev/$d"; done
+  # (Each device is the machine's own node, bound read-only: it still reads and writes as a device does,
+  # and its mode and dates, which belong to the machine, cannot be changed through the bind.)
+  for d in null zero full random urandom; do
+    : >"$new/dev/$d"; mount --bind "/dev/$d" "$new/dev/$d"; mount -o remount,bind,ro,nosuid,noexec "$new/dev/$d"
+  done
   ln -s /proc/self/fd "$new/dev/fd"
   ln -s fd/0 "$new/dev/stdin"; ln -s fd/1 "$new/dev/stdout"; ln -s fd/2 "$new/dev/stderr"
   mkdir "$new/dev/shm"; mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs "$new/dev/shm"
@@ -187,6 +198,20 @@ done
 spaces=(unshare --user --map-root-user --mount --net --pid --ipc --fork --kill-child --propagation private)
 "${spaces[@]}" true 2>/dev/null || refuse "user namespaces are refused on this machine: use Docker (bee/README.md)"
 
+# The command's input and outputs are never a file of the machine. A file its caller gave it (a log
+# its output goes to, /dev/null as its input) would be the command's own to re-mode and re-date when
+# the session is root. Unless a descriptor is a pipe, a socket or a terminal, it goes through a pipe
+# that this script copies; the copies run here, outside the sandbox.
+own_file() { ! { [ -p "/proc/$$/fd/$1" ] || [ -S "/proc/$$/fd/$1" ] || [ -t "$1" ]; }; }
+feeder=; copies=()
+if own_file 0 || own_file 1 || own_file 2; then
+  (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || refuse "bash 4.4 or later is needed to copy the command's input and outputs"
+  type -P cat >/dev/null || refuse "cat not found (coreutils)"
+fi
+if own_file 0; then exec 0< <(exec cat); feeder=$!; fi
+if own_file 1; then exec 1> >(exec cat); copies+=("$!"); fi
+if own_file 2; then exec 2> >(exec cat >&2); copies+=("$!"); fi
+
 # The sandbox is a child of this script, so that a signal sent to the script ends it: unshare itself
 # defers SIGTERM and SIGINT. Killing process 1 of the PID namespace kills every process inside, and
 # unshare then returns; if this script is killed outright, --pdeathsig and --kill-child do the same.
@@ -213,4 +238,8 @@ for path in ${created[@]+"${created[@]}"}; do
     echo "bee-sandbox: the command created $path: set aside as ${aside#"$repo/"}, do not trust it." >&2
   fi
 done
+# The copies end when what they read is closed: the input's is stopped, the outputs' are waited for.
+[ -z "$feeder" ] || kill "$feeder" 2>/dev/null || true
+exec 1>&- 2>&-
+[ ${#copies[@]} -eq 0 ] || wait "${copies[@]}" 2>/dev/null || true
 exit "$status"
