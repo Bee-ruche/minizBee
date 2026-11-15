@@ -56,8 +56,8 @@ inside() {
   set -Eeuo pipefail
   trap 'refuse "a protection could not be set up ($BASH_COMMAND)"' ERR
   PATH=/usr/sbin:/usr/bin:/sbin:/bin
-  local repo=$1 new=$2 guarded=$3 d rest mode drop; shift 3
-  for d in mount umount findmnt pivot_root setsid setpriv prlimit stat readlink unshare; do
+  local repo=$1 new=$2 guarded=$3 given=$4 d rest mode drop; shift 4
+  for d in mount umount findmnt pivot_root setsid setpriv prlimit stat readlink unshare sed dd; do
     type -P "$d" >/dev/null || refuse "$d not found (util-linux, coreutils)"
   done
   env --default-signal=INT true   # coreutils 8.31
@@ -92,6 +92,21 @@ inside() {
   # and its mode and dates, which belong to the machine, cannot be changed through the bind.)
   for d in null zero full random urandom; do
     : >"$new/dev/$d"; mount --bind "/dev/$d" "$new/dev/$d"; mount -o remount,bind,ro,nosuid,noexec "$new/dev/$d"
+  done
+  # A file or a device the caller gave as the command's input or output is shown the same way: bound
+  # read-only, and the descriptor is opened again through that view. The command reads the file, or
+  # reads and writes the device, and can change neither its mode nor its dates; the caller's own
+  # descriptor is not passed on. The input starts where the caller stood in it.
+  for d in $given; do
+    rest=$(sed -n 's/^pos:[[:space:]]*//p' "/proc/self/fdinfo/$d")
+    : >"$new/dev/.given$d"; mount --bind "/proc/self/fd/$d" "$new/dev/.given$d"
+    mount -o remount,bind,ro,nosuid,noexec "$new/dev/.given$d"
+    case $d in
+      0) exec 0<"$new/dev/.given0"
+         [ "${rest:-0}" = 0 ] || [ ! -f "$new/dev/.given0" ] || dd iflag=skip_bytes skip="$rest" count=0 status=none ;;
+      1) exec 1>"$new/dev/.given1" ;;
+      2) exec 2>"$new/dev/.given2" ;;
+    esac
   done
   ln -s /proc/self/fd "$new/dev/fd"
   ln -s fd/0 "$new/dev/stdin"; ln -s fd/1 "$new/dev/stdout"; ln -s fd/2 "$new/dev/stderr"
@@ -198,19 +213,45 @@ done
 spaces=(unshare --user --map-root-user --mount --net --pid --ipc --fork --kill-child --propagation private)
 "${spaces[@]}" true 2>/dev/null || refuse "user namespaces are refused on this machine: use Docker (bee/README.md)"
 
-# The command's input and outputs are never a file of the machine. A file its caller gave it (a log
-# its output goes to, /dev/null as its input) would be the command's own to re-mode and re-date when
-# the session is root. Unless a descriptor is a pipe, a socket or a terminal, it goes through a pipe
-# that this script copies; the copies run here, outside the sandbox.
-own_file() { ! { [ -p "/proc/$$/fd/$1" ] || [ -S "/proc/$$/fd/$1" ] || [ -t "$1" ]; }; }
-feeder=; copies=()
-if own_file 0 || own_file 1 || own_file 2; then
-  (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || refuse "bash 4.4 or later is needed to copy the command's input and outputs"
-  type -P cat >/dev/null || refuse "cat not found (coreutils)"
+# The command's input and outputs are never a file of the machine that it could re-mode or re-date
+# (when the session is root, a file its caller gave it would be its own). Each of the descriptors 0, 1
+# and 2 of this script is, by the kernel's own name for it:
+#   closed, an unnamed pipe, a socket or a terminal: passed as it is;
+#   a file read as input, or a device (/dev/null): the command gets it through a read-only view of
+#     it, made inside (« given » in inside): nothing is read ahead, and nothing of it can be changed;
+#   a file written as output (a log), a named pipe: it goes through a pipe that this script copies,
+#     outside the sandbox; one copy when both outputs are one file, so that their order holds.
+kind() {
+  local name
+  name=$(readlink "/proc/$$/fd/$1" 2>/dev/null) || { echo closed; return; }
+  case $name in pipe:\[*\]|socket:\[*\]) echo passed; return ;; esac
+  if [ -t "$1" ]; then echo passed
+  elif [ -c "/proc/$$/fd/$1" ] || { [ "$1" = 0 ] && [ -f "/proc/$$/fd/$1" ]; }; then echo given
+  else echo copied; fi
+}
+given=; copied=; copies=()
+for path in 0 1 2; do
+  case $(kind "$path") in
+    given) given+=" $path" ;;
+    copied) [ "$path" != 0 ] || refuse "the command's input is neither a file, a device, a pipe nor a terminal"
+            copied+=" $path" ;;
+  esac
+done
+if [ -n "$copied" ]; then
+  type -P cat mkfifo mktemp rmdir >/dev/null || refuse "cat, mkfifo, mktemp or rmdir not found (coreutils)"
+  pipes=$(mktemp -d) || refuse "no folder for the pipes the outputs go through"
+  # (A copy ignores the signals that end this script: it ends when what it reads is closed.)
+  if [ "$copied" = " 1 2" ] && [ "/proc/$$/fd/1" -ef "/proc/$$/fd/2" ]; then
+    mkfifo "$pipes/1"; (trap '' HUP INT QUIT TERM; exec cat <"$pipes/1") & copies+=("$!"); exec 1>"$pipes/1" 2>&1
+  else
+    for path in $copied; do
+      mkfifo "$pipes/$path"
+      if [ "$path" = 1 ]; then (trap '' HUP INT QUIT TERM; exec cat <"$pipes/1") & copies+=("$!"); exec 1>"$pipes/1"
+      else (trap '' HUP INT QUIT TERM; exec cat <"$pipes/2" >&2) & copies+=("$!"); exec 2>"$pipes/2"; fi
+    done
+  fi
+  rm -f -- "$pipes/1" "$pipes/2"; rmdir -- "$pipes"
 fi
-if own_file 0; then exec 0< <(exec cat); feeder=$!; fi
-if own_file 1; then exec 1> >(exec cat); copies+=("$!"); fi
-if own_file 2; then exec 2> >(exec cat >&2); copies+=("$!"); fi
 
 # The sandbox is a child of this script, so that a signal sent to the script ends it: unshare itself
 # defers SIGTERM and SIGINT. Killing process 1 of the PID namespace kills every process inside, and
@@ -219,7 +260,7 @@ child=
 trap 'kid=$(cat "/proc/$child/task/$child/children" 2>/dev/null) || kid=; kill -KILL ${kid:-$child} 2>/dev/null || true' HUP INT QUIT TERM
 # (--norc: a bash given a command reads a start-up file of the home when its input is a network connection.)
 setpriv --pdeathsig KILL "${spaces[@]}" -- env -i TERM="${TERM:-dumb}" bash --norc --noprofile -c \
-  "$(declare -f refuse readonly_tree inside); inside \"\$@\"" bee-sandbox "$repo" "$new" "${guarded[*]}" "$@" <&0 &
+  "$(declare -f refuse readonly_tree inside); inside \"\$@\"" bee-sandbox "$repo" "$new" "${guarded[*]}" "$given" "$@" <&0 &
 child=$!
 wait "$child" && status=0 || status=$?
 wait "$child" 2>/dev/null || true   # a trapped signal interrupts the first wait: collect the sandbox
@@ -238,8 +279,6 @@ for path in ${created[@]+"${created[@]}"}; do
     echo "bee-sandbox: the command created $path: set aside as ${aside#"$repo/"}, do not trust it." >&2
   fi
 done
-# The copies end when what they read is closed: the input's is stopped, the outputs' are waited for.
-[ -z "$feeder" ] || kill "$feeder" 2>/dev/null || true
-exec 1>&- 2>&-
-[ ${#copies[@]} -eq 0 ] || wait "${copies[@]}" 2>/dev/null || true
+# The copies end when what they read is closed: this script closes its ends, and waits for them.
+if [ ${#copies[@]} -gt 0 ]; then exec 1>&- 2>&-; wait "${copies[@]}" 2>/dev/null || true; fi
 exit "$status"

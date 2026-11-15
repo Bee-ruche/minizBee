@@ -389,6 +389,21 @@ run sh -c 'cat; echo said; echo warned >&2; chmod 4755 /proc/self/fd/1 /proc/sel
 verdict i1 "a file given as input or output keeps its mode and dates, and what was read and said arrives whole" \
   "$([ "$(handed)" = "$before" ] && [ "$rc" -eq 0 ] && [ "$(cat "$outside/output.log")" = "$(printf 'a line of the caller\nsaid')" ] && grep -qx warned "$outside/errors.log"; echo $?)" \
   "rc $rc; before: $(echo $before); after: $(echo $(handed)); output: $(first_line "$(cat "$outside/output.log")")"
+# Nothing is read ahead of a file given as input: a loop that reads it line by line and runs the launcher
+# at each line goes through every line; and a command that does read starts where its caller stood.
+printf '1\n2\n3\n4\n5\n' >"$outside/list.txt"; turns=0
+while read -r _; do run true >/dev/null 2>&1; turns=$((turns + 1)); done <"$outside/list.txt"
+rest=$({ read -r _; run cat; } <"$outside/list.txt" 2>/dev/null)
+verdict i3 "a file given as input is not read ahead, and is read from where the caller stood" \
+  "$([ "$turns" -eq 5 ] && [ "$(echo $rest)" = "2 3 4 5" ]; echo $?)" "turns of the loop: $turns of 5; read after the first line: $(echo $rest)"
+# Both outputs given as one file keep their order; a named pipe given as output is not the command's to change.
+run sh -c 'for i in 1 2 3 4 5 6 7 8; do echo "out$i"; echo "err$i" >&2; done' >"$outside/order.log" 2>&1
+expected=$(for i in 1 2 3 4 5 6 7 8; do echo "out$i"; echo "err$i"; done)
+mkfifo "$outside/named"; chmod 644 "$outside/named"; cat "$outside/named" >"$outside/through.txt" & reader=$!
+run sh -c 'echo through; chmod 4777 /proc/self/fd/1; touch -d 2000-01-01 /proc/self/fd/1; true' >"$outside/named" 2>/dev/null; wait "$reader"
+verdict i4 "outputs given as one file keep their order; a named pipe given as output keeps its mode and dates" \
+  "$([ "$(cat "$outside/order.log")" = "$expected" ] && [ "$(stat -c %a "$outside/named")" = 644 ] && [ "$(stat -c %Y "$outside/named")" -gt 1000000000 ] && [ "$(cat "$outside/through.txt")" = through ]; echo $?)" \
+  "order: $(echo $(head -n 4 "$outside/order.log")) …; named pipe: $(stat -c '%a %y' "$outside/named"); through it: $(first_line "$(cat "$outside/through.txt")")"
 # The devices shown are the machine's own nodes: they work, and their mode and dates stay the machine's.
 # (Each chmod below gives a node the mode it already has: where it is not refused, only its date moves.)
 nodes() { stat -c '%a %z %n' /dev/null /dev/zero /dev/full /dev/random /dev/urandom; }
