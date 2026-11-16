@@ -859,86 +859,112 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
         }
     }
 #else
+/* Longueur commune de p et q, plafonnée à max_match_len : par mots de 64 bits tant qu'il reste au
+   moins 8 octets sous le plafond, puis octet par octet (voir TDEFL_FIND_MATCH_64BIT plus haut). */
+static MZ_FORCEINLINE mz_uint tdefl_match_length(const mz_uint8 *p, const mz_uint8 *q, mz_uint max_match_len)
+{
+    mz_uint probe_len;
+#if TDEFL_FIND_MATCH_64BIT
+    probe_len = 0;
+    while ((max_match_len - probe_len) >= 8)
+    {
+        mz_uint64 wp, wq, x;
+        memcpy(&wp, p, sizeof(wp));
+        memcpy(&wq, q, sizeof(wq));
+        x = wp ^ wq;
+        if (x)
+            return probe_len + (mz_uint)(__builtin_ctzll(x) >> 3);
+        p += 8;
+        q += 8;
+        probe_len += 8;
+    }
+    while ((probe_len < max_match_len) && (*p == *q))
+    {
+        p++;
+        q++;
+        probe_len++;
+    }
+#else
+    for (probe_len = 0; probe_len < max_match_len; probe_len++)
+        if (*p++ != *q++)
+            break;
+#endif
+    return probe_len;
+}
+
 static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahead_pos, mz_uint max_dist, mz_uint max_match_len, mz_uint *pMatch_dist, mz_uint *pMatch_len)
 {
     mz_uint dist, pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK, match_len = *pMatch_len, probe_pos = pos, next_probe_pos, probe_len;
-    mz_uint num_probes_left = d->m_max_probes[match_len >= 32];
+    mz_uint num_probes_left;
     /* pTail pointe sur m_dict + match_len - 1 : les deux octets de fin de correspondance (positions
        match_len - 1 et match_len) se lisent en une fois par memcpy, sans calcul d'indice par sonde.
        L'égalité de deux mots lus de la même façon équivaut à celle des deux octets, quel que soit
        le boutisme ; ce sont les mêmes octets que lisait la version octet par octet (match_len >= 1). */
-    const mz_uint8 *s = d->m_dict + pos, *p, *q, *pTail = d->m_dict + match_len - 1;
+    const mz_uint8 *pTail;
     mz_uint16 c01, w;
-    memcpy(&c01, pTail + pos, sizeof(c01));
     MZ_ASSERT(max_match_len <= TDEFL_MAX_MATCH_LEN);
     if (max_match_len <= match_len)
         return;
-    for (;;)
-    {
-        for (;;)
-        {
-            if (--num_probes_left == 0)
-                return;
-#define TDEFL_PROBE                                                                               \
+    num_probes_left = d->m_max_probes[match_len >= 32];
+    pTail = d->m_dict + match_len - 1;
+    memcpy(&c01, pTail + pos, sizeof(c01));
+#define TDEFL_PROBE(TROUVE)                                                                       \
     next_probe_pos = d->m_next[probe_pos];                                                        \
     if ((!next_probe_pos) || ((dist = (mz_uint16)(lookahead_pos - next_probe_pos)) > max_dist))   \
         return;                                                                                   \
     probe_pos = next_probe_pos & TDEFL_LZ_DICT_SIZE_MASK;                                         \
     memcpy(&w, pTail + probe_pos, sizeof(w));                                                     \
     if (w == c01)                                                                                 \
-        break;
-            TDEFL_PROBE;
-            TDEFL_PROBE;
-            TDEFL_PROBE;
-        }
+        TROUVE;
+#define TDEFL_COMPARE                                                                             \
+    if (!dist)                                                                                    \
+        return;                                                                                   \
+    probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);        \
+    if (probe_len > match_len)                                                                    \
+    {                                                                                             \
+        *pMatch_dist = dist;                                                                      \
+        if ((*pMatch_len = match_len = probe_len) == max_match_len)                               \
+            return;                                                                               \
+        pTail = d->m_dict + match_len - 1;                                                        \
+        memcpy(&c01, pTail + pos, sizeof(c01));                                                   \
+    }
+    /* Recherche courte (tâche miniz-0038) : avec un budget de 1 ou 2 (niveau 1), la boucle générale
+       ci-dessous fait au plus trois sondes et au plus une comparaison, après laquelle le budget est
+       épuisé. Mêmes sondes, dans le même ordre, et même comparaison, écrites en ligne droite : la
+       mise en place de la boucle générale n'est payée que par les budgets plus grands. */
+    if ((num_probes_left - 1U) <= 1U)
+    {
+        if (num_probes_left == 1)
+            return;
+        TDEFL_PROBE(goto candidat_court);
+        TDEFL_PROBE(goto candidat_court);
+        TDEFL_PROBE(goto candidat_court);
+        return;
+    candidat_court:
         if (!dist)
-            break;
-        p = s;
-        q = d->m_dict + probe_pos;
-#if TDEFL_FIND_MATCH_64BIT
-        probe_len = 0;
-        {
-            mz_uint trouve = 0;
-            while (!trouve && (max_match_len - probe_len) >= 8)
-            {
-                mz_uint64 wp, wq, x;
-                memcpy(&wp, p, sizeof(wp));
-                memcpy(&wq, q, sizeof(wq));
-                x = wp ^ wq;
-                if (x)
-                {
-                    probe_len += (mz_uint)(__builtin_ctzll(x) >> 3);
-                    trouve = 1;
-                }
-                else
-                {
-                    p += 8;
-                    q += 8;
-                    probe_len += 8;
-                }
-            }
-            if (!trouve)
-                while ((probe_len < max_match_len) && (*p == *q))
-                {
-                    p++;
-                    q++;
-                    probe_len++;
-                }
-        }
-#else
-        for (probe_len = 0; probe_len < max_match_len; probe_len++)
-            if (*p++ != *q++)
-                break;
-#endif
+            return;
+        probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);
         if (probe_len > match_len)
         {
             *pMatch_dist = dist;
-            if ((*pMatch_len = match_len = probe_len) == max_match_len)
-                return;
-            pTail = d->m_dict + match_len - 1;
-            memcpy(&c01, pTail + pos, sizeof(c01));
+            *pMatch_len = probe_len;
         }
+        return;
     }
+    for (;;)
+    {
+        for (;;)
+        {
+            if (--num_probes_left == 0)
+                return;
+            TDEFL_PROBE(break);
+            TDEFL_PROBE(break);
+            TDEFL_PROBE(break);
+        }
+        TDEFL_COMPARE;
+    }
+#undef TDEFL_COMPARE
+#undef TDEFL_PROBE
 }
 #endif /* MINIZ_USE_UNALIGNED_LOADS_AND_STORES */
 
