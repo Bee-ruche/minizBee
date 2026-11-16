@@ -45,7 +45,51 @@ extern "C"
             return MZ_ADLER32_INIT;
         while (buf_len)
         {
-            for (i = 0; i + 7 < block_len; i += 8, ptr += 8)
+            i = 0;
+#if MINIZ_LITTLE_ENDIAN && MINIZ_HAS_64BIT_REGISTERS
+            /* Same block-wise computation as tinfl_decompress (miniz_tinfl.c), duplicated here so that miniz_tinfl.c stays
+               compilable on its own. Groups of 160 bytes, 20 rounds of 8 bytes. Per 16-bit lane, e sums the even bytes, z the
+               words shifted by 8 bits, pe and pz sum e and z before each round. Then o = z - ((e >> 8) & ~0xFF) sums the odd
+               bytes (likewise po); x = e + o. Over 160 bytes: s2 += 160 * s1 + 8 * (sum of pe and po) + [8,6,4,2].e +
+               [7,5,3,1].o, and [8,6,4,2].e + [7,5,3,1].o = H(e) + H(x) + 2 * [3,2,1,0].x (H: sum of the lanes). Bounds per
+               lane: e, o <= 20 * 255, pe, po <= 190 * 255 = 48450, x <= 10200, 3x0 + 2x1 + x2 <= 61200: no carry between
+               lanes; q, in 32-bit lanes, <= 4 * 48450. Same integers as the byte-by-byte loop. */
+            for (; i + 159 < block_len; i += 160)
+            {
+                mz_uint64 e = 0, z = 0, pe = 0, pz = 0, w0, w1, q, x;
+                int k;
+                for (k = 0; k < 10; ++k, ptr += 16)
+                {
+                    memcpy(&w0, ptr, sizeof(w0));
+                    memcpy(&w1, ptr + 8, sizeof(w1));
+                    pe += e, pz += z, e += w0 & 0x00FF00FF00FF00FFULL, z += w0 >> 8;
+                    pe += e, pz += z, e += w1 & 0x00FF00FF00FF00FFULL, z += w1 >> 8;
+                }
+                z -= (e >> 8) & ~(mz_uint64)0xFF, pz -= (pe >> 8) & ~(mz_uint64)0xFF;
+                q = (pe & 0x0000FFFF0000FFFFULL) + ((pe >> 16) & 0x0000FFFF0000FFFFULL) + (pz & 0x0000FFFF0000FFFFULL) + ((pz >> 16) & 0x0000FFFF0000FFFFULL);
+                x = e + z;
+                s2 += 160 * s1 + (((mz_uint32)q + (mz_uint32)(q >> 32)) << 3) + (mz_uint32)((e * 0x0001000100010001ULL) >> 48) + (mz_uint32)((x * 0x0001000100010001ULL) >> 48) + 2 * (mz_uint32)((x * 0x0003000200010000ULL) >> 48);
+                s1 += (mz_uint32)((x * 0x0001000100010001ULL) >> 48);
+            }
+            /* Blocks of 16 bytes: two 64-bit words read by memcpy; in each, the even (e) and odd (o) bytes are isolated in
+               16-bit lanes. A product by a constant gives in lane 3 the sum of the 4 lanes (s1) or their weighted sum (s2): at
+               most 2 * 255 * 36 = 18360 per lane, hence no carry between lanes. Over 16 bytes, s1 += a0 + a1 and
+               s2 += 16 * s1 + 8 * a0 + d0 + d1: exactly the byte-by-byte loop. */
+            for (; i + 15 < block_len; i += 16, ptr += 16)
+            {
+                mz_uint64 w0, w1, e0, o0, e1, o1;
+                mz_uint32 a0, a1;
+                memcpy(&w0, ptr, sizeof(w0));
+                memcpy(&w1, ptr + 8, sizeof(w1));
+                e0 = w0 & 0x00FF00FF00FF00FFULL, o0 = (w0 >> 8) & 0x00FF00FF00FF00FFULL;
+                e1 = w1 & 0x00FF00FF00FF00FFULL, o1 = (w1 >> 8) & 0x00FF00FF00FF00FFULL;
+                a0 = (mz_uint32)(((e0 + o0) * 0x0001000100010001ULL) >> 48);
+                a1 = (mz_uint32)(((e1 + o1) * 0x0001000100010001ULL) >> 48);
+                s2 += (s1 << 4) + (a0 << 3) + (mz_uint32)((e0 * 0x0008000600040002ULL + o0 * 0x0007000500030001ULL + e1 * 0x0008000600040002ULL + o1 * 0x0007000500030001ULL) >> 48);
+                s1 += a0 + a1;
+            }
+#endif
+            for (; i + 7 < block_len; i += 8, ptr += 8)
             {
                 s1 += ptr[0], s2 += s1;
                 s1 += ptr[1], s2 += s1;
