@@ -892,9 +892,93 @@ static MZ_FORCEINLINE mz_uint tdefl_match_length(const mz_uint8 *p, const mz_uin
     return probe_len;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#define TDEFL_NOINLINE __attribute__((__noinline__))
+#elif defined(_MSC_VER)
+#define TDEFL_NOINLINE __declspec(noinline)
+#else
+#define TDEFL_NOINLINE
+#endif
+
+/* The general search of tdefl_find_match (task miniz-0036), for a budget of 3 or more: the probes of
+   the chain of lookahead_pos, in the same order, with the same budget and the same comparisons as
+   before. Returns 0 if no match longer than match_len was found, (distance << 16) | length otherwise
+   (length >= 3, distance < 32768). It is a function of its own so that its loop keeps its registers,
+   and the caller's loop its own.
+   Per probe: the index is a size_t (no extension between the mask and the two reads it indexes), and
+   the distance test is made against a base computed once per call. With
+   dist = (mz_uint16)(lookahead_pos - next) and max_dist < 32768,
+   (mz_uint16)(next + max_dist - lookahead_pos) is max_dist - dist when dist <= max_dist, and
+   65536 + max_dist - dist > max_dist otherwise: it exceeds max_dist exactly when dist does. The
+   distance itself is computed for the candidates only, from the masked positions: a candidate has
+   dist <= max_dist < 32768, so dist == (pos - probe_pos) & TDEFL_LZ_DICT_SIZE_MASK. */
+static TDEFL_NOINLINE mz_uint tdefl_find_match_long(const tdefl_compressor *d, mz_uint lookahead_pos, mz_uint max_dist, mz_uint max_match_len, mz_uint match_len, mz_uint num_probes_left)
+{
+    const mz_uint pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK;
+    const mz_uint dist_base = max_dist - lookahead_pos;
+    const mz_uint16 max_dist16 = (mz_uint16)max_dist;
+    mz_uint dist, probe_len, found = 0;
+    size_t probe_pos = pos;
+    const mz_uint8 *pTail = d->m_dict + match_len - 1;
+    mz_uint16 c01, w;
+    MZ_ASSERT(max_dist < TDEFL_LZ_DICT_SIZE);
+    memcpy(&c01, pTail + pos, sizeof(c01));
+/* End of the chain: a null m_next, or a distance beyond max_dist. */
+#define TDEFL_CHAIN_END(n) ((!(n)) || ((mz_uint16)((n) + dist_base) > max_dist16))
+/* The same, where a null m_next is beyond max_dist by itself: (mz_uint16)lookahead_pos > max_dist. */
+#define TDEFL_CHAIN_END_FAR(n) ((mz_uint16)((n) + dist_base) > max_dist16)
+#define TDEFL_PROBE_LONG(FIN)                                                                     \
+    probe_pos = d->m_next[probe_pos];                                                             \
+    if (FIN(probe_pos))                                                                           \
+        return found;                                                                             \
+    probe_pos &= TDEFL_LZ_DICT_SIZE_MASK;                                                         \
+    memcpy(&w, pTail + probe_pos, sizeof(w));                                                     \
+    if (w == c01)                                                                                 \
+        break;
+#define TDEFL_PROBE_LOOP(FIN)                                                                     \
+    for (;;)                                                                                      \
+    {                                                                                             \
+        for (;;)                                                                                  \
+        {                                                                                         \
+            if (--num_probes_left == 0)                                                           \
+                return found;                                                                     \
+            TDEFL_PROBE_LONG(FIN)                                                                 \
+            TDEFL_PROBE_LONG(FIN)                                                                 \
+            TDEFL_PROBE_LONG(FIN)                                                                 \
+        }                                                                                         \
+        dist = (pos - (mz_uint)probe_pos) & TDEFL_LZ_DICT_SIZE_MASK;                              \
+        if (!dist)                                                                                \
+            return found;                                                                         \
+        probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);    \
+        if (probe_len > match_len)                                                                \
+        {                                                                                         \
+            match_len = probe_len;                                                                \
+            found = (dist << 16) | probe_len;                                                     \
+            if (probe_len == max_match_len)                                                       \
+                return found;                                                                     \
+            pTail = d->m_dict + match_len - 1;                                                    \
+            memcpy(&c01, pTail + pos, sizeof(c01));                                               \
+        }                                                                                         \
+    }
+    /* Two versions of the same loop: where position 0 lies beyond max_dist, the distance test alone
+       ends the chain on a null m_next, and the zero test is left out. */
+    if ((mz_uint16)lookahead_pos > max_dist)
+    {
+        TDEFL_PROBE_LOOP(TDEFL_CHAIN_END_FAR)
+    }
+    else
+    {
+        TDEFL_PROBE_LOOP(TDEFL_CHAIN_END)
+    }
+#undef TDEFL_PROBE_LOOP
+#undef TDEFL_PROBE_LONG
+#undef TDEFL_CHAIN_END_FAR
+#undef TDEFL_CHAIN_END
+}
+
 static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahead_pos, mz_uint max_dist, mz_uint max_match_len, mz_uint *pMatch_dist, mz_uint *pMatch_len)
 {
-    mz_uint dist, pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK, match_len = *pMatch_len, probe_pos = pos, next_probe_pos, probe_len;
+    mz_uint dist, pos, match_len = *pMatch_len, probe_pos, next_probe_pos, probe_len;
     mz_uint num_probes_left;
     /* pTail pointe sur m_dict + match_len - 1 : les deux octets de fin de correspondance (positions
        match_len - 1 et match_len) se lisent en une fois par memcpy, sans calcul d'indice par sonde.
@@ -906,6 +990,41 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
     if (max_match_len <= match_len)
         return;
     num_probes_left = d->m_max_probes[match_len >= 32];
+    /* Recherche courte (tâche miniz-0038) : avec un budget de 1 ou 2 (niveau 1), la recherche générale
+       fait au plus trois sondes et au plus une comparaison, après laquelle le budget est épuisé. Mêmes
+       sondes, dans le même ordre, et même comparaison, écrites en ligne droite : la mise en place de
+       la recherche générale (tdefl_find_match_long) n'est payée que par les budgets plus grands. */
+    if ((num_probes_left - 1U) > 1U)
+    {
+        mz_uint found;
+#if defined(__GNUC__) || defined(__clang__)
+        /* The probes wait on memory more than on instructions: m_next and m_dict do not fit the first
+           cache together, and each probe's address comes from the one before. The search of the next
+           position cannot start before this one ends, but the start of its chain is known now:
+           position lookahead_pos + 1 is in the chains as soon as the lookahead holds 4 bytes (the last
+           position inserted is lookahead_pos + lookahead_size - 3), so its m_next is written, and so
+           is the m_next of the position it names (an earlier position, or 0). Ask, while this search
+           runs, for the lines the first probes of the next one read: the first link's m_next and
+           m_dict, and the second link's m_next. Hints only, which change no result. */
+        if (max_match_len > TDEFL_MIN_MATCH_LEN)
+        {
+            const size_t next_first = d->m_next[(lookahead_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK] & TDEFL_LZ_DICT_SIZE_MASK;
+            __builtin_prefetch(&d->m_next[next_first]);
+            __builtin_prefetch(d->m_dict + next_first);
+            __builtin_prefetch(&d->m_next[d->m_next[next_first] & TDEFL_LZ_DICT_SIZE_MASK]);
+        }
+#endif
+        found = tdefl_find_match_long(d, lookahead_pos, max_dist, max_match_len, match_len, num_probes_left);
+        if (found)
+        {
+            *pMatch_dist = found >> 16;
+            *pMatch_len = found & 0xFFFF;
+        }
+        return;
+    }
+    if (num_probes_left == 1)
+        return;
+    probe_pos = pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK;
     pTail = d->m_dict + match_len - 1;
     memcpy(&c01, pTail + pos, sizeof(c01));
 #define TDEFL_PROBE(TROUVE)                                                                       \
@@ -916,54 +1035,19 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
     memcpy(&w, pTail + probe_pos, sizeof(w));                                                     \
     if (w == c01)                                                                                 \
         TROUVE;
-#define TDEFL_COMPARE                                                                             \
-    if (!dist)                                                                                    \
-        return;                                                                                   \
-    probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);        \
-    if (probe_len > match_len)                                                                    \
-    {                                                                                             \
-        *pMatch_dist = dist;                                                                      \
-        if ((*pMatch_len = match_len = probe_len) == max_match_len)                               \
-            return;                                                                               \
-        pTail = d->m_dict + match_len - 1;                                                        \
-        memcpy(&c01, pTail + pos, sizeof(c01));                                                   \
-    }
-    /* Recherche courte (tâche miniz-0038) : avec un budget de 1 ou 2 (niveau 1), la boucle générale
-       ci-dessous fait au plus trois sondes et au plus une comparaison, après laquelle le budget est
-       épuisé. Mêmes sondes, dans le même ordre, et même comparaison, écrites en ligne droite : la
-       mise en place de la boucle générale n'est payée que par les budgets plus grands. */
-    if ((num_probes_left - 1U) <= 1U)
-    {
-        if (num_probes_left == 1)
-            return;
-        TDEFL_PROBE(goto candidat_court);
-        TDEFL_PROBE(goto candidat_court);
-        TDEFL_PROBE(goto candidat_court);
+    TDEFL_PROBE(goto candidat_court);
+    TDEFL_PROBE(goto candidat_court);
+    TDEFL_PROBE(goto candidat_court);
+    return;
+candidat_court:
+    if (!dist)
         return;
-    candidat_court:
-        if (!dist)
-            return;
-        probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);
-        if (probe_len > match_len)
-        {
-            *pMatch_dist = dist;
-            *pMatch_len = probe_len;
-        }
-        return;
-    }
-    for (;;)
+    probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);
+    if (probe_len > match_len)
     {
-        for (;;)
-        {
-            if (--num_probes_left == 0)
-                return;
-            TDEFL_PROBE(break);
-            TDEFL_PROBE(break);
-            TDEFL_PROBE(break);
-        }
-        TDEFL_COMPARE;
+        *pMatch_dist = dist;
+        *pMatch_len = probe_len;
     }
-#undef TDEFL_COMPARE
 #undef TDEFL_PROBE
 }
 #endif /* MINIZ_USE_UNALIGNED_LOADS_AND_STORES */
