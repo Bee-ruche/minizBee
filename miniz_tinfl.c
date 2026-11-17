@@ -184,6 +184,68 @@ extern "C"
             MZ_CLEAR_ARR(r->m_tree_2);
     }
 
+#if MINIZ_LITTLE_ENDIAN
+#if defined(__GNUC__)
+#define TINFL_NOINLINE __attribute__((__noinline__))
+#elif defined(_MSC_VER)
+#define TINFL_NOINLINE __declspec(noinline)
+#else
+#define TINFL_NOINLINE
+#endif
+    /* Writes the len bytes (len >= 4) of an overlapping match whose source starts dist bytes (1 to 7) before
+       pOut: the output is the pattern of those dist bytes, repeated. Builds once, from byte loads, a 64-bit word
+       holding the pattern repeated, and stores it in steps of the largest multiple of dist that fits in 8
+       bytes, so that the same word is right at every step: nothing just stored is read back (no store-to-load
+       forwarding stall), and nothing is written past the end of the match. Kept out of line so that
+       tinfl_decompress's hot loop keeps its registers. */
+    static TINFL_NOINLINE void tinfl_copy_overlap(mz_uint8 *pOut, size_t dist, size_t len)
+    {
+        static const mz_uint8 s_step[8] = { 0, 8, 8, 6, 8, 5, 6, 7 };
+        const size_t step = s_step[dist];
+        mz_uint8 *const pEnd = pOut + len;
+        const mz_uint8 *pSrc = pOut - dist;
+        size_t left;
+        mz_uint64 v = pSrc[0];
+        if (dist == 1)
+            v *= 0x0101010101010101ULL;
+        else
+        {
+            size_t i = 1;
+            do
+            {
+                v |= (mz_uint64)pSrc[i] << (8 * i);
+            } while (++i < dist);
+            v |= v << (8 * dist);
+            if (dist < 4)
+                v |= v << (16 * dist);
+        }
+        while ((pEnd - pOut) >= 8)
+        {
+            memcpy(pOut, &v, 8);
+            pOut += step;
+        }
+        /* The bytes left are the first ones of the word. */
+        left = (size_t)(pEnd - pOut);
+        if (left >= 4)
+        {
+            mz_uint32 w = (mz_uint32)v;
+            memcpy(pOut, &w, 4);
+            w = (mz_uint32)(v >> (8 * (left - 4)));
+            memcpy(pEnd - 4, &w, 4);
+        }
+        else if (left)
+        {
+            pOut[0] = (mz_uint8)v;
+            if (left > 1)
+            {
+                pOut[1] = (mz_uint8)(v >> 8);
+                if (left > 2)
+                    pOut[2] = (mz_uint8)(v >> 16);
+            }
+        }
+    }
+#endif /* MINIZ_LITTLE_ENDIAN */
+
     tinfl_status tinfl_decompress(tinfl_decompressor *r, const mz_uint8 *pIn_buf_next, size_t *pIn_buf_size, mz_uint8 *pOut_buf_start, mz_uint8 *pOut_buf_next, size_t *pOut_buf_size, const mz_uint32 decomp_flags)
     {
         static const mz_uint16 s_length_base[31] = { 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258, 0, 0 };
@@ -612,6 +674,17 @@ extern "C"
                         counter %= 3; /* same leftover value as the byte-by-byte loop */
                         continue;
                     }
+#if MINIZ_LITTLE_ENDIAN
+                    /* Overlapping match whose source starts 1 to 7 bytes before the destination: copied by words,
+                       out of line (see tinfl_copy_overlap). */
+                    if ((counter > 3) && ((size_t)((pOut_buf_cur - pSrc) - 1) < 7))
+                    {
+                        tinfl_copy_overlap(pOut_buf_cur, (size_t)(pOut_buf_cur - pSrc), counter);
+                        pOut_buf_cur += counter;
+                        counter %= 3; /* same leftover value as the byte-by-byte loop */
+                        continue;
+                    }
+#endif /* MINIZ_LITTLE_ENDIAN */
                     while (counter > 2)
                     {
                         pOut_buf_cur[0] = pSrc[0];
