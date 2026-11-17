@@ -1169,30 +1169,42 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
     static MZ_FORCEINLINE void tdefl_record_match(tdefl_compressor *d, mz_uint match_len, mz_uint match_dist)
     {
         mz_uint32 s0, s1;
+        mz_uint8 *pLZ_code_buf = d->m_pLZ_code_buf;
 
         MZ_ASSERT((match_len >= TDEFL_MIN_MATCH_LEN) && (match_dist >= 1) && (match_dist <= TDEFL_LZ_DICT_SIZE));
 
         d->m_total_lz_bytes += match_len;
 
-        d->m_pLZ_code_buf[0] = (mz_uint8)(match_len - TDEFL_MIN_MATCH_LEN);
-
+        /* Task miniz-0020: m_pLZ_code_buf is read once (above) and written back once. A store through it is
+           a byte store, which may alias d itself and forced the pointer to be read again after each byte. */
         match_dist -= 1;
-        d->m_pLZ_code_buf[1] = (mz_uint8)(match_dist & 0xFF);
-        d->m_pLZ_code_buf[2] = (mz_uint8)(match_dist >> 8);
-        d->m_pLZ_code_buf += 3;
+        pLZ_code_buf[0] = (mz_uint8)(match_len - TDEFL_MIN_MATCH_LEN);
+        pLZ_code_buf[1] = (mz_uint8)(match_dist & 0xFF);
+        pLZ_code_buf[2] = (mz_uint8)(match_dist >> 8);
+        pLZ_code_buf += 3;
 
         *d->m_pLZ_flags = (mz_uint8)((*d->m_pLZ_flags >> 1) | 0x80);
         if (--d->m_num_flags_left == 0)
         {
             d->m_num_flags_left = 8;
-            d->m_pLZ_flags = d->m_pLZ_code_buf++;
+            d->m_pLZ_flags = pLZ_code_buf++;
         }
+        d->m_pLZ_code_buf = pLZ_code_buf;
 
         s0 = s_tdefl_small_dist_sym[match_dist & 511];
         s1 = s_tdefl_large_dist_sym[(match_dist >> 8) & 127];
         d->m_huff_count[1][(match_dist < 512) ? s0 : s1]++;
         d->m_huff_count[0][s_tdefl_len_sym[match_len - TDEFL_MIN_MATCH_LEN]]++;
     }
+
+/* Task miniz-0020: the smallest number of bytes in m_lz_code_buf at which tdefl_compress_normal's flush test can be
+   true. That test is (n > TDEFL_LZ_CODE_BUF_SIZE - 8) || ((t > 31 * 1024) && (((n * 115) >> 7) >= t || raw)), with n
+   the bytes in the buffer and t = m_total_lz_bytes. Its first term needs n >= TDEFL_LZ_CODE_BUF_SIZE - 7. The
+   second needs t >= 31 * 1024 + 1 and n * 115 >= t * 128, hence n >= ceil((31 * 1024 + 1) * 128 / 115) = 35334. With
+   TDEFL_FORCE_ALL_RAW_BLOCKS (raw), tdefl_compress_normal looks for no match and records literals only: n is then
+   t + t / 8 + 1 (one flag byte per 8 literals, the first one allocated ahead), which is >= 35713 once t > 31 * 1024.
+   Below this bound the test is false, so one comparison settles it; the flushes happen at the same symbols. */
+#define TDEFL_LZ_FLUSH_MIN_CODE_BYTES MZ_MIN(TDEFL_LZ_CODE_BUF_SIZE - 7, ((31 * 1024 + 1) * 128 + 114) / 115)
 
     static mz_bool tdefl_compress_normal(tdefl_compressor *d)
     {
@@ -1354,12 +1366,17 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             d->m_lookahead_pos += len_to_move;
             MZ_ASSERT(d->m_lookahead_size >= len_to_move);
             d->m_lookahead_size -= len_to_move;
-            d->m_dict_size = MZ_MIN(d->m_dict_size + len_to_move, (mz_uint)TDEFL_LZ_DICT_SIZE);
+            /* Task miniz-0020: not clamped to TDEFL_LZ_DICT_SIZE here. Until the next iteration clamps it to
+               TDEFL_LZ_DICT_SIZE - m_lookahead_size (a smaller bound), m_dict_size is only compared with small
+               constants, which the clamp cannot change; it is clamped below wherever it leaves this loop. */
+            d->m_dict_size += len_to_move;
             /* Check if it's time to flush the current LZ codes to the internal output buffer. */
-            if ((d->m_pLZ_code_buf > &d->m_lz_code_buf[TDEFL_LZ_CODE_BUF_SIZE - 8]) ||
-                ((d->m_total_lz_bytes > 31 * 1024) && (((((mz_uint)(d->m_pLZ_code_buf - d->m_lz_code_buf) * 115) >> 7) >= d->m_total_lz_bytes) || (d->m_flags & TDEFL_FORCE_ALL_RAW_BLOCKS))))
+            if ((d->m_pLZ_code_buf > &d->m_lz_code_buf[TDEFL_LZ_FLUSH_MIN_CODE_BYTES - 1]) &&
+                ((d->m_pLZ_code_buf > &d->m_lz_code_buf[TDEFL_LZ_CODE_BUF_SIZE - 8]) ||
+                 ((d->m_total_lz_bytes > 31 * 1024) && (((((mz_uint)(d->m_pLZ_code_buf - d->m_lz_code_buf) * 115) >> 7) >= d->m_total_lz_bytes) || (d->m_flags & TDEFL_FORCE_ALL_RAW_BLOCKS)))))
             {
                 int n;
+                d->m_dict_size = MZ_MIN(d->m_dict_size, (mz_uint)TDEFL_LZ_DICT_SIZE);
                 d->m_pSrc = pSrc;
                 d->m_src_buf_left = src_buf_left;
                 if ((n = tdefl_flush_block(d, 0)) != 0)
@@ -1367,6 +1384,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             }
         }
 
+        d->m_dict_size = MZ_MIN(d->m_dict_size, (mz_uint)TDEFL_LZ_DICT_SIZE);
         d->m_pSrc = pSrc;
         d->m_src_buf_left = src_buf_left;
         return MZ_TRUE;
