@@ -702,9 +702,24 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
             {
                 TDEFL_PUT_BITS(d->m_total_lz_bytes & 0xFFFF, 16);
             }
-            for (i = 0; i < d->m_total_lz_bytes; ++i)
+            /* The bit buffer is empty here (byte aligned, then two whole 16-bit fields): the block's bytes are
+               copied straight from the circular dictionary, in pieces where it wraps, up to the end of the
+               output buffer, exactly as the byte-by-byte TDEFL_PUT_BITS(…, 8) loop wrote them. */
+            MZ_ASSERT(!d->m_bits_in);
             {
-                TDEFL_PUT_BITS(d->m_dict[(d->m_lz_code_buf_dict_pos + i) & TDEFL_LZ_DICT_SIZE_MASK], 8);
+                mz_uint pos = d->m_lz_code_buf_dict_pos & TDEFL_LZ_DICT_SIZE_MASK;
+                size_t room = (size_t)(d->m_pOutput_buf_end - d->m_pOutput_buf);
+                size_t left = (d->m_total_lz_bytes < room) ? d->m_total_lz_bytes : room;
+                while (left)
+                {
+                    size_t piece = TDEFL_LZ_DICT_SIZE - pos;
+                    if (piece > left)
+                        piece = left;
+                    memcpy(d->m_pOutput_buf, d->m_dict + pos, piece);
+                    d->m_pOutput_buf += piece;
+                    left -= piece;
+                    pos = 0;
+                }
             }
         }
         /* Check for the extremely unlikely (if not impossible) case of the compressed block not fitting into the output buffer when using dynamic codes. */
