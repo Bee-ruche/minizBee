@@ -484,6 +484,8 @@ extern "C"
                 for (;;)
                 {
                     mz_uint8 *pSrc;
+                    ptrdiff_t src_gap; /* pOut_buf_cur - pSrc when the copy of a match starts */
+                    size_t room; /* bytes from the higher of destination and source to the end of the buffer */
                     for (;;)
                     {
                         if (((pIn_buf_end - pIn_buf_cur) < 4) || ((pOut_buf_end - pOut_buf_cur) < 2))
@@ -595,14 +597,31 @@ extern "C"
                     }
 
                     dist_from_out_buf_start = pOut_buf_cur - pOut_buf_start;
-                    if ((dist == 0 || dist > dist_from_out_buf_start || dist_from_out_buf_start == 0) && (decomp_flags & TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF))
+                    if (((size_t)dist - 1) < dist_from_out_buf_start)
                     {
-                        TINFL_CR_RETURN_FOREVER(37, TINFL_STATUS_FAILED);
+                        /* 1 <= dist <= bytes between the start of the buffer and the destination (one unsigned
+                           comparison: dist == 0 wraps to the largest size_t). The source is then dist bytes before
+                           the destination without wrapping, in both buffer modes (dist_from_out_buf_start - dist is
+                           below the buffer size, so out_buf_size_mask leaves it as it is), and since it is below the
+                           destination, the destination alone decides whether the match fits in the buffer. */
+                        pSrc = pOut_buf_cur - dist;
+                        src_gap = (ptrdiff_t)dist;
+                        room = (size_t)(pOut_buf_end - pOut_buf_cur);
+                    }
+                    else
+                    {
+                        /* dist == 0 or dist beyond the start of the buffer: invalid in a non-wrapping buffer, a
+                           source that wraps around in a circular one. */
+                        if (decomp_flags & TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF)
+                        {
+                            TINFL_CR_RETURN_FOREVER(37, TINFL_STATUS_FAILED);
+                        }
+                        pSrc = pOut_buf_start + ((dist_from_out_buf_start - dist) & out_buf_size_mask);
+                        src_gap = pOut_buf_cur - pSrc;
+                        room = (size_t)(pOut_buf_end - MZ_MAX(pOut_buf_cur, pSrc));
                     }
 
-                    pSrc = pOut_buf_start + ((dist_from_out_buf_start - dist) & out_buf_size_mask);
-
-                    if ((MZ_MAX(pOut_buf_cur, pSrc) + counter) > pOut_buf_end)
+                    if (counter > room)
                     {
                         while (counter--)
                         {
@@ -646,7 +665,7 @@ extern "C"
                        writing past the end of the match; the last move may overlap the previous one and rewrites
                        the same bytes. Overlapping matches keep the byte-by-byte loop below: wide loads of bytes
                        stored just before would stall on store-to-load forwarding. */
-                    if ((counter >= 4) && ((pOut_buf_cur - pSrc) >= (ptrdiff_t)counter))
+                    if ((counter >= 4) && (src_gap >= (ptrdiff_t)counter))
                     {
                         mz_uint8 *const pOut_match_end = pOut_buf_cur + counter;
                         if (counter <= 8)
@@ -671,18 +690,19 @@ extern "C"
                             memcpy(pOut_match_end - 8, &v, 8);
                         }
                         pOut_buf_cur = pOut_match_end;
-                        counter %= 3; /* same leftover value as the byte-by-byte loop */
+                        /* counter is left as it is (the byte-by-byte loop would leave counter % 3): the next symbol
+                           decoded, by TINFL_HUFF_DECODE(23) or by the fast path above, assigns counter before
+                           anything reads it, also when the coroutine stops in between and comes back. */
                         continue;
                     }
 #if MINIZ_LITTLE_ENDIAN
                     /* Overlapping match whose source starts 1 to 7 bytes before the destination: copied by words,
                        out of line (see tinfl_copy_overlap). */
-                    if ((counter > 3) && ((size_t)((pOut_buf_cur - pSrc) - 1) < 7))
+                    if ((counter > 3) && ((size_t)(src_gap - 1) < 7))
                     {
-                        tinfl_copy_overlap(pOut_buf_cur, (size_t)(pOut_buf_cur - pSrc), counter);
+                        tinfl_copy_overlap(pOut_buf_cur, (size_t)src_gap, counter);
                         pOut_buf_cur += counter;
-                        counter %= 3; /* same leftover value as the byte-by-byte loop */
-                        continue;
+                        continue; /* counter: as above, assigned before it is read again */
                     }
 #endif /* MINIZ_LITTLE_ENDIAN */
                     while (counter > 2)
