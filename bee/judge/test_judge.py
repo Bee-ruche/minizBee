@@ -53,8 +53,8 @@ if not os.path.isfile(os.path.join(JUGE_COMMUN, "judge.py")):
              "(at the commit pinned by .github/workflows/bee-ci.yml)")
 sys.path.insert(0, JUGE_COMMUN)
 import judge as juge_commun  # noqa: E402
-import lecture  # noqa: E402
-from entrees import Entree  # noqa: E402
+import reading  # noqa: E402
+from inputs import Input  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("greffon_minizbee", os.path.join(ICI, "project.py"))
 greffon = importlib.util.module_from_spec(_spec)
@@ -105,7 +105,7 @@ class TestContrat(unittest.TestCase):
         projet, empreinte = juge_commun.load_plugin(RACINE, {})
         with open(os.path.join(ICI, "project.py"), "rb") as f:
             self.assertEqual(empreinte, hashlib.sha256(f.read()).hexdigest())
-        self.assertIsInstance(projet, juge_commun.EnglishPlugin)  # the English contract (judge-v4, miniz-0050)
+        self.assertEqual(type(projet).__name__, "Project")  # the plugin contract of judge-v5 (bee/judge/project.py)
         self.assertEqual(projet.NAME, "miniz")
         self.assertEqual(projet.SCENARIOS, {"n1": "f", "n6": "f", "n9": "f", "decompression": "z", "memoire": "f"})
         self.assertEqual(projet.INSTRUCTIONS, ("n1", "n6", "n9", "decompression"))
@@ -113,7 +113,6 @@ class TestContrat(unittest.TestCase):
                          [("compression_throughput_n1", "higher", "MB/s"), ("compression_throughput_n6", "higher", "MB/s"),
                           ("compression_throughput_n9", "higher", "MB/s"), ("decompression_throughput", "higher", "MB/s"),
                           ("ratio_n6", "higher", "ratio"), ("max_memory_kb", "lower", "KB")])
-        self.assertEqual([d for _, d, _ in projet.METRIQUES], ["plus_haut"] * 5 + ["plus_bas"])  # as the judge reads them
         self.assertEqual(projet.VERIFICATION, {"sortie_compressee": "identique"})
         self.assertIn("timed outputs of scenario n6", projet.METHOD["ratio_n6"])
         self.assertEqual(set(projet.METHOD), {"max_memory_kb", "ratio_n6"})
@@ -122,7 +121,7 @@ class TestContrat(unittest.TestCase):
         projet, _ = juge_commun.load_plugin(RACINE, {"sortie_compressee": "peut_changer"})
         self.assertFalse(projet.identique)
         for options in ({"sortie_compressee": "parfois"}, {"inconnue": "1"}):
-            with self.assertRaises(lecture.Erreur, msg=str(options)):
+            with self.assertRaises(reading.JudgeError, msg=str(options)):
                 juge_commun.load_plugin(RACINE, options)
 
     def test_sources_et_objets(self):
@@ -178,41 +177,41 @@ class TestIdentiqueAuJugeV2(unittest.TestCase):
         finally:
             greffon.zlib = vraie_zlib
         for e in verification:
-            if e.cote == "f":
-                self.assertEqual((e.taille, e.attendu), (len(e.donnees), e.donnees))
-                h.update(e.nom.encode() + len(e.donnees).to_bytes(8, "little") + e.donnees)
+            if e.side == "f":
+                self.assertEqual((e.size, e.expected), (len(e.data), e.data))
+                h.update(e.name.encode() + len(e.data).to_bytes(8, "little") + e.data)
         for e in verification:
-            if e.cote == "z":
-                h.update(e.nom.encode() + len(e.donnees).to_bytes(8, "little") + e.donnees + e.taille.to_bytes(8, "little")
-                         + (b"-" if e.attendu is None else hashlib.sha256(e.attendu).digest()))
+            if e.side == "z":
+                h.update(e.name.encode() + len(e.data).to_bytes(8, "little") + e.data + e.size.to_bytes(8, "little")
+                         + (b"-" if e.expected is None else hashlib.sha256(e.expected).digest()))
         for etape in etapes:
-            fichiers = [e for e in etape if e.cote == "f"]
-            flux = [e for e in etape if e.cote == "z"]
-            self.assertEqual([e.nom for e in fichiers], [e.nom for e in flux])
+            fichiers = [e for e in etape if e.side == "f"]
+            flux = [e for e in etape if e.side == "z"]
+            self.assertEqual([e.name for e in fichiers], [e.name for e in flux])
             for f, z in zip(fichiers, flux):
-                self.assertEqual((z.attendu, z.taille), (f.donnees, len(f.donnees)))
-                h.update(f.nom.encode() + f.donnees + z.donnees)
+                self.assertEqual((z.expected, z.size), (f.data, len(f.data)))
+                h.update(f.name.encode() + f.data + z.data)
         self.assertEqual(h.hexdigest(), EMPREINTE_JUGE_V2)
 
     def test_flux_des_mesures(self):
         """Avec la vraie zlib, les flux des mesures redonnent les fichiers perturbés qu'ils accompagnent."""
         projet = greffon.Project({})
         for etape in (projet.repetition(random.Random(7), self.CORPUS), projet.instructions(random.Random(7), self.CORPUS, 1000)):
-            fichiers = {e.nom: e.donnees for e in etape if e.cote == "f"}
+            fichiers = {e.name: e.data for e in etape if e.side == "f"}
             for e in etape:
-                if e.cote == "z":
-                    self.assertEqual(zlib.decompress(e.donnees), fichiers[e.nom])
+                if e.side == "z":
+                    self.assertEqual(zlib.decompress(e.data), fichiers[e.name])
 
 
 def ecrire_sorties(dossier, fichiers):
-    """Writes {(side, relative path): bytes} under dossier/<side>/; returns the Sorties view the plugin gets."""
+    """Writes {(side, relative path): bytes} under dossier/<side>/; returns the Outputs view the plugin gets."""
     racines = {c: os.path.join(dossier, c) for c in "fz"}
     for (cote, relatif), octets in fichiers.items():
         chemin = os.path.join(racines[cote], relatif)
         os.makedirs(os.path.dirname(chemin), exist_ok=True)
         with open(chemin, "wb") as f:
             f.write(octets)
-    return lecture.Sorties(racines)
+    return reading.Outputs(racines)
 
 
 def sorties_de_verification(donnees):
@@ -245,8 +244,8 @@ class TestVerification(unittest.TestCase):
         return ecrire_sorties(os.path.join(self.travail, nom), fichiers)
 
     def entrees(self):
-        return [Entree("f", "k000", self.DONNEES, len(self.DONNEES), self.DONNEES),
-                Entree("z", "z000", zlib.compress(self.DONNEES), len(self.DONNEES), self.DONNEES)]
+        return [Input("f", "k000", self.DONNEES, len(self.DONNEES), self.DONNEES),
+                Input("z", "z000", zlib.compress(self.DONNEES), len(self.DONNEES), self.DONNEES)]
 
     def test_identique_accepte(self):
         b = self.sorties("B")
@@ -255,35 +254,35 @@ class TestVerification(unittest.TestCase):
 
     def test_sortie_compressee_differente(self):
         autre = lambda f: f.__setitem__(("f", "c/k000.9"), zlib.compress(self.DONNEES, 0))  # noqa: E731 (juste, mais autre)
-        with self.assertRaises(lecture.Refus):
+        with self.assertRaises(reading.Refusal):
             greffon.Project({}).verify(self.sorties("A"), self.sorties("B", autre), self.entrees())
         # Si la tâche le permet, une autre sortie compressée qui redonne l'original est acceptée ; pas une fausse.
         peut_changer = greffon.Project({"sortie_compressee": "peut_changer"})
         self.assertEqual(peut_changer.verify(self.sorties("A2"), self.sorties("B2", autre), self.entrees()), 13)
         fausse = lambda f: f.__setitem__(("f", "c/k000.9"), zlib.compress(self.DONNEES[:-1], 9))  # noqa: E731
-        with self.assertRaises(lecture.Refus):
+        with self.assertRaises(reading.Refusal):
             peut_changer.verify(self.sorties("A3"), self.sorties("B3", fausse), self.entrees())
 
     def test_decompression_differente_ou_absente(self):
         b = self.sorties("B", lambda f: f.__setitem__(("z", "ds/z000"), self.DONNEES[:-1] + b"?"))
-        with self.assertRaises(lecture.Refus):
+        with self.assertRaises(reading.Refusal):
             greffon.Project({}).verify(self.sorties("A"), b, self.entrees())
         b = self.sorties("B2", lambda f: f.pop(("z", "e/z000")))
-        with self.assertRaises(lecture.Refus):
+        with self.assertRaises(reading.Refusal):
             greffon.Project({}).verify(self.sorties("A2"), b, self.entrees())
         b = self.sorties("B3", lambda f: f.__setitem__(("z", "e/z000"), b"-3 0\n"))
-        with self.assertRaises(lecture.Refus):
+        with self.assertRaises(reading.Refusal):
             greffon.Project({}).verify(self.sorties("A3"), b, self.entrees())
 
     def test_base_fausse_est_une_erreur(self):
         a = self.sorties("A", lambda f: f.__setitem__(("f", "c/k000.6"), zlib.compress(b"autre chose", 6)))
-        with self.assertRaises(lecture.Erreur):
+        with self.assertRaises(reading.JudgeError):
             greffon.Project({}).verify(a, self.sorties("B"), self.entrees())
 
     def test_sortie_de_memoire_verifiee(self):
         """juge-v3: verification also writes m/NAME, as the memoire scenario does, and checks it."""
         b = self.sorties("B", lambda f: f.__setitem__(("f", "m/k000"), zlib.compress(self.DONNEES, 1)))
-        with self.assertRaises(lecture.Refus):
+        with self.assertRaises(reading.Refusal):
             greffon.Project({}).verify(self.sorties("A"), b, self.entrees())
 
 
@@ -293,15 +292,15 @@ class TestScenarios(unittest.TestCase):
     verification writes it; n6 computes ratio_n6 from its timed outputs. Outputs written by hand (without Docker)."""
 
     DONNEES = b"chaque sortie mesuree est verifiee " * 500
-    MESURE = {"utilisateur_s": 0.5, "systeme_s": 0.5, "maxrss_ko": 1234}
+    MESURE = {"user_s": 0.5, "system_s": 0.5, "maxrss_kb": 1234}
 
     def setUp(self):
         self.travail = tempfile.mkdtemp()
         n = len(self.DONNEES)
         flux = zlib.compress(self.DONNEES)
         # e0000 measured (a perturbed file and its stream); e0001 a mixed-in verification stream, invalid (truncated).
-        self.entrees = [Entree("f", "e0000", self.DONNEES, n, self.DONNEES), Entree("z", "e0000", flux, n, self.DONNEES),
-                        Entree("z", "e0001", flux[:40], n, None)]
+        self.entrees = [Input("f", "e0000", self.DONNEES, n, self.DONNEES), Input("z", "e0000", flux, n, self.DONNEES),
+                        Input("z", "e0001", flux[:40], n, None)]
         self.fichiers = {("f", "c/e0000.1"): zlib.compress(self.DONNEES, 1), ("f", "c/e0000.6"): zlib.compress(self.DONNEES, 6),
                          ("f", "c/e0000.9"): zlib.compress(self.DONNEES, 9), ("f", "m/e0000"): zlib.compress(self.DONNEES, 6),
                          ("z", "d/e0000"): self.DONNEES, ("z", "e/e0000"): f"0 {n}\n".encode(),
@@ -323,8 +322,8 @@ class TestScenarios(unittest.TestCase):
             with self.subTest(s=s):
                 b = self.sorties(f"B-{s}", s)
                 valeurs, comparees = projet.scenario(s, self.sorties(f"A-{s}", s), b, self.entrees, self.MESURE)
-                self.assertEqual(comparees, len([e for e in self.entrees if e.cote == cote]))
-                juge_commun.require_coverage(b, [e for e in self.entrees if e.cote == cote], s)
+                self.assertEqual(comparees, len([e for e in self.entrees if e.side == cote]))
+                juge_commun.require_coverage(b, [e for e in self.entrees if e.side == cote], s)
         self.assertEqual(valeurs, {"max_memory_kb": 1234})
 
     def test_ratio_n6_sur_les_sorties_chronometrees(self):
@@ -341,13 +340,13 @@ class TestScenarios(unittest.TestCase):
         self.assertEqual(valeurs["decompression_throughput"], len(self.DONNEES) / 1e6)
         for modifier in (lambda f: f.__setitem__(("z", "e/e0001"), b"0 40\n"), lambda f: f.pop(("z", "e/e0001")),
                          lambda f: f.__setitem__(("z", "d/e0000"), self.DONNEES[:-1] + b"?")):
-            with self.subTest(modifier=modifier), self.assertRaises(lecture.Refus):
+            with self.subTest(modifier=modifier), self.assertRaises(reading.Refusal):
                 projet.scenario("decompression", self.sorties("A2", "decompression"), self.sorties("B2", "decompression", modifier),
                                 self.entrees, self.MESURE)
 
     def test_compression_mesuree_differente(self):
         b = self.sorties("B", "n9", lambda f: f.__setitem__(("f", "c/e0000.9"), zlib.compress(self.DONNEES, 1)))
-        with self.assertRaises(lecture.Refus):
+        with self.assertRaises(reading.Refusal):
             greffon.Project({}).scenario("n9", self.sorties("A", "n9"), b, self.entrees, self.MESURE)
 
     def test_scenario_lit_les_chemins_de_la_verification(self):
@@ -356,13 +355,13 @@ class TestScenarios(unittest.TestCase):
         projet = greffon.Project({})
         verification = ecrire_sorties(os.path.join(self.travail, "V-B"), sorties_de_verification(self.DONNEES))
         projet.verify(ecrire_sorties(os.path.join(self.travail, "V-A"), sorties_de_verification(self.DONNEES)), verification,
-                        [self.entrees[0]._replace(nom="k000"), self.entrees[1]._replace(nom="z000")])
-        chemins = {(c, r.replace("k000", "NOM").replace("z000", "NOM")) for c, r in verification.lues}
+                        [self.entrees[0]._replace(name="k000"), self.entrees[1]._replace(name="z000")])
+        chemins = {(c, r.replace("k000", "NOM").replace("z000", "NOM")) for c, r in verification.read_paths}
         for s in projet.SCENARIOS:
             with self.subTest(s=s):
                 vue = self.sorties(f"B-{s}", s)
                 projet.scenario(s, self.sorties(f"A-{s}", s), vue, self.entrees[:2], self.MESURE)
-                lues = {(c, r.split("/", 1)[1].replace("e0000", "NOM")) for c, r in vue.lues}
+                lues = {(c, r.split("/", 1)[1].replace("e0000", "NOM")) for c, r in vue.read_paths}
                 self.assertTrue(lues and lues <= chemins, (s, lues - chemins))
 
 
@@ -493,7 +492,7 @@ class TestHarnaisEnSandbox(unittest.TestCase):
     arguments, no environment and nothing left on descriptor 0, and the same output folders, created up front, in
     every mode; each scenario's outputs are verification's, at the same paths."""
 
-    MODES = ("verifier", "n1", "n6", "n9", "decompression", "memoire")
+    MODES = ("verify", "n1", "n6", "n9", "decompression", "memoire")
     DONNEES = b"le harnais efface ses parametres " * 2000
 
     @classmethod
@@ -505,7 +504,7 @@ class TestHarnaisEnSandbox(unittest.TestCase):
         os.makedirs(os.path.join(cls.entrees, "z"))
         flux = zlib.compress(cls.DONNEES, 6)
         fichiers = {("f", "e0000"): cls.DONNEES, ("f", "e0001"): b"", ("z", "e0002"): flux, ("z", "e0003"): flux[:30]}
-        with open(os.path.join(cls.entrees, "liste"), "w", encoding="ascii") as liste:
+        with open(os.path.join(cls.entrees, "list"), "w", encoding="ascii") as liste:
             for (cote, nom), octets in fichiers.items():
                 with open(os.path.join(cls.entrees, cote, nom), "wb") as f:
                     f.write(octets)
@@ -597,15 +596,15 @@ static void bee_espion(void)
         return resultat
 
     def test_enregistrements_mal_formes(self):
-        bon = f"verifier {self.entrees} {self.sorties}"
+        bon = f"verify {self.entrees} {self.sorties}"
         for enregistrement, arguments in ((f"{bon} en-trop".ljust(255).encode() + b"\n", ()),
                                           (f"inconnu {self.entrees} {self.sorties}".ljust(255).encode() + b"\n", ()),
-                                          (b"", ()), (b"x" * 4096, ()), (bon.ljust(255).encode() + b"\n", ("verifier",))):
+                                          (b"", ()), (b"x" * 4096, ()), (bon.ljust(255).encode() + b"\n", ("verify",))):
             with self.subTest(enregistrement=enregistrement[:40], arguments=arguments):
                 r = self.lancer(self.honnete, enregistrement=enregistrement, arguments=arguments)
                 self.assertEqual(r.returncode, 2, r.stderr)
                 self.assertIn(b"execution: usage", r.stderr)
-        self.assertEqual(self.lancer(self.honnete, "verifier").returncode, 0)
+        self.assertEqual(self.lancer(self.honnete, "verify").returncode, 0)
 
     def test_rien_ne_dit_le_mode(self):
         """After the erasure: /proc/self/cmdline empty, no environment, descriptor 0 at its end, and the same output
@@ -621,7 +620,7 @@ static void bee_espion(void)
             self.assertEqual(vus[mode][0].split(" dossiers=")[0], "BEE_ESPION cmdline=0 environ=0 stdin=0", mode)
 
     def test_scenarios_aux_chemins_de_la_verification(self):
-        self.assertEqual(self.lancer(self.honnete, "verifier").returncode, 0)
+        self.assertEqual(self.lancer(self.honnete, "verify").returncode, 0)
         verification = self.arbre()
         self.assertEqual(len(verification), 2 * 11 + 2 * 4)
         for mode in self.MODES[1:]:
@@ -706,7 +705,7 @@ class TestJugeContreVariantes(unittest.TestCase):
     def test_faux_chronos(self):
         code, rapport, _ = self.juger("faux_chronos", faux_chronos, sans_instructions=True)
         self.assertEqual(code, 0)
-        self.assertIn("symbole_interdit", self.types_suspects(rapport))
+        self.assertIn("forbidden_symbol", self.types_suspects(rapport))
         self.assertIn("clock_gettime", self.details(rapport))
         # Le temps est mesuré par le noyau, pas par clock_gettime : B est vu plus lent, pas plus rapide.
         n6 = rapport["metrics"]["compression_throughput_n6"]
@@ -721,7 +720,7 @@ class TestJugeContreVariantes(unittest.TestCase):
         code, rapport, _ = self.juger("requete_valgrind", requete_valgrind)
         self.assertEqual(code, 0)
         self.assertIn("instruction", self.types_suspects(rapport))
-        self.assertIn("preambule_valgrind", self.details(rapport))
+        self.assertIn("valgrind_preamble", self.details(rapport))
 
     def test_travail_deplace(self):
         code, rapport, _ = self.juger("travail_deplace", travail_deplace)
@@ -739,7 +738,7 @@ class TestJugeContreVariantes(unittest.TestCase):
     def test_faux_resume(self):
         code, rapport, _ = self.juger("faux_resume", faux_resume)
         self.assertEqual(code, 0)
-        self.assertIn("appel_externe", self.types_suspects(rapport))
+        self.assertIn("external_call", self.types_suspects(rapport))
         n6 = rapport["instructions"]["instructions_n6"]
         self.assertGreater(n6["B"], 0.99 * n6["A"])  # le vrai décompte, pas « 1 »
 

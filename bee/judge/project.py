@@ -4,7 +4,7 @@ The common judge (isolation, chrono launcher, safe reading, object analysis, see
 registry at a commit (judge-vN, pinned by SHA in .github/workflows/bee-ci.yml). This file says what is specific to
 miniz: the sources, the build (build.sh), the inputs (corpus, randomly drawn data, zlib streams produced by the host),
 the correctness rule (outputs identical to the base, round trip through the host's zlib) and the measured scenarios.
-It is read from the PR's BASE, never from the PR. It sees the container's outputs only through lecture.Sorties, runs
+It is read from the PR's BASE, never from the PR. It sees the container's outputs only through reading.Outputs, runs
 nothing the container produced, and trusts only the base (A) and the host's zlib. The input functions are those of
 miniz-0031's isolated judge (version 2), unchanged: same seed, same inputs, same checks, same counts
 (bee/judge/test_judge.py checks it).
@@ -22,8 +22,8 @@ of its side with the rule of verify(), and n6 also computes ratio_n6 from its ti
 import subprocess
 import zlib
 
-from entrees import Entree, charger_corpus, perturber
-from lecture import Erreur, Refus
+from inputs import Input, load_corpus, perturb
+from reading import JudgeError, Refusal
 
 NIVEAUX_UNIQUE = (0, 1, 2, 3, 6, 9, 10)
 NIVEAUX_FLUX = (1, 6, 9)
@@ -158,7 +158,7 @@ def historique_du_corpus(outillage):
     missing commit is an environment error (code 2)."""
     if subprocess.run(["git", "-C", outillage, "cat-file", "-e", COMMIT_CORPUS + "^{commit}"],
                       capture_output=True).returncode != 0:
-        raise Erreur(f"corpus: commit {COMMIT_CORPUS} missing from the base; declare it to judge.yml (history), "
+        raise JudgeError(f"corpus: commit {COMMIT_CORPUS} missing from the base; declare it to judge.yml (history), "
                      f"or, locally, git fetch --depth=1 origin {COMMIT_CORPUS}")
 
 
@@ -196,9 +196,9 @@ class Project:
     def __init__(self, options):
         sortie = options.pop("sortie_compressee", "identique")
         if sortie not in ("identique", "peut_changer"):
-            raise Erreur(f"sortie_compressee: identique or peut_changer, not {sortie!r}")
+            raise JudgeError(f"sortie_compressee: identique or peut_changer, not {sortie!r}")
         if options:
-            raise Erreur("unknown options: " + ", ".join(sorted(options)))
+            raise JudgeError("unknown options: " + ", ".join(sorted(options)))
         self.identique = sortie == "identique"
         self.VERIFICATION = {"sortie_compressee": sortie}
 
@@ -206,12 +206,12 @@ class Project:
 
     def corpus(self, outillage):
         historique_du_corpus(outillage)
-        return charger_corpus(outillage, "bee/corpus/generer.py", "bee/corpus/donnees")
+        return load_corpus(outillage, "bee/corpus/generer.py", "bee/corpus/donnees")
 
     @staticmethod
     def entrees(fichiers, flux):
-        return [Entree("f", nom, d, len(d), d) for nom, d in fichiers] + \
-               [Entree("z", nom, z, taille, original) for nom, z, taille, original in flux]
+        return [Input("f", nom, d, len(d), d) for nom, d in fichiers] + \
+               [Input("z", nom, z, taille, original) for nom, z, taille, original in flux]
 
     def verification(self, rng, corpus):
         aleatoires = entrees_aleatoires(rng, corpus)
@@ -220,60 +220,60 @@ class Project:
         return self.entrees(fichiers, flux)
 
     def repetition(self, rng, corpus):
-        perturbes = perturber(rng, corpus)
+        perturbes = perturb(rng, corpus)
         return self.entrees(perturbes, [(nom, zlib.compress(d, 6), len(d), d) for nom, d in perturbes])
 
     def instructions(self, rng, corpus, prefixe):
-        perturbes = perturber(rng, corpus, prefixe)
+        perturbes = perturb(rng, corpus, prefixe)
         return self.entrees(perturbes, [(nom, zlib.compress(d, 6), len(d), d) for nom, d in perturbes])
 
     # -------------------------------------------------------------- verification
 
     def compressee(self, a, b, relatif, original):
-        sortie_b = b.exiger("f", relatif)
+        sortie_b = b.require("f", relatif)
         if self.identique:
-            sortie_a = a.exiger("f", relatif)
+            sortie_a = a.require("f", relatif)
             if sortie_a != sortie_b:
-                raise Refus(f"compressed output differs from the base: {relatif} ({len(sortie_a)} vs {len(sortie_b)} bytes)")
+                raise Refusal(f"compressed output differs from the base: {relatif} ({len(sortie_a)} vs {len(sortie_b)} bytes)")
         elif decompresser_zlib(sortie_b) != original:
-            raise Refus(f"the compressed output does not give back the original (host zlib): {relatif}")
+            raise Refusal(f"the compressed output does not give back the original (host zlib): {relatif}")
         return len(sortie_b)
 
     def decompressee(self, a, b, e, sortie, etat, unique=True):
         """One decompression of a stream (mz_uncompress, or mz_inflate in chunked streaming): same code as A, same
         bytes (those produced before the error, for a stream in error), and A gives back the original. Returns the
         number of bytes A produced."""
-        code_a, _ = a.statut("z", f"{etat}/{e.nom}")
-        code_b, _ = b.statut("z", f"{etat}/{e.nom}")
+        code_a, _ = a.status("z", f"{etat}/{e.name}")
+        code_b, _ = b.status("z", f"{etat}/{e.name}")
         if code_a != code_b:
-            raise Refus(f"decompression ({'mz_uncompress' if unique else 'streamed mz_inflate'}) of {e.nom}: "
+            raise Refusal(f"decompression ({'mz_uncompress' if unique else 'streamed mz_inflate'}) of {e.name}: "
                         f"code {code_b}, the base gives {code_a}")
-        sa, sb = a.exiger("z", f"{sortie}/{e.nom}"), b.exiger("z", f"{sortie}/{e.nom}")
+        sa, sb = a.require("z", f"{sortie}/{e.name}"), b.require("z", f"{sortie}/{e.name}")
         if code_a == (MZ_OK if unique else MZ_STREAM_END):
             if sa != sb:
-                raise Refus(f"decompression of {e.nom} differs from the base ({sortie})")
-            if e.attendu is not None and sa != e.attendu:
-                raise Erreur(f"the base does not give back the original of {e.nom} ({sortie}): judge set up wrong")
+                raise Refusal(f"decompression of {e.name} differs from the base ({sortie})")
+            if e.expected is not None and sa != e.expected:
+                raise JudgeError(f"the base does not give back the original of {e.name} ({sortie}): judge set up wrong")
         elif sa[:min(len(sa), len(sb))] != sb[:min(len(sa), len(sb))]:
-            raise Refus(f"decompression of {e.nom} in error: bytes produced differ from the base ({sortie})")
+            raise Refusal(f"decompression of {e.name} in error: bytes produced differ from the base ({sortie})")
         return len(sa)
 
     def verify(self, a, b, entrees):
         comparees = 0
         for e in entrees:
-            if e.cote != "f":
+            if e.side != "f":
                 continue
             # Sanity check on the base itself (level 6): it detects a judge set up wrong.
-            if decompresser_zlib(a.exiger("f", f"c/{e.nom}.6")) != e.donnees:
-                raise Erreur(f"the base does not give back the original for {e.nom}: judge set up wrong")
+            if decompresser_zlib(a.require("f", f"c/{e.name}.6")) != e.data:
+                raise JudgeError(f"the base does not give back the original for {e.name}: judge set up wrong")
             for niveau in NIVEAUX_UNIQUE:
-                self.compressee(a, b, f"c/{e.nom}.{niveau}", e.donnees)
+                self.compressee(a, b, f"c/{e.name}.{niveau}", e.data)
             for niveau in NIVEAUX_FLUX:
-                self.compressee(a, b, f"s/{e.nom}.{niveau}", e.donnees)
-            self.compressee(a, b, f"m/{e.nom}", e.donnees)
+                self.compressee(a, b, f"s/{e.name}.{niveau}", e.data)
+            self.compressee(a, b, f"m/{e.name}", e.data)
             comparees += len(NIVEAUX_UNIQUE) + len(NIVEAUX_FLUX) + 1
         for e in entrees:
-            if e.cote != "z":
+            if e.side != "z":
                 continue
             self.decompressee(a, b, e, "d", "e")
             self.decompressee(a, b, e, "ds", "es", unique=False)
@@ -282,7 +282,7 @@ class Project:
 
     def fixed(self, sorties, corpus):
         total = sum(len(d) for _, d in corpus)
-        compresse = sum(len(sorties.exiger("f", f"c/{nom}.6")) for nom, _ in corpus)
+        compresse = sum(len(sorties.require("f", f"c/{nom}.6")) for nom, _ in corpus)
         return {"ratio_n6": total / compresse if compresse else None}
 
     def scenario(self, s, a, b, entrees, mesure):
@@ -290,12 +290,12 @@ class Project:
         judge mixes verification inputs into the measured ones); returns ({metric: value}, outputs compared). n6 also
         computes ratio_n6 from its timed outputs, which replaces the value fixed() reads on verification."""
         if s not in self.SCENARIOS:
-            raise Erreur(f"unknown scenario: {s}")
-        cpu = mesure["utilisateur_s"] + mesure["systeme_s"]
-        mesurees = [e for e in entrees if e.cote == self.SCENARIOS[s]]
+            raise JudgeError(f"unknown scenario: {s}")
+        cpu = mesure["user_s"] + mesure["system_s"]
+        mesurees = [e for e in entrees if e.side == self.SCENARIOS[s]]
         if s in ("n1", "n6", "n9"):
-            compresses = [self.compressee(a, b, f"{s}/c/{e.nom}.{s[1]}", e.donnees) for e in mesurees]
-            traites = sum(len(e.donnees) for e in mesurees)
+            compresses = [self.compressee(a, b, f"{s}/c/{e.name}.{s[1]}", e.data) for e in mesurees]
+            traites = sum(len(e.data) for e in mesurees)
             valeurs = {f"compression_throughput_{s}": traites / 1e6 / cpu if cpu > 0 else None}
             if s == "n6":
                 valeurs["ratio_n6"] = traites / sum(compresses) if sum(compresses) else None
@@ -304,5 +304,5 @@ class Project:
             traites = sum(self.decompressee(a, b, e, f"{s}/d", f"{s}/e") for e in mesurees)
             return {"decompression_throughput": traites / 1e6 / cpu if cpu > 0 else None}, len(mesurees)
         for e in mesurees:
-            self.compressee(a, b, f"memoire/m/{e.nom}", e.donnees)
-        return {"max_memory_kb": mesure["maxrss_ko"]}, len(mesurees)
+            self.compressee(a, b, f"memoire/m/{e.name}", e.data)
+        return {"max_memory_kb": mesure["maxrss_kb"]}, len(mesurees)

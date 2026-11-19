@@ -8,10 +8,10 @@
 
    Usage (juge-v3 contract, docs/common-judge.md of the registry): execution, without arguments; descriptor 0
    carries one fixed-length record, the line "<mode> <input_folder> <output_folder>" padded with spaces.
-     <input_folder>/liste: one line per input, "f NAME SIZE" (raw file f/NAME) or "z NAME EXPECTED_SIZE" (zlib
+     <input_folder>/list: one line per input, "f NAME SIZE" (raw file f/NAME) or "z NAME EXPECTED_SIZE" (zlib
                            stream z/NAME, EXPECTED_SIZE = size of the output buffer given to mz_uncompress).
      modes, and the outputs each writes:
-       verifier       for each f: c/NAME.L (mz_compress2, L = 0 1 2 3 6 9 10), s/NAME.L (mz_deflate in chunked
+       verify         for each f: c/NAME.L (mz_compress2, L = 0 1 2 3 6 9 10), s/NAME.L (mz_deflate in chunked
                       streaming, L = 1 6 9) and m/NAME (as in memoire); for each z: d/NAME and e/NAME
                       (mz_uncompress: output and status), ds/NAME and es/NAME (mz_inflate in chunked streaming)
        n1, n6, n9     for each f: c/NAME.1, c/NAME.6 or c/NAME.9 (mz_compress2 at level 1, 6 or 9)
@@ -136,9 +136,9 @@ static entree *lire_liste(size_t *nombre, int charger_f, int charger_z)
     FILE *f;
     entree *liste = NULL;
     size_t n = 0, capacite = 0;
-    int c = snprintf(p, sizeof(p), "%s/liste", dossier_entrees);
+    int c = snprintf(p, sizeof(p), "%s/list", dossier_entrees);
     if (c < 0 || (size_t)c >= sizeof(p))
-        mourir("path too long", "liste");
+        mourir("path too long", "list");
     f = fopen(p, "r");
     if (!f)
         mourir("unreadable list", p);
@@ -485,7 +485,7 @@ enum { VERIFIER, N1, N6, N9, DECOMPRESSION, MEMOIRE };
    after that, no text in the process tells the mode. */
 static int parametres(int argc, char **argv)
 {
-    static const char *const modes[] = {"verifier", "n1", "n6", "n9", "decompression", "memoire"};
+    static const char *const modes[] = {"verify", "n1", "n6", "n9", "decompression", "memoire"};
     char texte[1024], lu[64], reste[2];
     size_t n = 0, k;
     ssize_t r;
@@ -508,7 +508,7 @@ static int parametres(int argc, char **argv)
         environ[0] = NULL;
     if (mode < 0)
         mourir("usage", "execution, without arguments; parameters \"<mode> <input_folder> <output_folder>\" on descriptor 0, "
-               "mode verifier, n1, n6, n9, decompression or memoire");
+               "mode verify, n1, n6, n9, decompression or memoire");
     return mode;
 }
 
