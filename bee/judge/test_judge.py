@@ -684,7 +684,7 @@ class TestJugeContreVariantes(unittest.TestCase):
         self.assertEqual(rapport["judge"]["suspicious_constructs"], [])
         self.assertEqual(rapport["judge"]["project"], "miniz")
         self.assertEqual(rapport["judge"]["common"], juge_commun.common_tag())
-        self.assertEqual(rapport["judge"]["common"], "judge-v4")
+        self.assertEqual(rapport["judge"]["common"], "judge-v5")
         self.assertEqual(rapport["judge"]["plugin"], juge_commun.load_plugin(RACINE, {})[1])
         self.assertGreater(rapport["judge"]["verification"]["outputs_compared"], 900)
         # juge-v3 on: verification inputs mixed into every measurement, and no fixed metric read on verification alone.

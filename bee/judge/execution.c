@@ -6,7 +6,7 @@
    these outputs with its own zlib and compares them with the base's. The PR's code shares this process:
    nothing this program prints or computes is taken on trust.
 
-   Usage (juge-v3 contract, docs/common-judge.md of the registry): execution, without arguments; descriptor 0
+   Usage (the common judge's contract since juge-v3, docs/common-judge.md of Bee-ruche/hive): execution, without arguments; descriptor 0
    carries one fixed-length record, the line "<mode> <input_folder> <output_folder>" padded with spaces.
      <input_folder>/list: one line per input, "f NAME SIZE" (raw file f/NAME) or "z NAME EXPECTED_SIZE" (zlib
                            stream z/NAME, EXPECTED_SIZE = size of the output buffer given to mz_uncompress).
