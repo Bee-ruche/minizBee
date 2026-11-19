@@ -9,11 +9,11 @@ nothing the container produced, and trusts only the base (A) and the host's zlib
 miniz-0031's isolated judge (version 2), unchanged: same seed, same inputs, same checks, same counts
 (bee/judge/test_judge.py checks it).
 
-The English plugin contract (judge-v4, ruche-0148; miniz-0050): Project, NAME, PACKAGES, REQUIRED_SOURCES, TOOLING,
+The plugin contract (judge-v5, docs/common-judge.md of Bee-ruche/hive; English since judge-v4, ruche-0148, miniz-0050): Project, NAME, PACKAGES, REQUIRED_SOURCES, TOOLING,
 BASE_HEADERS, BUILD, ALLOWED, SIDES, METRICS (directions higher and lower), METHOD, verify() and fixed(). The metric
 ids are the registry's English ones (compression_throughput_n1, ..., max_memory_kb).
 
-juge-v3 contract (miniz-0048; the registry's docs/common-judge.md): the harness reads its parameters on its
+Since juge-v3 (miniz-0048; docs/common-judge.md of Bee-ruche/hive): the harness reads its parameters on its
 descriptor 0 and writes an input's output at the same path in every mode (bee/judge/execution.c); the common judge
 mixes verification inputs, invalid streams included, into the measured ones. So each scenario checks every output
 of its side with the rule of verify(), and n6 also computes ratio_n6 from its timed outputs.
@@ -165,7 +165,7 @@ def historique_du_corpus(outillage):
 class Project:
     NAME = "miniz"
     # Packages on top of the common image: original tests (g++, cmake), differential tests (zlib1g-dev), corpus
-    # generator (git), libFuzzer fuzzing (clang-18, libclang-rt-18-dev), run through isoler.sh.
+    # generator (git), libFuzzer fuzzing (clang-18, libclang-rt-18-dev), run through isolate.sh.
     PACKAGES = ["g++", "cmake", "zlib1g-dev", "git", "clang-18", "libclang-rt-18-dev"]
     # Files compiled by build.sh (miniz_zip.c is not: it is neither copied nor judged); the judge analyzes these
     # files whole, and each .c must leave its object in obj/.
