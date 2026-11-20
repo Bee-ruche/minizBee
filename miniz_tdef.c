@@ -821,13 +821,14 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
 #define TDEFL_READ_UNALIGNED_WORD(p) *(const mz_uint16 *)(p)
 #define TDEFL_READ_UNALIGNED_WORD2(p) *(const mz_uint16 *)(p)
 #endif /* MINIZ_UNALIGNED_USE_MEMCPY */
-    static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahead_pos, mz_uint max_dist, mz_uint max_match_len, mz_uint *pMatch_dist, mz_uint *pMatch_len)
+    static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahead_pos, mz_uint max_dist, mz_uint max_match_len, mz_uint *pMatch_dist, mz_uint *pMatch_len, const mz_uint long_budget)
     {
         mz_uint dist, pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK, match_len = *pMatch_len, probe_pos = pos, next_probe_pos, probe_len;
         mz_uint num_probes_left = d->m_max_probes[match_len >= 32];
         const mz_uint16 *s = (const mz_uint16 *)(d->m_dict + pos), *p, *q;
         mz_uint16 c01 = TDEFL_READ_UNALIGNED_WORD(&d->m_dict[pos + match_len - 1]), s01 = TDEFL_READ_UNALIGNED_WORD2(s);
         MZ_ASSERT(max_match_len <= TDEFL_MAX_MATCH_LEN);
+        (void)long_budget;
         if (max_match_len <= match_len)
             return;
         for (;;)
@@ -991,7 +992,9 @@ static TDEFL_NOINLINE mz_uint tdefl_find_match_long(const tdefl_compressor *d, m
 #undef TDEFL_CHAIN_END
 }
 
-static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahead_pos, mz_uint max_dist, mz_uint max_match_len, mz_uint *pMatch_dist, mz_uint *pMatch_len)
+/* Task miniz-0045: long_budget is nonzero only where both budgets of d->m_max_probes are known to be 3 or more
+   (see tdefl_compress_normal): the test of the budget is then known to be true, and is left out. */
+static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahead_pos, mz_uint max_dist, mz_uint max_match_len, mz_uint *pMatch_dist, mz_uint *pMatch_len, const mz_uint long_budget)
 {
     mz_uint dist, pos, match_len = *pMatch_len, probe_pos, next_probe_pos, probe_len;
     mz_uint num_probes_left;
@@ -1009,7 +1012,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
        fait au plus trois sondes et au plus une comparaison, après laquelle le budget est épuisé. Mêmes
        sondes, dans le même ordre, et même comparaison, écrites en ligne droite : la mise en place de
        la recherche générale (tdefl_find_match_long) n'est payée que par les budgets plus grands. */
-    if ((num_probes_left - 1U) > 1U)
+    if ((long_budget) || ((num_probes_left - 1U) > 1U))
     {
         mz_uint found;
 #if defined(__GNUC__) || defined(__clang__)
@@ -1312,12 +1315,13 @@ candidat_court:
    Below this bound the test is false, so one comparison settles it; the flushes happen at the same symbols. */
 #define TDEFL_LZ_FLUSH_MIN_CODE_BYTES MZ_MIN(TDEFL_LZ_CODE_BUF_SIZE - 7, ((31 * 1024 + 1) * 128 + 114) / 115)
 
-    static mz_bool tdefl_compress_normal(tdefl_compressor *d)
+    /* Task miniz-0045: the body of tdefl_compress_normal, with d->m_flags and d->m_greedy_parsing as parameters;
+       tdefl_compress_normal below calls it in two places, see there. */
+    static MZ_FORCEINLINE mz_bool tdefl_compress_normal_body(tdefl_compressor *d, const mz_uint flags, const mz_uint greedy_parsing, const mz_uint long_budget)
     {
         const mz_uint8 *pSrc = d->m_pSrc;
         size_t src_buf_left = d->m_src_buf_left;
         tdefl_flush flush = d->m_flush;
-        const mz_uint flags = d->m_flags, greedy_parsing = d->m_greedy_parsing;
         /* Task miniz-0019: the window's three counters live in local variables, as in tdefl_compress_fast, and
            are written back into d only where something else reads them: before tdefl_flush_block (which reads
            m_lookahead_pos and m_dict_size, and changes neither) and where the function returns. The loop
@@ -1339,6 +1343,11 @@ candidat_court:
            outside it), so the loop no longer tests for it; if the source ends before the second byte, the loop
            inserts nothing (num_bytes_to_process is 0) and hash is not used. */
         mz_uint hash = 0;
+        /* Task miniz-0045: the lazy match held from one position to the next (its length, distance and the literal
+           at its position) lives in local variables, read from d once here and written back into d before
+           tdefl_flush_block and where the function returns. Kept in d, each was read again after every store into
+           d->m_dict, d->m_lz_code_buf or d->m_huff_count, which may alias d. */
+        mz_uint saved_match_len = d->m_saved_match_len, saved_match_dist = d->m_saved_match_dist, saved_lit = d->m_saved_lit;
         lz.m_pLZ_code_buf = d->m_pLZ_code_buf;
         lz.m_pLZ_flags = d->m_pLZ_flags;
         lz.m_num_flags_left = d->m_num_flags_left;
@@ -1418,7 +1427,7 @@ candidat_court:
             /* Simple lazy/greedy parsing state machine. */
             len_to_move = 1;
             cur_match_dist = 0;
-            cur_match_len = d->m_saved_match_len ? d->m_saved_match_len : (TDEFL_MIN_MATCH_LEN - 1);
+            cur_match_len = saved_match_len ? saved_match_len : (TDEFL_MIN_MATCH_LEN - 1);
             cur_pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK;
             if (flags & (TDEFL_RLE_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS))
             {
@@ -1440,35 +1449,40 @@ candidat_court:
             }
             else
             {
-                tdefl_find_match(d, lookahead_pos, dict_size, lookahead_size, &cur_match_dist, &cur_match_len);
+                tdefl_find_match(d, lookahead_pos, dict_size, lookahead_size, &cur_match_dist, &cur_match_len, long_budget);
             }
-            if (((cur_match_len == TDEFL_MIN_MATCH_LEN) && (cur_match_dist >= 8U * 1024U)) || (cur_pos == cur_match_dist) || ((flags & TDEFL_FILTER_MATCHES) && (cur_match_len <= 5)))
+            /* Task miniz-0045: a match was found exactly when cur_match_dist is nonzero (tdefl_find_match and the RLE
+               search set both, or neither). Without one, cur_match_len is still its first value (the held match's
+               length, or TDEFL_MIN_MATCH_LEN - 1), or 0 if the test below cleared it: it is then never greater than
+               saved_match_len, and the choice is the same whatever the test below decides. So both tests start by
+               asking whether there is a match: the path without one reads neither cur_match_len nor cur_pos. */
+            if ((cur_match_dist) && (((cur_match_len == TDEFL_MIN_MATCH_LEN) && (cur_match_dist >= 8U * 1024U)) || (cur_pos == cur_match_dist) || ((flags & TDEFL_FILTER_MATCHES) && (cur_match_len <= 5))))
             {
                 cur_match_dist = cur_match_len = 0;
             }
-            if (d->m_saved_match_len)
+            if (saved_match_len)
             {
-                if (cur_match_len > d->m_saved_match_len)
+                if ((cur_match_dist) && (cur_match_len > saved_match_len))
                 {
-                    tdefl_record_literal(d, &lz, (mz_uint8)d->m_saved_lit);
+                    tdefl_record_literal(d, &lz, (mz_uint8)saved_lit);
                     if (cur_match_len >= 128)
                     {
                         tdefl_record_match(d, &lz, cur_match_len, cur_match_dist);
-                        d->m_saved_match_len = 0;
+                        saved_match_len = 0;
                         len_to_move = cur_match_len;
                     }
                     else
                     {
-                        d->m_saved_lit = d->m_dict[cur_pos];
-                        d->m_saved_match_dist = cur_match_dist;
-                        d->m_saved_match_len = cur_match_len;
+                        saved_lit = d->m_dict[cur_pos];
+                        saved_match_dist = cur_match_dist;
+                        saved_match_len = cur_match_len;
                     }
                 }
                 else
                 {
-                    tdefl_record_match(d, &lz, d->m_saved_match_len, d->m_saved_match_dist);
-                    len_to_move = d->m_saved_match_len - 1;
-                    d->m_saved_match_len = 0;
+                    tdefl_record_match(d, &lz, saved_match_len, saved_match_dist);
+                    len_to_move = saved_match_len - 1;
+                    saved_match_len = 0;
                 }
             }
             else if (!cur_match_dist)
@@ -1480,9 +1494,9 @@ candidat_court:
             }
             else
             {
-                d->m_saved_lit = d->m_dict[MZ_MIN(cur_pos, sizeof(d->m_dict) - 1)];
-                d->m_saved_match_dist = cur_match_dist;
-                d->m_saved_match_len = cur_match_len;
+                saved_lit = d->m_dict[MZ_MIN(cur_pos, sizeof(d->m_dict) - 1)];
+                saved_match_dist = cur_match_dist;
+                saved_match_len = cur_match_len;
             }
             /* Move the lookahead forward by len_to_move bytes. */
             lookahead_pos += len_to_move;
@@ -1507,6 +1521,9 @@ candidat_court:
                 d->m_pLZ_code_buf = lz.m_pLZ_code_buf;
                 d->m_pLZ_flags = lz.m_pLZ_flags;
                 d->m_num_flags_left = lz.m_num_flags_left;
+                d->m_saved_match_len = saved_match_len;
+                d->m_saved_match_dist = saved_match_dist;
+                d->m_saved_lit = saved_lit;
                 if ((n = tdefl_flush_block(d, 0)) != 0)
                     return (n < 0) ? MZ_FALSE : MZ_TRUE;
                 lz.m_pLZ_code_buf = d->m_pLZ_code_buf;
@@ -1523,7 +1540,25 @@ candidat_court:
         d->m_num_flags_left = lz.m_num_flags_left;
         d->m_pSrc = pSrc;
         d->m_src_buf_left = src_buf_left;
+        d->m_saved_match_len = saved_match_len;
+        d->m_saved_match_dist = saved_match_dist;
+        d->m_saved_lit = saved_lit;
         return MZ_TRUE;
+    }
+
+    /* Task miniz-0045: the loop reads its flags only in four tests, all on TDEFL_RLE_MATCHES,
+       TDEFL_FORCE_ALL_RAW_BLOCKS, TDEFL_FILTER_MATCHES or greedy parsing. When none of them is set (lazy parsing,
+       levels 4 to 9 of mz_deflate), every one of those tests is false, and the body is compiled with flags 0 and
+       greedy_parsing 0: the tests disappear from the choice made at each position, and the values they read no
+       longer take registers in the loop. When, as well, both budgets of m_max_probes are 3 or more (they are set by
+       tdefl_init only), tdefl_find_match is told so by long_budget and skips its test of the budget. Otherwise the
+       body runs as before, with the compressor's own flags. Same tests' outcomes, same choices, same symbols. */
+    static mz_bool tdefl_compress_normal(tdefl_compressor *d)
+    {
+        if ((!d->m_greedy_parsing) && (!(d->m_flags & (TDEFL_RLE_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS | TDEFL_FILTER_MATCHES))) &&
+            (d->m_max_probes[0] > 2) && (d->m_max_probes[1] > 2))
+            return tdefl_compress_normal_body(d, 0, 0, 1);
+        return tdefl_compress_normal_body(d, d->m_flags, d->m_greedy_parsing, 0);
     }
 
     static tdefl_status tdefl_flush_output_buffer(tdefl_compressor *d)
