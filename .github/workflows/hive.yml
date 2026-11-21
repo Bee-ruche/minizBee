@@ -21,4 +21,4 @@ jobs:
     permissions:
       contents: write
       actions: read
-    uses: Bee-ruche/hive/.github/workflows/run.yml@64615af6c03c3a40332c787f545a5ffb448be208
+    uses: Bee-ruche/hive/.github/workflows/run.yml@d1e91fa8b88eb8bdcfa2b5a8327a96053bef1528
