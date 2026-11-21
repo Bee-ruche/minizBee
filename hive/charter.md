@@ -35,6 +35,11 @@ on the hive's branch at a3eba3b, on 20 November 2026, in the judge's image witho
 - One function, and one idea of change, per task: the title names both.
 - Compression lives in `miniz_tdef.c`, decompression in `miniz_tinfl.c`, adler32 and the zlib interface in
   `miniz.c`: tasks on two of these files can be held at once, two tasks on one file only one after the other.
+- Decompression, on 21 November 2026: `tinfl_decompress` is one function and nearly all of the scenario, and its
+  easy gains are taken (miniz-0041, miniz-0042). Since then candidates removed 2 to 4 % of its instructions and the
+  stopwatch did not show it (miniz-0022 and miniz-0048, both closed). No new task that asks fewer instructions per
+  symbol, per literal or per test on decompression. miniz-0049 and miniz-0054 stay. A new decompression task needs a
+  change of structure the stopwatch can show, named in its title.
 
 ## Never
 
