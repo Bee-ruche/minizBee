@@ -42,7 +42,7 @@ The code of the project and of its contributions runs **only** in a sandbox: eve
 **With Docker**: `bee/sandbox/Dockerfile` builds an Ubuntu 24.04 image with exactly the CI's tools (its base image is not yet pinned by digest, see "Known limits"). All the commands of this README work as they are in the container.
 
 ```bash
-docker build -t bee-miniz bee/sandbox    # with network; only from a fresh clone, or right after `hive start` printed `STARTED` and before any project code ran there
+docker build -t bee-miniz bee/sandbox    # with network; a worker: only right after `hive start` printed `STARTED`, before any project code ran since; anyone else: from a fresh clone
 docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount type=bind,source="$PWD",target=/travail \
   --mount type=bind,source="$PWD/.git",target=/travail/.git,readonly \
