@@ -42,7 +42,7 @@ The code of the project and of its contributions runs **only** in a sandbox: eve
 **With Docker**: `bee/sandbox/Dockerfile` builds an Ubuntu 24.04 image with exactly the CI's tools (its base image is not yet pinned by digest, see "Known limits"). All the commands of this README work as they are in the container.
 
 ```bash
-docker build -t bee-miniz bee/sandbox    # with network; only while `git status --porcelain bee/sandbox` prints nothing
+docker build -t bee-miniz bee/sandbox    # with network; a worker: only right after `hive start` printed `STARTED`, before any project code ran since; anyone else: from a fresh clone
 docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount type=bind,source="$PWD",target=/travail \
   --mount type=bind,source="$PWD/.git",target=/travail/.git,readonly \
@@ -82,7 +82,7 @@ What changes for the commands of this README:
 ### What it does not guarantee
 
 - **It is not a virtual machine.** The command talks to the kernel of your machine: a kernel vulnerability or a CPU side channel crosses the sandbox. Use a disposable VM for code you have reasons to distrust.
-- **The work tree stays writable**: builds happen there. Code that runs inside can change any file of the tree and leave a file under any name the launcher does not guard. After a run, treat the tree as untrusted: read `git status --porcelain --ignored` and `git diff` before you commit, execute nothing of the tree outside the sandbox, and run git from the root of the clone only.
+- **The work tree stays writable**: builds happen there. Code that runs inside can change any file of the tree and leave a file under any name the launcher does not guard. After a run, treat the tree as untrusted and execute nothing of it outside the sandbox. A worker runs no git command in the clone: `hive submit` checks the clone and commits only the task's files. Anyone else reads `git status --porcelain --ignored` and `git diff` before committing, and runs git from the root of the clone only.
 - **It can read** the work tree and the history (keep no secret in either), `/usr`, the world-readable part of `/etc` (user names), and what `/proc` says of the machine (CPU, memory, kernel). The Docker form shows `.git` whole, read-only: there, keep no credential in `.git/config`.
 - **No limit on CPU, memory, processes or disk.** A command can fill the disk through the work tree or the memory through `/tmp`. Your own timeout ends it: killing the launcher kills everything inside.
 - **Guarded names are those of the list, at the root of the work tree.** The Docker form guards the paths its command mounts read-only, and renames nothing.
