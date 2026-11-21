@@ -19,7 +19,7 @@ The hive refuses a candidate that touches these paths, and its judge always take
 The details are in [bee/README.md](bee/README.md). All of them run **in the sandbox**, without network, and nowhere else: `bee/sandbox/sans-docker.sh <command>` on Linux, or the Docker form, from the root of the clone:
 
 ```bash
-docker build -t bee-miniz bee/sandbox    # with network; only while `git status --porcelain bee/sandbox` prints nothing
+docker build -t bee-miniz bee/sandbox    # with network; only from a fresh clone, or right after `hive start` printed `STARTED` and before any project code ran there
 docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount type=bind,source="$PWD",target=/travail \
   --mount type=bind,source="$PWD/.git",target=/travail/.git,readonly \
