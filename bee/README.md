@@ -75,7 +75,7 @@ If one of these protections cannot be set up, the launcher does not run the comm
 What changes for the commands of this README:
 
 - **`.git` is read-only and shows the history only.** A command that asks git for a remote's address or a setting of the clone finds none. `git commit` and `git worktree add` fail inside, and so does `bee/bench/ab.py`, which checks revisions out with `git worktree`. Run such a command on a private copy of the clone: `bee/sandbox/sans-docker.sh bash -c 'cp -a . /tmp/copy && cd /tmp/copy && python3 bee/bench/ab.py --base upstream/master --candidate HEAD'` (with `--json "$OLDPWD/report.json"` to keep the report in the work tree).
-- **Nothing outside the work tree exists inside.** Copy what a command needs into the work tree first, for instance the common judge's `tools/judge` ("Common judge and plugin" below) into the unversioned `bee/construction/`.
+- **Nothing outside the work tree exists inside.** Copy what a command needs into the work tree first, for instance the hive's `tools/judge` ("Common judge and plugin" below) into the unversioned `bee/construction/`.
 - A rename or a hard link between `bee/` and the rest of the tree fails ("cross-device"); `mv` and `cp` fall back to copying.
 - The command is root in name only: it has no capability, so `mount` fails, and `unshare -r` fails too (no user namespace can be made inside the sandbox).
 
@@ -146,7 +146,7 @@ For each corpus file and each level 0, 1, 6 and 9:
 | `sommes` | `mz_adler32` and `mz_crc32` equal to zlib's, in one go and in pieces |
 | `empreintes` | SHA-256 of each compressed output (levels 0, 1, 6, 9 and "6v" with flushes), compared with `bee/tests/empreintes-reference.txt` (305 fingerprints produced on the base) |
 
-Result on the base: **3,233 checks, 0 discrepancies**, about 13 s. The exit code is 1 at the slightest discrepancy, with a message that names the check, the level, the file and the first differing byte. A contribution must not change the compressed output, unless its task explicitly allows it (`compressed_output: may_change`). It then reruns with `--sans-empreintes`, and the CI does so by itself according to the registry's task.
+Result on the base: **3,233 checks, 0 discrepancies**, about 13 s. The exit code is 1 at the slightest discrepancy, with a message that names the check, the level, the file and the first differing byte. A contribution must not change the compressed output, unless its task explicitly allows it (`compressed_output: may_change`). It then reruns with `--sans-empreintes`, and the former flow's CI does so by itself according to the task in the former registry.
 
 ## Fuzzing
 
@@ -178,7 +178,7 @@ bee/fuzz/lancer.sh 120 --reference /path/to/base  # classifies each discrepancy:
 make -C bee banc && bee/construction/banc/banc --verbeux
 ```
 
-The bench writes, on one line, a JSON object with exactly the project's six metrics, under the registry's English metric ids (a metric not measured is `null`; until ruche-0149 renames them, the registry's files still say `debit_compression_n1`… `memoire_max_ko`, which the CI reads too):
+The bench writes, on one line, a JSON object with exactly the project's six metrics, under English metric ids, the plugin's too (`METRICS` of `bee/judge/project.py`; a metric not measured is `null`; the former registry's files say `debit_compression_n1`… `memoire_max_ko`, which the former flow's CI reads too):
 
 | Key | Unit | Direction | Measurement |
 | --- | --- | --- | --- |
@@ -247,7 +247,7 @@ Names with capital letters are recognized since miniz-0034: `mz_deflateInit2`, `
 
 ## CI: `.github/workflows/bee-ci.yml`
 
-Triggered on every pull request, with the sole permission `contents: read`. It is the former flow's CI, closed to new contributions ([AGENTS.md](../AGENTS.md)): "the registry" in this section and the next is the former one, `Bee-ruche/registre`, archived, at the commits `bee-ci.yml` pins. The hive judges today's candidates with the common judge of [Bee-ruche/hive](https://github.com/Bee-ruche/hive) (`tools/judge/`, judge-v5, its `docs/common-judge.md`), which reads the plugin of `bee/judge/`.
+Triggered on every pull request, with the sole permission `contents: read`. It is the former flow's CI, closed to new contributions ([AGENTS.md](../AGENTS.md)): "the registry" it names is the former one, `Bee-ruche/registre`, archived, at the commits `bee-ci.yml` pins.
 
 | Job | Machine | Verdict step(s) | Command |
 | --- | --- | --- | --- |
@@ -277,20 +277,20 @@ To simulate the CI locally, take the commands of the right-hand column, in order
 
 ## Common judge and plugin: `bee/judge/`
 
-Until 27 October 2026, the PR's code ran in the very process that judged it: malicious code could exit "successfully" in the middle of the tests, report fake times or recognize the corpus. The isolated judge (miniz-0031) no longer trusts the process that runs the PR's code. Since miniz-0032, its part common to all projects lives in the registry, and this folder keeps only what is specific to miniz. Since miniz-0050, it is `bee/judge/` and the plugin follows judge-v4's English contract (`bee/juge/projet.py` and its French names until then).
+Until 27 October 2026, the PR's code ran in the very process that judged it: malicious code could exit "successfully" in the middle of the tests, report fake times or recognize the corpus. The isolated judge (miniz-0031) no longer trusts the process that runs the PR's code. Since miniz-0032, its part common to all projects lives in the registry, and this folder keeps only what is specific to miniz. Since miniz-0050, it is `bee/judge/` and the plugin follows judge-v4's English contract (`bee/juge/projet.py` and its French names until then). Since 19 November 2026 the plugin follows version 5 of the contract, and the common judge that runs it for the hive is [Bee-ruche/hive](https://github.com/Bee-ruche/hive)'s (`tools/judge/` and its `docs/common-judge.md`, at the commit `.github/workflows/hive.yml` pins). Below, the commands run the hive's judge; the table and the rest of this section are judge-v4's, in the former registry (`Bee-ruche/registre`, archived), as the former flow's CI still runs them; for version 5, the hive's `docs/common-judge.md` is the reference.
 
 | In the registry (`tools/judge/`, judge-v4 pinned by SHA, docs/common-judge.md) | Here (`bee/judge/`) |
 | --- | --- |
 | Common image (`Dockerfile.base`) and isolation (`isoler.sh`), launcher `chrono.c`, safe reading of the outputs, object analysis, seed, A/B statistics, report (`judge.py`, `report.py`), meta-tests on a toy project, reusable workflow `judge.yml` | `project.py`, the **plugin** (class `Project`: `NAME`, `PACKAGES`, `SOURCES`, `REQUIRED_SOURCES`, `TOOLING`, `BASE_HEADERS`, `BUILD`, `ALLOWED`, `SIDES`, `METRICS`, `METHOD`, `verify()`, `fixed()`…): sources, packages, build, inputs (corpus, random, zlib streams from the host), correctness rule, scenarios and metrics (the English metric ids); `build.sh` (build in the container); `execution.c` (the harness: since miniz-0048, the juge-v3 contract, which judge-v4 keeps, below); `test_judge.py` (tests of the plugin and meta-tests of miniz) |
 
 ```bash
-python3 <registry>/tools/judge/judge.py --tooling . --source-a <base folder> --source-b <PR folder> [--repetitions 10] [--json judge.json]
-BEE_COMMON_JUDGE=<registry>/tools/judge python3 bee/judge/test_judge.py                             # plugin tests
-BEE_COMMON_JUDGE=<registry>/tools/judge BEE_JUDGE_INTEGRATION=1 python3 bee/judge/test_judge.py     # + meta-tests (Docker, ≈ 6 min)
-bee/sandbox/sans-docker.sh env BEE_HARNESS_SANDBOX=1 BEE_COMMON_JUDGE=<registry>/tools/judge python3 bee/judge/test_judge.py
+python3 <hive>/tools/judge/judge.py --tooling . --source-a <base folder> --source-b <PR folder> [--repetitions 10] [--json judge.json]
+BEE_COMMON_JUDGE=<hive>/tools/judge python3 bee/judge/test_judge.py                             # plugin tests
+BEE_COMMON_JUDGE=<hive>/tools/judge BEE_JUDGE_INTEGRATION=1 python3 bee/judge/test_judge.py     # + meta-tests (Docker, ≈ 6 min)
+bee/sandbox/sans-docker.sh env BEE_HARNESS_SANDBOX=1 BEE_COMMON_JUDGE=<hive>/tools/judge python3 bee/judge/test_judge.py
                        # + the harness built by build.sh and run without Docker: in the sandbox only, never on CI
 ```
-(`<registry>` at the commit pinned by `bee-ci.yml`, `JUGE_COMMUN_SHA` (judge-v4; it mounts a tmpfs for each execution, as root or through `sudo -n`). For the `sans-docker.sh` line, `<registry>` is a copy inside the work tree, for instance in the unversioned `bee/construction/`: nothing outside the work tree exists in the sandbox. Without a Docker bridge, as in some cloud sessions: add `--build-network host`, or `BEE_JUDGE_NETWORK=host` for the meta-tests.)
+(`<hive>`: a copy of [Bee-ruche/hive](https://github.com/Bee-ruche/hive) at the commit `.github/workflows/hive.yml` pins; without `BEE_COMMON_JUDGE`, `test_judge.py` looks in `../registre`, the former registry, whose judge-v4 does not run this plugin's tests. For the `sans-docker.sh` line, `<hive>` is a copy inside the work tree, for instance in the unversioned `bee/construction/`: nothing outside the work tree exists in the sandbox. Without a Docker bridge, as in some cloud sessions: add `--build-network host`, or `BEE_JUDGE_NETWORK=host` for the meta-tests.)
 
 **How it runs** (the common judge, with this plugin).
 1. **Image**: the registry's `Dockerfile.base` (Ubuntu 24.04 pinned by digest) plus the plugin's `PACKAGES` (g++, cmake, zlib1g-dev, git, clang-18, libclang-rt-18-dev: those of the original tests, the differential tests and the fuzzing, which run in the same image). Built before the slightest file of the PR is mounted: it is the only step where the container has network. The corpus commit is fetched before, in a separate step (see "History for the corpus").
