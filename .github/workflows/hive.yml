@@ -1,0 +1,24 @@
+# The hive's hourly run, in a project's own repository (docs/hosting.md in Bee-ruche/hive). Copied to the project's
+# .github/workflows/hive.yml, on its default branch, with the forty zeros below replaced by the commit of
+# Bee-ruche/hive's main that the project runs: forty zeros name no commit, and nothing runs until one is written there.
+# The run is the reusable workflow at that commit: its four jobs, their timeouts and what each may do are written
+# there, and each refuses to run unless it is Bee-ruche/hive's, at a commit of its main. tools/hive/test_hive.py
+# (TestTheRunWorkflow) holds this example.
+name: Hive
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: hive
+  cancel-in-progress: false
+
+jobs:
+  hive:
+    # The project's default branch, the one it publishes (published in hive/project.json), and no other ref.
+    if: github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+      actions: read
+    uses: Bee-ruche/hive/.github/workflows/run.yml@64615af6c03c3a40332c787f545a5ffb448be208
