@@ -174,6 +174,17 @@ extern "C"
     }                                                                                                                               \
     MZ_MACRO_END
 
+/* With a 64-bit bit buffer, one turn of tinfl_decompress's fast loop reads up to 12 bytes of input without looking at
+   how much is left: 4 for its literals, then 8 for a match (label fast_match), which the fast loop decodes itself
+   rather than leaving it to the byte-at-a-time macros. Nearer the end of the input, the slow path decodes as before. */
+#if TINFL_USE_64BIT_BITBUF
+#define TINFL_FAST_IN_BYTES 12
+#define TINFL_FAST_MATCH_BREAK goto fast_match
+#else
+#define TINFL_FAST_IN_BYTES 4
+#define TINFL_FAST_MATCH_BREAK break
+#endif
+
     static void tinfl_clear_tree(tinfl_decompressor *r)
     {
         if (r->m_type == 0)
@@ -254,6 +265,20 @@ extern "C"
         static const mz_uint8 s_dist_extra[32] = { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
         static const mz_uint8 s_length_dezigzag[19] = { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
         static const mz_uint16 s_min_table_sizes[3] = { 257, 1, 4 };
+#if TINFL_USE_64BIT_BITBUF
+        /* The four tables above and the masks of 0 to 13 extra bits, in one object: one address serves them all. */
+        static const struct
+        {
+            mz_uint16 m_length_base[32], m_dist_base[32], m_mask[16];
+            mz_uint8 m_length_extra[32], m_dist_extra[32];
+        } s_fast = {
+            { 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258, 0, 0, 0 },
+            { 1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577, 0, 0 },
+            { 0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767 },
+            { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0, 0, 0, 0 },
+            { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 0, 0 }
+        };
+#endif
 
         mz_int16 *pTrees[3];
         mz_uint8 *pCode_sizes[3];
@@ -488,7 +513,7 @@ extern "C"
                     size_t room; /* bytes from the higher of destination and source to the end of the buffer */
                     for (;;)
                     {
-                        if (((pIn_buf_end - pIn_buf_cur) < 4) || ((pOut_buf_end - pOut_buf_cur) < 2))
+                        if (((pIn_buf_end - pIn_buf_cur) < TINFL_FAST_IN_BYTES) || ((pOut_buf_end - pOut_buf_cur) < 2))
                         {
                             TINFL_HUFF_DECODE(23, counter, r->m_look_up[0], r->m_tree_0);
                             if (counter >= 256)
@@ -536,7 +561,7 @@ extern "C"
                                 TINFL_CR_RETURN_FOREVER(40, TINFL_STATUS_FAILED);
                             }
                             if (counter & 256)
-                                break;
+                                TINFL_FAST_MATCH_BREAK;
 
 #if !TINFL_USE_64BIT_BITBUF
                             if (num_bits < 15)
@@ -568,14 +593,20 @@ extern "C"
                             {
                                 pOut_buf_cur++;
                                 counter = sym2;
-                                break;
+                                TINFL_FAST_MATCH_BREAK;
                             }
                             pOut_buf_cur[1] = (mz_uint8)sym2;
                             pOut_buf_cur += 2;
                         }
                     }
                     if ((counter &= 511) == 256)
+                    {
+#if TINFL_USE_64BIT_BITBUF
+                        /* End of the block: drop what fast_match left above num_bits (see there). */
+                        bit_buf &= ~(~(tinfl_bit_buf_t)0 << num_bits);
+#endif
                         break;
+                    }
 
                     num_extra = s_length_extra[counter - 257];
                     counter = s_length_base[counter - 257];
@@ -595,6 +626,55 @@ extern "C"
                         TINFL_GET_BITS(27, extra_bits, num_extra);
                         dist += extra_bits;
                     }
+#if TINFL_USE_64BIT_BITBUF
+                    if (0)
+                    {
+                        /* A match met by the fast loop above, which left at least 8 bytes of input (it had 12 and
+                           read 4 at most). One 8-byte word refills the bit buffer to 56 bits or more, without a
+                           branch (a test here is taken one time in three, and mispredicted): enough for the rest
+                           of the match, which is the length's extra bits (5 at most), the distance's code (15 at
+                           most) and its extra bits (13 at most), decoded without looking at the input again. These
+                           are the bits TINFL_GET_BITS(25), TINFL_HUFF_DECODE(26) and TINFL_GET_BITS(27) above read
+                           a byte or two at a time, with the same counter, dist and num_extra at the end.
+                           Only whole bytes are counted as read, (63 - num_bits) / 8 of them, so the word leaves up
+                           to 7 bits above num_bits: they are the stream's next bits, at their own places, and
+                           whatever ors the next bytes in writes the same bits over them. They are dropped where
+                           that stops being true: at the end of the block (both tests of counter == 256) and at
+                           common_exit, which masks the bit buffer it saves. The bytes read ahead are given back
+                           at common_exit, like those of the fast loop. */
+                        int sym2;
+                        mz_uint code_len;
+                    fast_match:
+                        if ((counter &= 511) == 256)
+                        {
+                            bit_buf &= ~(~(tinfl_bit_buf_t)0 << num_bits);
+                            break;
+                        }
+                        bit_buf |= (((tinfl_bit_buf_t)MZ_READ_LE64(pIn_buf_cur)) << num_bits);
+                        pIn_buf_cur += (63 - num_bits) >> 3;
+                        num_bits |= 56;
+                        num_extra = s_fast.m_length_extra[counter - 257];
+                        counter = s_fast.m_length_base[counter - 257] + ((mz_uint32)bit_buf & s_fast.m_mask[num_extra]);
+                        bit_buf >>= num_extra;
+                        num_bits -= num_extra;
+                        if ((sym2 = r->m_look_up[1][bit_buf & (TINFL_FAST_LOOKUP_SIZE - 1)]) >= 0)
+                            code_len = sym2 >> 9, sym2 &= 511;
+                        else
+                        {
+                            code_len = TINFL_FAST_LOOKUP_BITS;
+                            do
+                            {
+                                sym2 = r->m_tree_1[~sym2 + ((bit_buf >> code_len++) & 1)];
+                            } while (sym2 < 0);
+                        }
+                        bit_buf >>= code_len;
+                        num_bits -= code_len;
+                        num_extra = s_fast.m_dist_extra[sym2];
+                        dist = s_fast.m_dist_base[sym2] + ((mz_uint32)bit_buf & s_fast.m_mask[num_extra]);
+                        bit_buf >>= num_extra;
+                        num_bits -= num_extra;
+                    }
+#endif /* TINFL_USE_64BIT_BITBUF */
 
                     dist_from_out_buf_start = pOut_buf_cur - pOut_buf_start;
                     if (((size_t)dist - 1) < dist_from_out_buf_start)
