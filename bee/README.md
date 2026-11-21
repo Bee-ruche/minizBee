@@ -178,7 +178,7 @@ bee/fuzz/lancer.sh 120 --reference /path/to/base  # classifies each discrepancy:
 make -C bee banc && bee/construction/banc/banc --verbeux
 ```
 
-The bench writes, on one line, a JSON object with exactly the project's six metrics, under English metric ids, the plugin's too (`METRICS` of `bee/judge/project.py`; a metric not measured is `null`; the former registry's files say `debit_compression_n1`… `memoire_max_ko`, which the former flow's CI reads too):
+The bench writes, on one line, a JSON object with exactly the project's six metrics, under English metric ids, the plugin's too (`METRICS` of `bee/judge/project.py`; a metric not measured is `null`; the former flow's CI also reads the French ids the former registry once wrote, `debit_compression_n1`… `memoire_max_ko`, through `bee/ci/vocabulaire.py`):
 
 | Key | Unit | Direction | Measurement |
 | --- | --- | --- | --- |
@@ -290,7 +290,7 @@ BEE_COMMON_JUDGE=<hive>/tools/judge BEE_JUDGE_INTEGRATION=1 python3 bee/judge/te
 bee/sandbox/sans-docker.sh env BEE_HARNESS_SANDBOX=1 BEE_COMMON_JUDGE=<hive>/tools/judge python3 bee/judge/test_judge.py
                        # + the harness built by build.sh and run without Docker: in the sandbox only, never on CI
 ```
-(`<hive>`: a copy of [Bee-ruche/hive](https://github.com/Bee-ruche/hive) at the commit `.github/workflows/hive.yml` pins; without `BEE_COMMON_JUDGE`, `test_judge.py` looks in `../registre`, the former registry, whose judge-v4 does not run this plugin's tests. For the `sans-docker.sh` line, `<hive>` is a copy inside the work tree, for instance in the unversioned `bee/construction/`: nothing outside the work tree exists in the sandbox. Without a Docker bridge, as in some cloud sessions: add `--build-network host`, or `BEE_JUDGE_NETWORK=host` for the meta-tests.)
+(`<hive>`: a copy of [Bee-ruche/hive](https://github.com/Bee-ruche/hive) at the commit `.github/workflows/hive.yml` pins, whose isolation script is `isolate.sh`; it mounts a tmpfs for each execution, as root or through `sudo -n`. Without `BEE_COMMON_JUDGE`, `test_judge.py` looks in `../registre`, the former registry, whose judge-v4 does not run this plugin's tests, and its own docstring and error message still name that registry. For the `sans-docker.sh` line, `<hive>` is a copy inside the work tree, for instance in the unversioned `bee/construction/`: nothing outside the work tree exists in the sandbox. Without a Docker bridge, as in some cloud sessions: add `--build-network host`, or `BEE_JUDGE_NETWORK=host` for the meta-tests.)
 
 **How it runs** (the common judge, with this plugin).
 1. **Image**: the registry's `Dockerfile.base` (Ubuntu 24.04 pinned by digest) plus the plugin's `PACKAGES` (g++, cmake, zlib1g-dev, git, clang-18, libclang-rt-18-dev: those of the original tests, the differential tests and the fuzzing, which run in the same image). Built before the slightest file of the PR is mounted: it is the only step where the container has network. The corpus commit is fetched before, in a separate step (see "History for the corpus").
