@@ -3,8 +3,9 @@
 # of the project at the root of the work tree (this git clone) and keeps it away from everything else:
 #   - no network (empty network namespace), none of your environment variables (no token, no proxy);
 #   - one writable place that lasts, the work tree, EXCEPT the paths of `guarded` below (.git, the
-#     agent instructions, the CI, this folder): read-only inside, so that the command cannot plant a
-#     hook, a config or an instruction for what you run next, outside;
+#     agent instructions, the CI, this folder, the project's settings hive/ and what they protect):
+#     read-only inside, so that the command cannot plant a hook, a config or an instruction for what you
+#     run next, outside;
 #   - of .git, only HEAD, the refs, the objects and the index, read-only. Its settings, its logs, its
 #     hooks and the rest are not shown (what a command reads, it can copy into the work tree, which
 #     you push);
@@ -36,7 +37,8 @@ set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 # Paths of the work tree that the command can read but neither change nor create.
-guarded=(.git .github .claude .mcp.json AGENTS.md CLAUDE.md bee/sandbox)
+guarded=(.git .github .claude .mcp.json AGENTS.md CLAUDE.md bee/sandbox hive manifests manifestes tests examples
+  .gitignore .gitattributes)
 
 refuse() { echo "bee-sandbox: $*: the command was NOT run." >&2; exit 125; }
 

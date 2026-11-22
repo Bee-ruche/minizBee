@@ -43,18 +43,16 @@ The code of the project and of its contributions runs **only** in a sandbox: eve
 
 ```bash
 docker build -t bee-miniz bee/sandbox    # with network; a worker: only right after `hive start` printed `STARTED`, before any project code ran since; anyone else: from a fresh clone
+ro=(.git .github AGENTS.md CLAUDE.md bee/sandbox hive manifests manifestes tests examples .gitignore)   # read-only inside (bee/README.md, "What the sandbox guarantees")
+mounts=(); for p in "${ro[@]}"; do mounts+=(--mount "type=bind,source=$PWD/$p,target=/travail/$p,readonly"); done
 docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount type=bind,source="$PWD",target=/travail \
-  --mount type=bind,source="$PWD/.git",target=/travail/.git,readonly \
-  --mount type=bind,source="$PWD/.github",target=/travail/.github,readonly \
-  --mount type=bind,source="$PWD/AGENTS.md",target=/travail/AGENTS.md,readonly \
-  --mount type=bind,source="$PWD/CLAUDE.md",target=/travail/CLAUDE.md,readonly \
   --mount type=bind,source="$PWD/bee",target=/travail/bee \
-  --mount type=bind,source="$PWD/bee/sandbox",target=/travail/bee/sandbox,readonly \
+  "${mounts[@]}" \
   -w /travail bee-miniz bash
 ```
 
-Only the clone is mounted, in `/travail`: neither your home nor any credential. The container has no network, no capability, and runs as the unprivileged user `bee`. The read-only mounts are the guarded paths of the next paragraph; `bee` is mounted over itself so that it cannot be renamed, with `bee/sandbox` inside it.
+Only the clone is mounted, in `/travail`: neither your home nor any credential. The container has no network, no capability, and runs as the unprivileged user `bee`. The read-only mounts (`ro`) are the guarded paths of the next paragraph that the clone holds (Docker mounts only what exists: `.claude`, `.mcp.json` and `.gitattributes` are not there); `bee` is mounted over itself so that it cannot be renamed, with the guarded paths of `bee/` inside it.
 
 ### What the sandbox guarantees
 
@@ -63,7 +61,7 @@ Inside `sans-docker.sh`, a command:
 - has **no network** (an empty network namespace) and **none of your environment variables** (no token, no proxy): only `PATH`, `HOME`, `LANG`, `TERM`;
 - can **write** in the work tree, which lasts, and in a private `/tmp` (with its empty home, `/tmp/home`) and a private `/dev/shm`, which are gone when the command ends; nowhere else;
 - **is shown of `.git` only the history**: `HEAD`, `refs`, `packed-refs`, `objects`, `shallow` and the index, read-only, with empty settings. The clone's settings (the remotes' addresses, a credential if one was written there), its logs, its hooks and whatever else `.git` holds are not shown: what a command can read, it can copy into the work tree, and the work tree is what you push. Git reads the history inside, and writes nothing. The launcher refuses to run if `.git` is not a real folder in git's plain format, if its settings are not a plain file, if one of those entries is a link, if a folder under them cannot be listed, or if a file under them is a second name of a file elsewhere (a pack shared with another clone is fine);
-- **cannot change the guarded paths** of the work tree: `.git`, `.github`, `.claude`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `bee/sandbox` (this launcher). They are read-only and can be neither renamed nor removed. One that does not exist cannot be covered: if the command creates it, the launcher renames it `<name>.created-in-sandbox.XXXXXX` when the command ends, and says so (exit status 125 if it cannot; a launcher killed outright renames nothing: look at the tree before you use it);
+- **cannot change the guarded paths** of the work tree: `.git`, `.github`, `.claude`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `bee/sandbox` (this launcher), and what the project's settings protect outside `bee/`, with the settings and git's rules: `hive`, `manifests`, `manifestes`, `tests`, `examples`, `.gitignore`, `.gitattributes`. They are read-only and can be neither renamed nor removed. One that does not exist cannot be covered: if the command creates it, the launcher renames it `<name>.created-in-sandbox.XXXXXX` when the command ends, and says so (exit status 125 if it cannot; a launcher killed outright renames nothing: look at the tree before you use it);
 - **does not see the rest of the machine**: your home, the folders next to the clone (other repositories), `/var`, `/run` and its sockets (Docker, D-Bus, ssh-agent), `/sys`, the disks and terminals of `/dev`, the other processes, the descriptors its caller left open. `/usr`, `/bin`, `/sbin`, `/lib*` and `/etc` are there read-only; in `/etc`, what "others" cannot read (`shadow`, private keys) is hidden, also when the session is root;
 - **cannot change what its caller hands it as input and outputs**: a file given as input, or a device such as `/dev/null`, reaches the command through a read-only view of itself (it is read from where the caller stood, and nothing is read ahead); a file given as output goes through a pipe that the launcher copies, in order when both outputs are one file. Either way the command can change neither that file's mode nor its dates. The devices it is shown (`null`, `zero`, `full`, `random`, `urandom`) work, and are read-only as files of the machine. A pipe, a socket or a terminal given by the caller is passed as it is: a terminal stays the caller's own, settings included;
 - **leaves no core file** when it crashes (the limit is one byte, and it cannot raise it);
@@ -82,7 +80,7 @@ What changes for the commands of this README:
 ### What it does not guarantee
 
 - **It is not a virtual machine.** The command talks to the kernel of your machine: a kernel vulnerability or a CPU side channel crosses the sandbox. Use a disposable VM for code you have reasons to distrust.
-- **The work tree stays writable**: builds happen there. Code that runs inside can change any file of the tree and leave a file under any name the launcher does not guard. After a run, treat the tree as untrusted and execute nothing of it outside the sandbox. A worker runs no git command in the clone: `hive submit` checks the clone and commits only the task's files. Anyone else reads `git status --porcelain --ignored` and `git diff` before committing, and runs git from the root of the clone only.
+- **The work tree stays writable** but for the guarded paths: builds happen there. Code that runs inside can change any other file of the tree (miniz's own sources at the root, `bee/` outside `bee/sandbox`) and leave a file under any name the launcher does not guard, an instructions file for an agent nested in a folder among them. After a run, treat the tree as untrusted and execute nothing of it outside the sandbox. A worker runs no git command in the clone: `hive submit` checks the clone and commits only the task's files. Anyone else reads `git status --porcelain --ignored` and `git diff` before committing, and runs git from the root of the clone only.
 - **It can read** the work tree and the history (keep no secret in either), `/usr`, the world-readable part of `/etc` (user names), and what `/proc` says of the machine (CPU, memory, kernel). The Docker form shows `.git` whole, read-only: there, keep no credential in `.git/config`.
 - **No limit on CPU, memory, processes or disk.** A command can fill the disk through the work tree or the memory through `/tmp`. Your own timeout ends it: killing the launcher kills everything inside.
 - **Guarded names are those of the list, at the root of the work tree.** The Docker form guards the paths its command mounts read-only, and renames nothing.
