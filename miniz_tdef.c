@@ -1028,77 +1028,176 @@ static MZ_FORCEINLINE mz_uint tdefl_match_length(const mz_uint8 *p, const mz_uin
    and the caller's loop its own. Since task miniz-0044, it is entered at the first candidate of the
    chain, from tdefl_find_match_first (below), with dist_base = max_dist - lookahead_pos,
    pTail = m_dict + match_len - 1, and state = (budget left << 16) | the candidate's masked position.
-   Per probe: the index is a size_t (no extension between the mask and the two reads it indexes), and
+   Per probe: the index is a size_t (no extension between the link and the two reads it indexes), and
    the distance test is made against a base computed once per call. With
    dist = (mz_uint16)(lookahead_pos - next) and max_dist < 32768,
    (mz_uint16)(next + max_dist - lookahead_pos) is max_dist - dist when dist <= max_dist, and
    65536 + max_dist - dist > max_dist otherwise: it exceeds max_dist exactly when dist does. The
    distance itself is computed for the candidates only, from the masked positions: a candidate has
-   dist <= max_dist < 32768, so dist == (pos - probe_pos) & TDEFL_LZ_DICT_SIZE_MASK. */
+   dist <= max_dist < 32768, so dist == (pos - probe_pos) & TDEFL_LZ_DICT_SIZE_MASK.
+
+   Task miniz-0050, the walk of the chain: the same links, in the same order, and each costs fewer
+   instructions. A link n (an m_next, 16 bits) is followed unless it is null or its distance,
+   (mz_uint16)(lookahead_pos - n), exceeds max_dist. With L = (mz_uint16)lookahead_pos and
+   M = max_dist (M < 32768: the caller's lookahead holds 3 bytes at least, and the dictionary and
+   the lookahead share 32768 bytes), the links to follow are, exactly:
+   - where L > M: those from L - M to L. None is null, and one test finds them, the one of
+     miniz-0036 above (the walk "far", unchanged);
+   - where L <= M: those from 1 to L (distances 0 to L - 1; the null link would have distance L),
+     and those from 65536 + L - M to 65535 (distances L + 1 to M, across the wrap of the 16 bits).
+     Each of the two ranges has a test of its own, cheaper than the two tests of the end of the
+     chain: n - 1 < L for the first, in unsigned arithmetic (false for a null link, whose n - 1
+     wraps to the largest value), and n >= 65536 + L - M for the second. In the first 32 KiB of a
+     stream (L == M) the second range holds nothing.
+     In a range, the masked position of a link is known without masking it: the link itself in
+     the first (L <= M < 32768), the link less 32768 in the second (65536 + L - M >= 32768), a
+     constant that the two reads of a probe (m_next, and the two bytes at match_len - 1) take into
+     their address. So the link read from m_next is the index of the next read as it is: no
+     instruction stands between the read of a link and the read of the next, which is what the
+     walk of a chain waits on.
+     The walk has two loops, one per range ("recent" and "old"). Each makes its own range's test,
+     and a link that fails it is given the other range's test: if it fails that too, it is not a
+     link to follow and the chain ends there, as before; otherwise the walk goes on in the other
+     loop, from the same place (same link, same budget, same turn of the three probes). A chain
+     usually runs through the recent links, then through the old ones, but nothing depends on it.
+   A candidate (its two bytes at match_len - 1 equal the string's): where 64-bit words are read
+   (TDEFL_FIND_MATCH_64BIT), its first 8 bytes are compared first with the string's, read once per
+   call. If they differ, at byte n < 8, the common length is min(n, max_match_len), whatever the
+   bytes after it: the candidate is passed over if n <= match_len (then the length is not above
+   match_len either), and taken with min(n, max_match_len) otherwise, exactly as
+   tdefl_match_length would say. Its distance is not null (a string does not differ from itself),
+   so the test of a null distance is left to the candidates whose 8 bytes are equal, which go
+   through that test and tdefl_match_length as before. Both reads of 8 bytes stay inside m_dict
+   (a masked position is below 32768, and m_dict holds 257 bytes more). */
+/* The next link of the walk "far": probe_pos is the masked position. */
+#define TDEFL_LINK_FAR(OWN, OTHER)                                                                \
+    probe_pos = d->m_next[probe_pos];                                                             \
+    if ((mz_uint16)(probe_pos + dist_base) > max_dist16)                                          \
+        return found;                                                                             \
+    probe_pos &= TDEFL_LZ_DICT_SIZE_MASK;
+/* The next link of the walk "recent": probe_pos is a size_t that holds the link, which is its masked
+   position. A link outside the range goes on in the walk "old", from the same place in its loop (the
+   label OTHER; OWN is this place), if it is in that walk's range. */
+#define TDEFL_LINK_RECENT(OWN, OTHER)                                                             \
+    probe_pos = d->m_next[probe_pos];                                                             \
+    if ((probe_pos - 1U) >= chain_recent)                                                         \
+    {                                                                                             \
+        if (probe_pos < chain_old)                                                                \
+            return found;                                                                         \
+        goto OTHER;                                                                               \
+    }                                                                                             \
+OWN:
+/* The next link of the walk "old": the same, the other way round; probe_pos holds the link, which is
+   its masked position plus 32768. */
+#define TDEFL_LINK_OLD(OWN, OTHER)                                                                \
+    probe_pos = d->m_next[probe_pos - 32768U];                                                    \
+    if (probe_pos < chain_old)                                                                    \
+    {                                                                                             \
+        if ((probe_pos - 1U) >= chain_recent)                                                     \
+            return found;                                                                         \
+        goto OTHER;                                                                               \
+    }                                                                                             \
+OWN:
+/* The two bytes of the link at match_len - 1: a candidate if they are the string's. OFFSET is what
+   probe_pos holds above the masked position: 32768 in the walk "old", 0 in the others. */
+#define TDEFL_PROBE_TAIL(OFFSET)                                                                  \
+    memcpy(&w, pTail + (probe_pos - OFFSET), sizeof(w));                                          \
+    if (w == c01)                                                                                 \
+        break;
+#if TDEFL_FIND_MATCH_64BIT
+#define TDEFL_CANDIDATE_LENGTH(OFFSET)                                                            \
+    memcpy(&cand8, d->m_dict + (probe_pos - OFFSET), sizeof(cand8));                              \
+    cand8 ^= str8;                                                                                \
+    if (cand8)                                                                                    \
+    {                                                                                             \
+        probe_len = (mz_uint)__builtin_ctzll(cand8) >> 3;                                         \
+        if (probe_len <= match_len)                                                               \
+            continue;                                                                             \
+        if (probe_len > max_match_len)                                                            \
+            probe_len = max_match_len;                                                            \
+        dist = (pos - (mz_uint)probe_pos) & TDEFL_LZ_DICT_SIZE_MASK;                              \
+    }                                                                                             \
+    else                                                                                          \
+    {                                                                                             \
+        dist = (pos - (mz_uint)probe_pos) & TDEFL_LZ_DICT_SIZE_MASK;                              \
+        if (!dist)                                                                                \
+            return found;                                                                         \
+        probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + (probe_pos - OFFSET), max_match_len); \
+        if (probe_len <= match_len)                                                               \
+            continue;                                                                             \
+    }
+#else
+#define TDEFL_CANDIDATE_LENGTH(OFFSET)                                                            \
+    dist = (pos - (mz_uint)probe_pos) & TDEFL_LZ_DICT_SIZE_MASK;                                  \
+    if (!dist)                                                                                    \
+        return found;                                                                             \
+    probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + (probe_pos - OFFSET), max_match_len); \
+    if (probe_len <= match_len)                                                                   \
+        continue;
+#endif
 static TDEFL_NOINLINE mz_uint tdefl_find_match_long(const tdefl_compressor *d, mz_uint dist_base, mz_uint max_dist, mz_uint max_match_len, const mz_uint8 *pTail, mz_uint state)
 {
     const mz_uint lookahead_pos = max_dist - dist_base;
     const mz_uint pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK;
-    const mz_uint16 max_dist16 = (mz_uint16)max_dist;
     mz_uint dist, probe_len, found = 0;
     mz_uint num_probes_left = state >> 16;
     size_t probe_pos = state & 0xFFFF;
     mz_uint match_len = (mz_uint)(pTail - d->m_dict) + 1;
     mz_uint16 c01, w;
+#if TDEFL_FIND_MATCH_64BIT
+    mz_uint64 str8, cand8;
+#endif
+    const mz_uint16 max_dist16 = (mz_uint16)max_dist;
+    size_t chain_recent, chain_old;
     MZ_ASSERT(max_dist < TDEFL_LZ_DICT_SIZE);
     memcpy(&c01, pTail + pos, sizeof(c01));
-/* End of the chain: a null m_next, or a distance beyond max_dist. */
-#define TDEFL_CHAIN_END(n) ((!(n)) || ((mz_uint16)((n) + dist_base) > max_dist16))
-/* The same, where a null m_next is beyond max_dist by itself: (mz_uint16)lookahead_pos > max_dist. */
-#define TDEFL_CHAIN_END_FAR(n) ((mz_uint16)((n) + dist_base) > max_dist16)
-#define TDEFL_PROBE_LONG(FIN)                                                                     \
-    probe_pos = d->m_next[probe_pos];                                                             \
-    if (FIN(probe_pos))                                                                           \
-        return found;                                                                             \
-    probe_pos &= TDEFL_LZ_DICT_SIZE_MASK;                                                         \
-    memcpy(&w, pTail + probe_pos, sizeof(w));                                                     \
-    if (w == c01)                                                                                 \
-        break;
-/* The loop as before, entered at its first candidate (ENTRY), which tdefl_find_match_first found. */
-#define TDEFL_PROBE_LOOP(FIN, ENTRY)                                                              \
+#if TDEFL_FIND_MATCH_64BIT
+    memcpy(&str8, d->m_dict + pos, sizeof(str8));
+#endif
+/* The loop as before, entered at its first candidate, which tdefl_find_match_first found: ENTRY is
+   the label of that entry, or an empty statement in the loop of the walk "old", which is entered
+   through its links only. OFFSET is the walk's (see TDEFL_PROBE_TAIL). OWN and OTHER name the labels
+   of the three links of this loop and of the other walk's, one name per link, for the two walks that
+   hand a link to each other. */
+#define TDEFL_PROBE_LOOP(LINK, OFFSET, ENTRY, OWN1, OWN2, OWN3, OTHER1, OTHER2, OTHER3) \
     for (;;)                                                                                      \
     {                                                                                             \
         for (;;)                                                                                  \
         {                                                                                         \
             if (--num_probes_left == 0)                                                           \
                 return found;                                                                     \
-            TDEFL_PROBE_LONG(FIN)                                                                 \
-            TDEFL_PROBE_LONG(FIN)                                                                 \
-            TDEFL_PROBE_LONG(FIN)                                                                 \
+            LINK(OWN1, OTHER1) TDEFL_PROBE_TAIL(OFFSET)                                       \
+            LINK(OWN2, OTHER2) TDEFL_PROBE_TAIL(OFFSET)                                       \
+            LINK(OWN3, OTHER3) TDEFL_PROBE_TAIL(OFFSET)                                       \
         }                                                                                         \
-    ENTRY:                                                                                        \
-        dist = (pos - (mz_uint)probe_pos) & TDEFL_LZ_DICT_SIZE_MASK;                              \
-        if (!dist)                                                                                \
+    ENTRY                                                                                         \
+        TDEFL_CANDIDATE_LENGTH(OFFSET)                                                            \
+        match_len = probe_len;                                                                    \
+        found = (dist << 16) | probe_len;                                                         \
+        if (probe_len == max_match_len)                                                           \
             return found;                                                                         \
-        probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);    \
-        if (probe_len > match_len)                                                                \
-        {                                                                                         \
-            match_len = probe_len;                                                                \
-            found = (dist << 16) | probe_len;                                                     \
-            if (probe_len == max_match_len)                                                       \
-                return found;                                                                     \
-            pTail = d->m_dict + match_len - 1;                                                    \
-            memcpy(&c01, pTail + pos, sizeof(c01));                                               \
-        }                                                                                         \
+        pTail = d->m_dict + match_len - 1;                                                        \
+        memcpy(&c01, pTail + pos, sizeof(c01));                                                   \
     }
-    /* Two versions of the same loop: where position 0 lies beyond max_dist, the distance test alone
-       ends the chain on a null m_next, and the zero test is left out. */
+    /* Three versions of the same loop, one for each walk. Where L <= M the search is entered in the
+       loop of the walk "recent", with the masked position of its first candidate, whichever range
+       that link was in: the loop reads through the masked position, and the next link gets both
+       tests if it needs them, as any other. */
     if ((mz_uint16)lookahead_pos > max_dist)
     {
         goto tdefl_candidate_far;
-        TDEFL_PROBE_LOOP(TDEFL_CHAIN_END_FAR, tdefl_candidate_far)
+        TDEFL_PROBE_LOOP(TDEFL_LINK_FAR, 0U, tdefl_candidate_far:, tdefl_lf1, tdefl_lf2, tdefl_lf3, tdefl_lf1, tdefl_lf2, tdefl_lf3)
     }
     else
     {
-        goto tdefl_candidate_near;
-        TDEFL_PROBE_LOOP(TDEFL_CHAIN_END, tdefl_candidate_near)
+        chain_recent = (mz_uint16)lookahead_pos;
+        chain_old = (size_t)65536U + chain_recent - max_dist;
+        goto tdefl_candidate_recent;
+        TDEFL_PROBE_LOOP(TDEFL_LINK_RECENT, 0U, tdefl_candidate_recent:, tdefl_lr1, tdefl_lr2, tdefl_lr3, tdefl_lo1, tdefl_lo2, tdefl_lo3)
+        TDEFL_PROBE_LOOP(TDEFL_LINK_OLD, 32768U, ;, tdefl_lo1, tdefl_lo2, tdefl_lo3, tdefl_lr1, tdefl_lr2, tdefl_lr3)
     }
 #undef TDEFL_PROBE_LOOP
+#undef TDEFL_CANDIDATE_LENGTH
 }
 
 /* Task miniz-0044: the start of the general search, up to its first candidate. Most searches at level 6
@@ -1107,15 +1206,16 @@ static TDEFL_NOINLINE mz_uint tdefl_find_match_long(const tdefl_compressor *d, m
    tdefl_find_match_long, at that candidate, with the budget left (state, below), and returns what it
    returns. Same probes, in the same order, with the same budget and the same comparisons as before.
    The caller made the first probe's test of the end of the chain: probe_pos is the first link, which
-   that test let through. The first test of the budget is known to be false (a budget of 3 or more),
-   so the budget is decremented once at the start and the loop is entered after both. The state handed
-   on is (num_probes_left << 16) | probe_pos: probe_pos is masked (below 32768), and a budget is at most
-   1 + (0xFFF + 2) / 3 = 1366. tdefl_find_match_long takes dist_base and pTail, from which it finds
-   lookahead_pos and match_len again, so that this loop keeps neither. */
+   that test let through. Masked, it is probed here with no test of its own; where L <= M, in the loop
+   of the walk "recent", which reads through the masked position, whichever range the link was in.
+   The first test of the budget is known to be false (a budget of 3 or more), so the budget is
+   decremented once at the start and the loop is entered after both. The state handed on is
+   (num_probes_left << 16) | the candidate's masked position (below 32768; a budget is at most
+   1 + (0xFFF + 2) / 3 = 1366). tdefl_find_match_long takes dist_base and pTail, from which it finds
+   lookahead_pos (its 16 low bits) and match_len again, so that this loop keeps neither. The links
+   are walked as in tdefl_find_match_long (task miniz-0050, above). */
 static TDEFL_NOINLINE mz_uint tdefl_find_match_first(const tdefl_compressor *d, mz_uint lookahead_pos, mz_uint max_dist, mz_uint max_match_len, mz_uint match_len, size_t probe_pos)
 {
-    const mz_uint dist_base = max_dist - lookahead_pos;
-    const mz_uint16 max_dist16 = (mz_uint16)max_dist;
     const mz_uint found = 0;
     mz_uint num_probes_left = d->m_max_probes[match_len >= 32];
     const mz_uint8 *const pTail = d->m_dict + match_len - 1;
@@ -1123,37 +1223,47 @@ static TDEFL_NOINLINE mz_uint tdefl_find_match_first(const tdefl_compressor *d, 
     MZ_ASSERT((num_probes_left >= 3) && (num_probes_left < 65536));
     memcpy(&c01, pTail + (lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK), sizeof(c01));
     num_probes_left--;
-#define TDEFL_PROBE_LOOP(FIN, ENTRY)                                                              \
+#define TDEFL_PROBE_LOOP(LINK, OFFSET, ENTRY, OWN1, OWN2, OWN3, OTHER1, OTHER2, OTHER3) \
     for (;;)                                                                                      \
     {                                                                                             \
         if (--num_probes_left == 0)                                                               \
             return found;                                                                         \
-        probe_pos = d->m_next[probe_pos];                                                         \
-        if (FIN(probe_pos))                                                                       \
-            return found;                                                                         \
-    ENTRY:                                                                                        \
-        probe_pos &= TDEFL_LZ_DICT_SIZE_MASK;                                                     \
-        memcpy(&w, pTail + probe_pos, sizeof(w));                                                 \
-        if (w == c01)                                                                             \
-            break;                                                                                \
-        TDEFL_PROBE_LONG(FIN)                                                                     \
-        TDEFL_PROBE_LONG(FIN)                                                                     \
+        LINK(OWN1, OTHER1)                                                                    \
+    ENTRY                                                                                         \
+        TDEFL_PROBE_TAIL(OFFSET)                                                                  \
+        LINK(OWN2, OTHER2) TDEFL_PROBE_TAIL(OFFSET)                                           \
+        LINK(OWN3, OTHER3) TDEFL_PROBE_TAIL(OFFSET)                                           \
     }
     if ((mz_uint16)lookahead_pos > max_dist)
     {
+        const mz_uint dist_base = max_dist - lookahead_pos;
+        const mz_uint16 max_dist16 = (mz_uint16)max_dist;
+        probe_pos &= TDEFL_LZ_DICT_SIZE_MASK;
         goto tdefl_entry_far;
-        TDEFL_PROBE_LOOP(TDEFL_CHAIN_END_FAR, tdefl_entry_far)
+        TDEFL_PROBE_LOOP(TDEFL_LINK_FAR, 0U, tdefl_entry_far:, tdefl_ff1, tdefl_ff2, tdefl_ff3, tdefl_ff1, tdefl_ff2, tdefl_ff3)
+        return tdefl_find_match_long(d, dist_base, max_dist, max_match_len, pTail, (num_probes_left << 16) | (mz_uint)probe_pos);
     }
     else
     {
-        goto tdefl_entry_near;
-        TDEFL_PROBE_LOOP(TDEFL_CHAIN_END, tdefl_entry_near)
+        /* The two loops keep chain_recent (L) and chain_old (65536 + L - M) only: what
+           tdefl_find_match_long is handed comes from them, M and M - L. It reads of dist_base its
+           16 low bits only (for L, for the masked position of the string, and in the test of the
+           walk "far"), and they are those of max_dist - lookahead_pos. */
+        const size_t chain_recent = (mz_uint16)lookahead_pos;
+        const size_t chain_old = (size_t)65536U + chain_recent - max_dist;
+        probe_pos &= TDEFL_LZ_DICT_SIZE_MASK;
+        goto tdefl_entry_recent;
+        TDEFL_PROBE_LOOP(TDEFL_LINK_RECENT, 0U, tdefl_entry_recent:, tdefl_fr1, tdefl_fr2, tdefl_fr3, tdefl_fo1, tdefl_fo2, tdefl_fo3)
+        goto tdefl_first_candidate;
+        TDEFL_PROBE_LOOP(TDEFL_LINK_OLD, 32768U, ;, tdefl_fo1, tdefl_fo2, tdefl_fo3, tdefl_fr1, tdefl_fr2, tdefl_fr3)
+    tdefl_first_candidate:
+        return tdefl_find_match_long(d, 65536U - (mz_uint)chain_old, 65536U + (mz_uint)chain_recent - (mz_uint)chain_old, max_match_len, pTail, (num_probes_left << 16) | ((mz_uint)probe_pos & TDEFL_LZ_DICT_SIZE_MASK));
     }
-    return tdefl_find_match_long(d, dist_base, max_dist, max_match_len, pTail, (num_probes_left << 16) | (mz_uint)probe_pos);
 #undef TDEFL_PROBE_LOOP
-#undef TDEFL_PROBE_LONG
-#undef TDEFL_CHAIN_END_FAR
-#undef TDEFL_CHAIN_END
+#undef TDEFL_PROBE_TAIL
+#undef TDEFL_LINK_OLD
+#undef TDEFL_LINK_RECENT
+#undef TDEFL_LINK_FAR
 }
 
 /* Task miniz-0045: long_budget is nonzero only where both budgets of d->m_max_probes are known to be 3 or more
