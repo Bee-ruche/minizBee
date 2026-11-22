@@ -47,6 +47,9 @@ fixture() {
   mkdir -p "$repo/hive" "$repo/manifests" "$repo/manifestes" "$repo/tests" "$repo/examples"
   echo '{"project": "fixture"}' >"$repo/hive/project.json"; echo "id: a" >"$repo/manifests/a.yaml"; echo "id: b" >"$repo/manifestes/b.yaml"
   echo "int t;" >"$repo/tests/t.c"; echo "int e;" >"$repo/examples/e.c"; echo "/_build" >"$repo/.gitignore"
+  # bee/'s tooling beside the launcher: several guarded paths in one folder.
+  mkdir -p "$repo/bee/tests" "$repo/bee/fuzz"; printf 'all:\n' >"$repo/bee/Makefile"
+  printf '#!/bin/sh\n' >"$repo/bee/tests/lancer.sh"; printf '#!/bin/sh\n' >"$repo/bee/fuzz/lancer.sh"
   ln -s "$outside/target.txt" "$repo/link-to-file"; ln -s "$outside/dir" "$repo/link-to-dir"
   ln -s ../registre/tools/hive/hive.py "$repo/link-to-sibling"
   cat >"$repo/attack.py" <<'EOF'
@@ -190,6 +193,10 @@ verdict b20 "nor removed, nor renamed" "$([ "$rc" -ne 0 ] && [ "$(protected)" = 
 [ ! -e "$repo/examples-moved" ] || mv -T "$repo/examples-moved" "$repo/examples"; [ ! -e "$repo/gitignore-moved" ] || mv -T "$repo/gitignore-moved" "$repo/.gitignore"   # put the fixture back
 inside 'printf "* -text\n" >.gitattributes'
 verdict b21 "a .gitattributes created where there was none is not there afterwards, and the launcher says so" "$([ ! -e "$repo/.gitattributes" ] && grep -q "created .gitattributes: set aside" <<<"$out"; echo $?)" "rc $rc; on the host: $(cd "$repo" && ls -d .gitattributes* 2>/dev/null | tr '\n' ' ')"
+tooling() { (cd "$repo" && tar -cf - bee/sandbox bee/Makefile bee/tests bee/fuzz/lancer.sh 2>/dev/null | sha256sum); }
+tooling_before=$(tooling)
+inside 'echo x >>bee/Makefile; echo x >>bee/tests/lancer.sh; echo x >bee/tests/planted; echo x >>bee/fuzz/lancer.sh; rm -f bee/fuzz/lancer.sh; echo x >>bee/sandbox/sans-docker.sh; mkdir -p bee/construction bee/fuzz/sorties && echo built >bee/construction/out && echo found >bee/fuzz/sorties/out'
+verdict b22 "several guarded paths in one folder (bee/sandbox, bee/Makefile, bee/tests, bee/fuzz/lancer.sh) all stay read-only, and bee/'s build folders stay writable" "$([ "$(tooling)" = "$tooling_before" ] && [ -f "$repo/bee/construction/out" ] && [ -f "$repo/bee/fuzz/sorties/out" ]; echo $?)" "rc $rc; bee/ on the host: $(cd "$repo" && ls -A bee bee/fuzz | tr '\n' ' ')"
 inside 'mkdir .claude && echo "{\"hooks\": {}}" >.claude/settings.json; echo "{}" >.mcp.json'
 verdict b15 "a .claude/settings.json or .mcp.json created inside is not there afterwards" "$([ ! -e "$repo/.claude" ] && [ ! -e "$repo/.mcp.json" ]; echo $?)" "$(cd "$repo" && ls -d .claude .mcp.json 2>/dev/null | tr '\n' ' ')on the host"
 inside 'mkdir .claude .claude.created-in-sandbox.1 created-in-sandbox.1 && echo "{}" >.claude/settings.json && chmod 555 .claude . ; exit 0'
