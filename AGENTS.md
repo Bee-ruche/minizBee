@@ -25,7 +25,7 @@ ro=(.git .github AGENTS.md CLAUDE.md bee/sandbox hive manifests manifestes tests
   bee/corpus/SHA256SUMS bee/corpus/generer.py bee/fuzz/fuzz_compression.c bee/fuzz/fuzz_inflate.c bee/fuzz/graines.py
   bee/fuzz/lancer.sh bee/fuzz/pilote_aleatoire.c bee/fuzz/ubsan-exclusions.txt bee/resultats/miniz-0003
   bee/resultats/miniz-0034)   # read-only inside (bee/README.md, "What the sandbox guarantees")
-mounts=(); for p in "${ro[@]}"; do mounts+=(--mount "type=bind,source=$PWD/$p,target=/travail/$p,readonly"); done
+mounts=(); for p in "${ro[@]}"; do [ -e "$p" ] || continue; mounts+=(--mount "type=bind,source=$PWD/$p,target=/travail/$p,readonly"); done
 docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount type=bind,source="$PWD",target=/travail \
   --mount type=bind,source="$PWD/bee",target=/travail/bee \
@@ -33,7 +33,7 @@ docker run --rm -it --network none --cap-drop ALL --security-opt no-new-privileg
   -w /travail bee-miniz bash
 ```
 
-Inside, the paths of `ro` are read-only: `.git`, the agents' instructions, the CI, the sandbox, what the project's settings protect outside `bee/`, with the settings and git's rules (`hive`, `manifests`, `manifestes`, `tests`, `examples`, `.gitignore`), and `bee/`'s tracked tooling; `bee/`'s build and result folders stay writable. `sans-docker.sh` guards the same paths and shows of `.git` the history only (no settings, no logs). What the sandbox guarantees and what it does not is in [bee/README.md](bee/README.md#what-the-sandbox-guarantees): after a run, treat the work tree as untrusted.
+Inside, the paths of `ro` are read-only: `.git`, the agents' instructions, the CI, the sandbox, what the project's settings protect outside `bee/`, with the settings and git's rules (`hive`, `manifests`, `manifestes`, `tests`, `examples`, `.gitignore`), and `bee/`'s tracked tooling; `bee/`'s build and result folders stay writable. `sans-docker.sh` guards the same paths where the clone holds them (and sets aside a `.claude`, `.mcp.json` or `.gitattributes` that a command creates), and shows of `.git` the history only (no settings, no logs). What the sandbox guarantees and what it does not is in [bee/README.md](bee/README.md#what-the-sandbox-guarantees): after a run, treat the work tree as untrusted.
 
 The default branch is `master`. Once you have forked minizBee, compare yourself against `upstream/master`.
 
