@@ -3,8 +3,9 @@
 # of the project at the root of the work tree (this git clone) and keeps it away from everything else:
 #   - no network (empty network namespace), none of your environment variables (no token, no proxy);
 #   - one writable place that lasts, the work tree, EXCEPT the paths of `guarded` below (.git, the
-#     agent instructions, the CI, this folder): read-only inside, so that the command cannot plant a
-#     hook, a config or an instruction for what you run next, outside;
+#     agent instructions, the CI, this folder, the project's settings hive/ and what they protect):
+#     read-only inside, so that the command cannot plant a hook, a config or an instruction for what you
+#     run next, outside;
 #   - of .git, only HEAD, the refs, the objects and the index, read-only. Its settings, its logs, its
 #     hooks and the rest are not shown (what a command reads, it can copy into the work tree, which
 #     you push);
@@ -35,8 +36,13 @@
 set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-# Paths of the work tree that the command can read but neither change nor create.
-guarded=(.git .github .claude .mcp.json AGENTS.md CLAUDE.md bee/sandbox)
+# Paths of the work tree that the command can read but neither change nor create. Of bee/, its tracked tooling: its
+# build and result folders stay writable (construction/, corpus/donnees/, the fuzzing's outputs, new folders of resultats/).
+guarded=(.git .github .claude .mcp.json AGENTS.md CLAUDE.md bee/sandbox hive manifests manifestes tests examples
+  .gitignore .gitattributes bee/Makefile bee/README.md bee/.gitignore bee/bench bee/ci bee/commun bee/judge bee/tests
+  bee/corpus/SHA256SUMS bee/corpus/generer.py bee/fuzz/fuzz_compression.c bee/fuzz/fuzz_inflate.c bee/fuzz/graines.py
+  bee/fuzz/lancer.sh bee/fuzz/pilote_aleatoire.c bee/fuzz/ubsan-exclusions.txt bee/resultats/miniz-0003
+  bee/resultats/miniz-0034)
 
 refuse() { echo "bee-sandbox: $*: the command was NOT run." >&2; exit 125; }
 
@@ -115,12 +121,13 @@ inside() {
 
   # The work tree, writable, at its own path: the folders above it are empty, the ones next to it are
   # not there. Each guarded path is bound over itself read-only; the folders above it, inside the
-  # tree, are bound over themselves too, because a mount point can be neither renamed nor removed.
+  # tree, are bound over themselves too, because a mount point can be neither renamed nor removed: once
+  # each, so that a folder holding several guarded paths keeps every one of them read-only.
   mkdir -p "$new$repo"; mount --bind "$repo" "$new$repo"
   for rest in $guarded; do
     if [ ! -e "$repo/$rest" ]; then continue; fi
     d=$new$repo
-    while [[ $rest == */* ]]; do d=$d/${rest%%/*}; rest=${rest#*/}; mount --bind "$d" "$d"; done
+    while [[ $rest == */* ]]; do d=$d/${rest%%/*}; rest=${rest#*/}; findmnt -rn -M "$d" >/dev/null || mount --bind "$d" "$d"; done
     mount --bind "$d/$rest" "$d/$rest"; readonly_tree "$d/$rest"
   done
 
