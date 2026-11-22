@@ -1469,9 +1469,40 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
     TDEFL_PROBE(goto candidat_court);
     return;
 candidat_court:
-    if (!dist)
-        return;
-    probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);
+#if TDEFL_FIND_MATCH_64BIT
+    /* Task miniz-0053: the candidate's first 8 bytes are compared with the string's here, in a straight
+       line, as the general search compares them (TDEFL_CANDIDATE_LENGTH): about four comparisons in five
+       at level 1 end in that word, and then pay for nothing of tdefl_match_length's loop (its bound,
+       its counter, its two pointers). If the words differ, at byte n < 8, under a ceiling of 8 or more,
+       the common length is n, as tdefl_match_length would say, and the distance is not null (a string
+       does not differ from itself): the test of a null distance is left to the candidates whose 8
+       bytes are equal. For those, tdefl_match_length compares what follows the 8 bytes, under what is
+       left of the ceiling: the same words and the same bytes as before, and the same length (8 more
+       than it returns). Under a ceiling below 8, the comparison is the one of before. Both reads of
+       8 bytes stay inside m_dict (a masked position is below 32768, and m_dict holds 257 bytes more).
+       The hint says which way the first word usually goes; it changes no result. */
+    if (max_match_len >= 8)
+    {
+        mz_uint64 str8, cand8;
+        memcpy(&str8, d->m_dict + pos, sizeof(str8));
+        memcpy(&cand8, d->m_dict + probe_pos, sizeof(cand8));
+        cand8 ^= str8;
+        if (__builtin_expect(cand8 != 0, 1))
+            probe_len = (mz_uint)__builtin_ctzll(cand8) >> 3;
+        else
+        {
+            if (!dist)
+                return;
+            probe_len = 8 + tdefl_match_length(d->m_dict + pos + 8, d->m_dict + probe_pos + 8, max_match_len - 8);
+        }
+    }
+    else
+#endif
+    {
+        if (!dist)
+            return;
+        probe_len = tdefl_match_length(d->m_dict + pos, d->m_dict + probe_pos, max_match_len);
+    }
     if (probe_len > match_len)
     {
         *pMatch_dist = dist;
