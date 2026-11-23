@@ -479,6 +479,10 @@ extern "C"
     static const mz_uint mz_bitmasks[17] = { 0x0000, 0x0001, 0x0003, 0x0007, 0x000F, 0x001F, 0x003F, 0x007F, 0x00FF, 0x01FF, 0x03FF, 0x07FF, 0x0FFF, 0x1FFF, 0x3FFF, 0x7FFF, 0xFFFF };
 
 #if TDEFL_USE_64BIT_BITBUF
+    /* Per distance symbol: its base (as match_dist, the distance less one), its number of extra bits, and its entry in dist_table (see below). */
+    static const mz_uint16 s_tdefl_dist_base[30] = { 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576 };
+    static const mz_uint8 s_tdefl_dist_extra[30] = { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
+    static const mz_uint16 s_tdefl_dist_slot[30] = { 0, 254, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283 };
     static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
     {
         mz_uint flags;
@@ -492,46 +496,59 @@ extern "C"
         const mz_uint8 *pDist_sizes = d->m_huff_code_sizes[1];
         mz_uint64 bit_buffer = d->m_bit_buffer;
         mz_uint bits_in = d->m_bits_in;
-        /* Per block, for each match_len, the length symbol's code followed by its extra bits, and for each
-           match_dist below 512, the distance symbol's code followed by its extra bits: one put instead of
-           two, the same bits in the same order. Built run by run (the extra bits of a run are the low bits of
-           the value, the bases being multiples of their run's length). */
-        mz_uint32 len_codes[256], dist_codes[512], far_codes[128];
-        mz_uint8 len_sizes[256], dist_sizes[512], far_shifts[128], far_sizes[128];
+        /* Per block, for each match_len: the length symbol's code followed by its extra bits (len_codes), how
+           many bits that is (len_sizes), and 1 shifted left by as many (len_muls). Built run by run (the extra
+           bits of a run are the low bits of the value, the bases being multiples of their run's length).
+           For the distance, one entry per symbol, and no branch chooses it: match_dist (0 to 32767) converts
+           exactly to a float, whose exponent and first mantissa bit are, from 2 on, the symbol (symbol s of
+           2 or more starts at (2 + (s & 1)) << (s / 2 - 1)). The float's top bits (>> 22) are 0 for 0, 254
+           for 1 and 254 + s from 2 on: the entry's index (IEEE 754 single precision, which the platforms
+           this variant is built for have). An entry's extra bits are match_dist less the symbol's base, so
+           the symbol's code followed by them is match_dist * (1 << size) + (code - (base << size)): one
+           multiply and one add, the same value (below 2^28; the 32-bit arithmetic wraps and comes back).
+           dist_table holds the multipliers at [index], the addends at [40 + index] and the sizes at
+           [80 + index].
+           A match is then one value, its distance part times len_muls under its length part, put at once:
+           the same bits in the same order as the four puts of the generic variant.
+           The sizes are kept as 32-bit words, the literals' too (a copy made per block, with their codes):
+           adding one to bits_in is then a single add from memory, with no widening load before it. */
+        mz_uint64 len_codes[256], len_muls[256];
+        mz_uint32 len_sizes[256], lit_sizes[256];
+        mz_uint16 lit_codes[256];
+        mz_uint32 dist_table[364];
         mz_uint i, j, run_end;
+
+        /* The distance symbols' extra-bit tables serve the generic variant only. */
+        (void)s_tdefl_small_dist_extra;
+        (void)s_tdefl_large_dist_extra;
 
         for (i = 0; i < 256; i = run_end)
         {
             mz_uint sym = s_tdefl_len_sym[i], n = s_tdefl_len_extra[i];
-            mz_uint code = pLit_codes[sym], size = pLit_sizes[sym], mask = mz_bitmasks[n];
+            mz_uint size = pLit_sizes[sym], total = size + n;
+            mz_uint64 code = pLit_codes[sym] | ((i & mz_bitmasks[n]) << size), step = (mz_uint64)1 << size;
+            mz_uint64 mul = (mz_uint64)1 << total;
+            /* Within a run the extra bits count up by one from those of i, without wrapping (run 284 too). */
             run_end = (sym == 284) ? 255 : i + (1U << n);
-            for (j = i; j < run_end; j++)
+            for (j = i; j < run_end; j++, code += step)
             {
-                len_codes[j] = code | ((j & mask) << size);
-                len_sizes[j] = (mz_uint8)(size + n);
+                len_codes[j] = code;
+                len_sizes[j] = total;
+                len_muls[j] = mul;
             }
         }
-        for (i = 0; i < 512; i = run_end)
+        for (i = 0; i < 30; i++)
         {
-            mz_uint sym = s_tdefl_small_dist_sym[i], n = s_tdefl_small_dist_extra[i];
-            mz_uint code = pDist_codes[sym], size = pDist_sizes[sym], mask = mz_bitmasks[n];
-            run_end = i + (1U << n);
-            for (j = i; j < run_end; j++)
-            {
-                dist_codes[j] = code | ((j & mask) << size);
-                dist_sizes[j] = (mz_uint8)(size + n);
-            }
+            mz_uint size = pDist_sizes[i];
+            j = s_tdefl_dist_slot[i];
+            dist_table[j] = 1U << size;
+            dist_table[40 + j] = pDist_codes[i] - (s_tdefl_dist_base[i] << size);
+            dist_table[80 + j] = size + s_tdefl_dist_extra[i];
         }
-        /* For match_dist from 512 on, by match_dist >> 8: the symbol's code followed by the high bits of the
-           extra bits (all of match_dist's low 8 bits are extra bits there, since a symbol has 8 or more),
-           and where the low 8 bits go. */
-        for (i = 2; i < 128; i++)
+        for (i = 0; i < 256; i++)
         {
-            mz_uint sym = s_tdefl_large_dist_sym[i], n = s_tdefl_large_dist_extra[i];
-            mz_uint size = pDist_sizes[sym];
-            far_codes[i] = pDist_codes[sym] | (((i << 8) & mz_bitmasks[n]) << size);
-            far_shifts[i] = (mz_uint8)size;
-            far_sizes[i] = (mz_uint8)(size + n);
+            lit_sizes[i] = pLit_sizes[i];
+            lit_codes[i] = pLit_codes[i];
         }
 
 #define TDEFL_PUT_BITS_FAST(b, l)                    \
@@ -542,36 +559,37 @@ extern "C"
 
 #define TDEFL_LZ_MATCH()                                                                   \
     {                                                                                      \
-        mz_uint match_len = pLZ_codes[0];                                                  \
-        mz_uint match_dist = (pLZ_codes[1] | (pLZ_codes[2] << 8));                         \
+        size_t match_len = pLZ_codes[0];                                                   \
+        mz_uint32 match_dist, dist_index;                                                  \
+        float dist_float;                                                                  \
+        mz_uint16 dist16;                                                                  \
+        memcpy(&dist16, pLZ_codes + 1, sizeof(dist16));                                    \
+        match_dist = dist16;                                                               \
         pLZ_codes += 3;                                                                    \
         MZ_ASSERT(pLit_sizes[s_tdefl_len_sym[match_len]]);                                 \
+        MZ_ASSERT(pDist_sizes[(match_dist < 512) ? s_tdefl_small_dist_sym[match_dist] : s_tdefl_large_dist_sym[match_dist >> 8]]); \
         TDEFL_PUT_BITS_FAST(len_codes[match_len], len_sizes[match_len]);                   \
-        if (match_dist < 512)                                                              \
-        {                                                                                  \
-            MZ_ASSERT(pDist_sizes[s_tdefl_small_dist_sym[match_dist]]);                    \
-            TDEFL_PUT_BITS_FAST(dist_codes[match_dist], dist_sizes[match_dist]);           \
-        }                                                                                  \
-        else                                                                               \
-        {                                                                                  \
-            mz_uint high = match_dist >> 8;                                                \
-            MZ_ASSERT(pDist_sizes[s_tdefl_large_dist_sym[high]]);                          \
-            TDEFL_PUT_BITS_FAST(far_codes[high] | ((match_dist & 0xFF) << far_shifts[high]), far_sizes[high]); \
-        }                                                                                  \
+        dist_float = (float)(int)match_dist;                                               \
+        memcpy(&dist_index, &dist_float, sizeof(dist_index));                              \
+        dist_index >>= 22;                                                                 \
+        TDEFL_PUT_BITS_FAST(match_dist * dist_table[dist_index] + dist_table[40 + dist_index], dist_table[80 + dist_index]); \
     }
 
 #define TDEFL_LZ_LIT()                                       \
     {                                                        \
-        mz_uint lit = *pLZ_codes++;                          \
+        size_t lit = *pLZ_codes++;                           \
         MZ_ASSERT(pLit_sizes[lit]);                          \
-        TDEFL_PUT_BITS_FAST(pLit_codes[lit], pLit_sizes[lit]); \
+        TDEFL_PUT_BITS_FAST(lit_codes[lit], lit_sizes[lit]); \
     }
 
+/* A flush writes the 8 bytes of the bit buffer, advances by the whole bytes among them (7 at most, the
+   buffer holding 63 bits at most), and takes the bits left over, fewer than 8, back from the byte it now
+   points at, which is one of the 8 just written (the buffer holds nothing above bits_in). */
 #define TDEFL_LZ_FLUSH_UNCHECKED()                           \
     {                                                        \
         memcpy(pOutput_buf, &bit_buffer, sizeof(mz_uint64)); \
         pOutput_buf += (bits_in >> 3);                       \
-        bit_buffer >>= (bits_in & ~7);                       \
+        bit_buffer = *pOutput_buf;                           \
         bits_in &= 7;                                        \
     }
 
@@ -584,25 +602,69 @@ extern "C"
 
         /* Whole groups: a flag byte followed by more than 24 bytes (the most its 8 codes can take) is not
            the last group, so its 8 codes are all there, and they are written without a test of the end of
-           the codes. The bit buffer is flushed before a match (which then finds at most 7 bits in it and
-           adds at most 48) and before a literal only when it holds more than 48 bits (it adds at most 15):
-           it never holds more than 63. A group so starts with at most 63 bits and adds at most 8 * 48, and
-           no output position in it is more than 56 bytes from where it starts: if that is more than 56
-           bytes from the end, none of the tests the original makes before its flushes can fail, and they
-           are made once per group, with the same outcome. */
-#define TDEFL_LZ_CODE(bit)                   \
-    {                                        \
-        if (flags & (bit))                   \
-        {                                    \
-            TDEFL_LZ_FLUSH_UNCHECKED();      \
-            TDEFL_LZ_MATCH();                \
-        }                                    \
-        else                                 \
-        {                                    \
-            if (bits_in > 48)                \
-                TDEFL_LZ_FLUSH_UNCHECKED();  \
-            TDEFL_LZ_LIT();                  \
-        }                                    \
+           the codes. A group is written as two halves of 4 codes, each by the one of 16 sequences that its
+           4 flags select: one jump instead of 4 tests, and each sequence knows where its matches and its
+           runs of literals are. The bit buffer is flushed before a match (which then finds at most 7 bits
+           in it and adds at most 48) and tested once before a run of 1 or 2 literals, against what the
+           run can add at most (15 bits each): it never holds more than 63. A group so starts with at most 63 bits and adds
+           at most 8 * 48, and no output position in it is more than 56 bytes from where it starts: if
+           that is more than 56 bytes from the end, none of the tests the original makes before its
+           flushes can fail, and they are made once per group, with the same outcome. */
+#define TDEFL_LZ_M()                                                                       \
+    {                                                                                      \
+        size_t match_len = pLZ_codes[0];                                                   \
+        mz_uint32 match_dist, dist_bits;                                                   \
+        size_t dist_index;                                                                 \
+        mz_uint64 both;                                                                    \
+        mz_uint16 dist16;                                                                  \
+        float dist_float;                                                                  \
+        memcpy(&dist16, pLZ_codes + 1, sizeof(dist16));                                    \
+        match_dist = dist16;                                                               \
+        pLZ_codes += 3;                                                                    \
+        dist_float = (float)(int)match_dist;                                               \
+        memcpy(&dist_bits, &dist_float, sizeof(dist_bits));                                \
+        dist_index = dist_bits >> 22;                                                      \
+        both = (mz_uint64)(match_dist * dist_table[dist_index] + dist_table[40 + dist_index]) * len_muls[match_len]; \
+        both |= len_codes[match_len];                                                      \
+        memcpy(pOutput_buf, &bit_buffer, sizeof(mz_uint64));                               \
+        pOutput_buf += (bits_in >> 3);                                                     \
+        bits_in &= 7;                                                                      \
+        bit_buffer = (mz_uint64)*pOutput_buf | (both << bits_in);                          \
+        bits_in += len_sizes[match_len];                                                   \
+        bits_in += dist_table[80 + dist_index];                                                 \
+    }
+#define TDEFL_LZ_L1()                   \
+    {                                   \
+        if (bits_in > 48)               \
+            TDEFL_LZ_FLUSH_UNCHECKED(); \
+        TDEFL_LZ_LIT();                 \
+    }
+#define TDEFL_LZ_L2()                   \
+    {                                   \
+        if (bits_in > 33)               \
+            TDEFL_LZ_FLUSH_UNCHECKED(); \
+        TDEFL_LZ_LIT();                 \
+        TDEFL_LZ_LIT();                 \
+    }
+#define TDEFL_LZ_HALF(f)                                                        \
+    switch ((f) & 15)                                                           \
+    {                                                                           \
+        case 0: TDEFL_LZ_L2(); TDEFL_LZ_L2(); break;                            \
+        case 1: TDEFL_LZ_M(); TDEFL_LZ_L2(); TDEFL_LZ_L1(); break;              \
+        case 2: TDEFL_LZ_L1(); TDEFL_LZ_M(); TDEFL_LZ_L2(); break;              \
+        case 3: TDEFL_LZ_M(); TDEFL_LZ_M(); TDEFL_LZ_L2(); break;               \
+        case 4: TDEFL_LZ_L2(); TDEFL_LZ_M(); TDEFL_LZ_L1(); break;              \
+        case 5: TDEFL_LZ_M(); TDEFL_LZ_L1(); TDEFL_LZ_M(); TDEFL_LZ_L1(); break; \
+        case 6: TDEFL_LZ_L1(); TDEFL_LZ_M(); TDEFL_LZ_M(); TDEFL_LZ_L1(); break; \
+        case 7: TDEFL_LZ_M(); TDEFL_LZ_M(); TDEFL_LZ_M(); TDEFL_LZ_L1(); break; \
+        case 8: TDEFL_LZ_L2(); TDEFL_LZ_L1(); TDEFL_LZ_M(); break;              \
+        case 9: TDEFL_LZ_M(); TDEFL_LZ_L2(); TDEFL_LZ_M(); break;               \
+        case 10: TDEFL_LZ_L1(); TDEFL_LZ_M(); TDEFL_LZ_L1(); TDEFL_LZ_M(); break; \
+        case 11: TDEFL_LZ_M(); TDEFL_LZ_M(); TDEFL_LZ_L1(); TDEFL_LZ_M(); break; \
+        case 12: TDEFL_LZ_L2(); TDEFL_LZ_M(); TDEFL_LZ_M(); break;              \
+        case 13: TDEFL_LZ_M(); TDEFL_LZ_L1(); TDEFL_LZ_M(); TDEFL_LZ_M(); break; \
+        case 14: TDEFL_LZ_L1(); TDEFL_LZ_M(); TDEFL_LZ_M(); TDEFL_LZ_M(); break; \
+        case 15: TDEFL_LZ_M(); TDEFL_LZ_M(); TDEFL_LZ_M(); TDEFL_LZ_M(); break; \
     }
 
         if ((pLZ_code_buf_end - pLZ_codes > 25) && (pOutput_buf_end - pOutput_buf > 56))
@@ -612,17 +674,14 @@ extern "C"
             do
             {
                 flags = *pLZ_codes++;
-                TDEFL_LZ_CODE(0x01);
-                TDEFL_LZ_CODE(0x02);
-                TDEFL_LZ_CODE(0x04);
-                TDEFL_LZ_CODE(0x08);
-                TDEFL_LZ_CODE(0x10);
-                TDEFL_LZ_CODE(0x20);
-                TDEFL_LZ_CODE(0x40);
-                TDEFL_LZ_CODE(0x80);
+                TDEFL_LZ_HALF(flags);
+                TDEFL_LZ_HALF(flags >> 4);
             } while ((pLZ_codes < pLZ_codes_fast_end) && (pOutput_buf < pOutput_buf_fast_end));
         }
-#undef TDEFL_LZ_CODE
+#undef TDEFL_LZ_HALF
+#undef TDEFL_LZ_L2
+#undef TDEFL_LZ_L1
+#undef TDEFL_LZ_M
         /* Back to at most 7 bits, as the codes below expect (the last group left the output more than 56 - 48
            bytes from its end). */
         if (bits_in > 7)
