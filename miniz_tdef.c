@@ -1921,16 +1921,34 @@ candidat_court:
             mz_uint len_to_move, cur_match_dist, cur_match_len, cur_pos;
             /* Update dictionary and hash chains. Keeps the lookahead size equal to TDEFL_MAX_MATCH_LEN. */
             mz_uint dst_pos = (lookahead_pos + lookahead_size) & TDEFL_LZ_DICT_SIZE_MASK, ins_pos = lookahead_pos + lookahead_size - 2;
-            mz_uint num_bytes_to_process = (mz_uint)MZ_MIN(src_buf_left, TDEFL_MAX_MATCH_LEN - lookahead_size);
-            src_buf_left -= num_bytes_to_process;
-            lookahead_size += num_bytes_to_process;
-            if ((dst_pos >= (TDEFL_MAX_MATCH_LEN - 1)) && ((dst_pos + num_bytes_to_process) <= TDEFL_LZ_DICT_SIZE))
+            /* Task miniz-0046: the lookahead is never longer than TDEFL_MAX_MATCH_LEN, so num_bytes_to_process below
+               is the number of bytes that fill it, and MZ_MIN(src_buf_left, num_bytes_to_process) bytes are taken in.
+               Three paths make the same writes, in the same order (byte k = 0, 1, 2...), as the general loop of the
+               last one, which is the loop of before:
+               - one byte fills the lookahead (the case after a literal or a held match, the most frequent one) and
+                 it does not fall in the mirrored start of the window: it is inserted with no loop and no count;
+               - the source holds all the bytes that fill the lookahead, and (task miniz-0013) none of them falls in
+                 the mirrored start of the window or wraps: dst_pos >= TDEFL_MAX_MATCH_LEN - 1 and
+                 dst_pos + num_bytes_to_process <= TDEFL_LZ_DICT_SIZE, written as one unsigned comparison (its right
+                 side cannot wrap, num_bytes_to_process being at most TDEFL_MAX_MATCH_LEN). Then
+                 ins_pos & TDEFL_LZ_DICT_SIZE_MASK == dst_pos - 2;
+               - anything else (start of the window, wrap, end of the source): the general loop.
+               In the first two the lookahead ends full: m_dict_size is clamped with that constant and the test that
+               leaves the loop on a lookahead not yet full, false, is not made. */
+            mz_uint num_bytes_to_process = TDEFL_MAX_MATCH_LEN - lookahead_size;
+            if ((lookahead_size == (TDEFL_MAX_MATCH_LEN - 1)) && (dst_pos >= (TDEFL_MAX_MATCH_LEN - 1)) && (src_buf_left))
             {
-                /* Cas courant (tâche miniz-0013) : ni dst_pos ni ins_pos ne reviennent au début de la
-                   fenêtre, et aucun octet ne tombe dans la copie miroir (dst_pos >= TDEFL_MAX_MATCH_LEN - 1),
-                   donc ins_pos & TDEFL_LZ_DICT_SIZE_MASK == dst_pos - 2. Mêmes écritures, dans le même
-                   ordre (octet k = 0, 1, 2…), que la boucle générale ci-dessous, sans masque ni test
-                   par octet ; boucle déroulée par deux, l'octet impair éventuel passe en premier. */
+                mz_uint8 c = *pSrc++;
+                src_buf_left--;
+                lookahead_size = TDEFL_MAX_MATCH_LEN;
+                d->m_dict[dst_pos] = c;
+                hash = ((hash << TDEFL_LZ_HASH_SHIFT) ^ c) & (TDEFL_LZ_HASH_SIZE - 1);
+                d->m_next[dst_pos - 2] = d->m_hash[hash];
+                d->m_hash[hash] = (mz_uint16)(ins_pos);
+                dict_size = MZ_MIN(TDEFL_LZ_DICT_SIZE - TDEFL_MAX_MATCH_LEN, dict_size);
+            }
+            else if ((src_buf_left >= num_bytes_to_process) && ((dst_pos - (TDEFL_MAX_MATCH_LEN - 1)) <= ((TDEFL_LZ_DICT_SIZE - (TDEFL_MAX_MATCH_LEN - 1)) - num_bytes_to_process)))
+            {
                 mz_uint8 *pDst = d->m_dict + dst_pos;
                 mz_uint16 *pNext = d->m_next + (dst_pos - 2);
                 size_t i = num_bytes_to_process & 1;
@@ -1943,6 +1961,8 @@ candidat_court:
         pNext[k] = d->m_hash[hash];                                            \
         d->m_hash[hash] = (mz_uint16)(ins_pos + (k));                          \
     } MZ_MACRO_END
+                src_buf_left -= num_bytes_to_process;
+                lookahead_size = TDEFL_MAX_MATCH_LEN;
                 if (i)
                     TDEFL_INSERT_BYTE(0);
                 for (; i < num_bytes_to_process; i += 2)
@@ -1953,10 +1973,15 @@ candidat_court:
 #undef TDEFL_INSERT_BYTE
                 if (num_bytes_to_process)
                     pSrc += num_bytes_to_process;
+                dict_size = MZ_MIN(TDEFL_LZ_DICT_SIZE - TDEFL_MAX_MATCH_LEN, dict_size);
             }
             else
             {
-                const mz_uint8 *pSrc_end = pSrc ? pSrc + num_bytes_to_process : NULL;
+                const mz_uint8 *pSrc_end;
+                num_bytes_to_process = (mz_uint)MZ_MIN(src_buf_left, num_bytes_to_process);
+                src_buf_left -= num_bytes_to_process;
+                lookahead_size += num_bytes_to_process;
+                pSrc_end = pSrc ? pSrc + num_bytes_to_process : NULL;
                 while (pSrc != pSrc_end)
                 {
                     mz_uint8 c = *pSrc++;
@@ -1969,10 +1994,10 @@ candidat_court:
                     dst_pos = (dst_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK;
                     ins_pos++;
                 }
+                dict_size = MZ_MIN(TDEFL_LZ_DICT_SIZE - lookahead_size, dict_size);
+                if ((!flush) && (lookahead_size < TDEFL_MAX_MATCH_LEN))
+                    break;
             }
-            dict_size = MZ_MIN(TDEFL_LZ_DICT_SIZE - lookahead_size, dict_size);
-            if ((!flush) && (lookahead_size < TDEFL_MAX_MATCH_LEN))
-                break;
 
             /* Simple lazy/greedy parsing state machine. */
             len_to_move = 1;
